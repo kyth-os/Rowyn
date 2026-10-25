@@ -81,7 +81,8 @@ RUN useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn 
 # graph uses them for the sound/session stack (pipewire, upower, udisks2,
 # xserver for the SDDM greeter), and a coherent first boot matters more
 # than image leanness at spike stage.
-RUN apt-get update && \
+RUN mkdir -p /var/lib/apt/lists/partial && \
+    apt-get update && \
     apt-get install -y \
         plasma-desktop sddm konsole dolphin kinfocenter \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
