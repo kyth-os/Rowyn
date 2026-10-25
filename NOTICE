@@ -1,0 +1,18 @@
+Rowyn
+Copyright 2026 Patrick Hendrick and contributors
+
+This project is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Vendored components
+-------------------
+The build scripts under shared/ (build.sh, initramfs.sh, bootc-rootfs.sh) and
+the overall Containerfile structure are adapted from Bootcrew's mono repo
+(https://github.com/bootcrew/mono), which is licensed under the Apache
+License, Version 2.0:
+
+    Bootcrew — bootable container base images for Arch, Debian, openSUSE
+    and Ubuntu. Copyright the Bootcrew contributors.
+
+The bootc binary built by shared/build.sh comes from the bootc project
+(https://github.com/bootc-dev/bootc), licensed under the Apache License,
+Version 2.0 / MIT.

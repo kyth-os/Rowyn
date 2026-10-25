@@ -1,0 +1,12 @@
+NAME="Rowyn"
+PRETTY_NAME="Rowyn 0.1"
+ID=rowyn
+ID_LIKE="ubuntu debian"
+VERSION="0.1"
+VERSION_ID="0.1"
+VERSION_CODENAME=stonking
+UBUNTU_CODENAME=stonking
+HOME_URL="https://github.com/kyth-os/Rowyn"
+BUG_REPORT_URL="https://github.com/kyth-os/Rowyn/issues"
+VARIANT="KDE Plasma"
+VARIANT_ID=kde

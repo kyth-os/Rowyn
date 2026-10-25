@@ -1,0 +1,11 @@
+# Host-fetched build inputs (see build/fetch-assets.sh) — large, never committed
+build-assets/
+
+# Build logs
+build/*.log
+
+# Gate-test outputs
+build/bootable.img
+build/ovmf-vars.fd
+build/qemu.pid
+build/serial.log

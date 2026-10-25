@@ -1,0 +1,61 @@
+name: build-spike
+
+# Builds the Rowyn bootc image on GitHub-hosted runners (this project's
+# local build host has constrained egress and short-lived VMs) and publishes
+# it to GHCR so it can be pulled down for QEMU boot gates.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Ensure podman
+        run: |
+          if ! command -v podman >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y podman
+          fi
+          podman --version
+
+      - name: Fetch build assets (toolchain tarball, bootc source, vendored deps)
+        run: ./build/fetch-assets.sh
+
+      - name: Build image (offline Containerfile)
+        run: sudo podman build -t rowyn:spike .
+
+      - name: Inspect image
+        run: |
+          sudo podman run --rm rowyn:spike cat /usr/lib/os-release
+          sudo podman images rowyn:spike
+          {
+            echo '### Image'
+            sudo podman image inspect rowyn:spike --format '- size: {{.Size}} bytes
+            - digest: {{.Digest}}'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo podman tag rowyn:spike ghcr.io/kyth-os/rowyn:spike
+          sudo podman tag rowyn:spike "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
+          sudo podman push ghcr.io/kyth-os/rowyn:spike
+          sudo podman push "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
