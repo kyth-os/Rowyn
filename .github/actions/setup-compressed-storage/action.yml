@@ -1,0 +1,56 @@
+name: Setup compressed Podman storage
+description: Provision a sparse Btrfs-backed rootful Podman graphroot and runroot.
+inputs:
+  size:
+    description: Logical size of the sparse storage image.
+    required: false
+    default: 65G
+  mount-point:
+    description: Rootful Podman graphroot mount point.
+    required: false
+    default: /var/lib/containers/storage
+  image-path:
+    description: Sparse storage image path.
+    required: false
+    default: /mnt/rowyn-podman-storage.img
+  runroot:
+    description: Rootful Podman runroot mount point.
+    required: false
+    default: /run/containers/storage
+runs:
+  using: composite
+  steps:
+    - name: Mount compressed loopback image
+      shell: bash
+      env:
+        SIZE: ${{ inputs.size }}
+        MOUNT_POINT: ${{ inputs.mount-point }}
+        IMAGE_PATH: ${{ inputs.image-path }}
+        RUNROOT: ${{ inputs.runroot }}
+      run: |
+        set -euo pipefail
+        sudo mkdir -p "${MOUNT_POINT}" "${RUNROOT}"
+        sudo truncate -s "${SIZE}" "${IMAGE_PATH}"
+        sudo mkfs.btrfs -f "${IMAGE_PATH}"
+        sudo podman system reset --force
+        sudo systemctl stop podman.service || true
+        # reset can remove both storage directories, including the bind target.
+        # Keep runroot on the disk containing the image, never alongside /run.
+        runroot_source="${IMAGE_PATH}.runroot"
+        sudo mkdir -p "${MOUNT_POINT}" "${RUNROOT}" "${runroot_source}"
+        sudo mount -o compress-force=zstd:2 "${IMAGE_PATH}" "${MOUNT_POINT}"
+        sudo mount --bind "${runroot_source}" "${RUNROOT}"
+        image_fs="$(findmnt -n -o FSTYPE --target "${IMAGE_PATH}")"
+        image_device="$(findmnt -n -o MAJ:MIN --target "${IMAGE_PATH}")"
+        [[ -n "${image_fs}" && "${image_fs}" != tmpfs && "${image_fs}" != ramfs ]]
+        [[ -n "${image_device}" ]]
+        [[ "$(findmnt -n -o FSTYPE --target "${MOUNT_POINT}")" == btrfs ]]
+        for path in "${runroot_source}" "${RUNROOT}"; do
+          [[ "$(findmnt -n -o FSTYPE --target "${path}")" == "${image_fs}" ]]
+          [[ "$(findmnt -n -o MAJ:MIN --target "${path}")" == "${image_device}" ]]
+        done
+        sudo systemctl start podman.service || true
+        storage_info="$(sudo podman info --format '{{.Store.GraphRoot}} {{.Store.RunRoot}}')"
+        read -r graphroot runroot <<< "${storage_info}"
+        [[ "${graphroot}" == "${MOUNT_POINT}" ]]
+        [[ "${runroot}" == "${RUNROOT}" ]]

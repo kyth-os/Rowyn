@@ -52,6 +52,9 @@ echo "[validate] free-disk-space inputs passed"
 test -s Containerfile || fail "Containerfile is missing or empty"
 test -s os-release || fail "os-release is missing or empty"
 test -s keys/spike.pub || fail "spike public key is missing"
+test -x build/custom-installer-iso.sh || fail "custom installer ISO script is missing or not executable"
+test -s .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed Podman storage action is missing or empty"
 
 grep -Fq 'LABEL containers.bootc 1' Containerfile \
     || fail "Containerfile is missing containers.bootc label"
@@ -95,7 +98,80 @@ grep -Fq -- '--digestfile' .github/workflows/build.yml \
     || fail "image publication does not record an immutable digest"
 grep -Fq 'IMAGE_DIGEST' .github/workflows/build.yml \
     || fail "ISO job does not consume the published image digest"
-grep -Fq -- '-v /var/lib/containers/storage:/var/lib/containers/storage' .github/workflows/build.yml \
-    || fail "ISO builder is missing the rootful Podman storage mount"
+if grep -Fq -- '/var/lib/containers/storage:/var/lib/containers/storage' .github/workflows/build.yml; then
+    fail "custom installer ISO path must not use the obsolete bootc-image-builder storage mount"
+fi
+
+if grep -Eq 'bootc-image-builder|anaconda-iso' .github/workflows/build.yml; then
+    fail "Rowyn ISO path must use the custom installer environment, not anaconda-iso"
+fi
+grep -Fq 'needs: [build, sign]' .github/workflows/build.yml \
+    || fail "custom installer ISO is not gated on image signing"
+grep -Fq 'id-token: write' .github/workflows/build.yml \
+    || fail "image signing job is missing OIDC permission"
+grep -Fq 'cosign sign -y' .github/workflows/build.yml \
+    || fail "image signing job does not sign the immutable image"
+grep -Fq 'KYTH_INSTALLER_COMMIT' .github/workflows/build.yml \
+    || fail "custom installer source commit is not pinned"
+grep -Fq 'KYTH_INSTALLER_BASE_IMAGE' .github/workflows/build.yml \
+    || fail "custom installer base image is not pinned"
+grep -Fq './.github/actions/setup-compressed-storage' .github/workflows/build.yml \
+    || fail "custom installer ISO does not provision compressed Podman storage"
+grep -Fq 'size: 65G' .github/workflows/build.yml \
+    || fail "custom installer Podman storage size is not explicit"
+grep -Fq 'ROWYN_CUSTOM_INSTALLER_PREFLIGHT' .github/workflows/build.yml \
+    || fail "custom installer adapter preflight is missing"
+grep -Fq 'INSTALL_SOURCE_IMAGE' build/custom-installer-iso.sh \
+    || fail "custom installer script does not pass the immutable Rowyn source"
+grep -Fq 'bash build_files/build-live-iso.sh' build/custom-installer-iso.sh \
+    || fail "custom installer script assumes the upstream entrypoint is executable"
+grep -Fq 'source_image="${image_name}@${IMAGE_DIGEST}"' build/custom-installer-iso.sh \
+    || fail "custom installer source is not canonical image@digest form"
+grep -Fq 'cosign_identity="^https://github.com/kyth-os/Rowyn/' build/custom-installer-iso.sh \
+    || fail "custom installer script does not pin the Rowyn signing identity"
+grep -Fq 'cosign_bin="/usr/bin/kyth-cosign"' build/custom-installer-iso.sh \
+    || fail "custom installer does not retain the verified cosign runtime"
+grep -Fq 'ROWYN_RELEASE_DIGEST' build/custom-installer-iso.sh \
+    || fail "custom installer does not bind runtime verification to this Rowyn digest"
+grep -Fq 'Command::new("/usr/bin/kyth-cosign")' build/custom-installer-iso.sh \
+    || fail "custom installer does not cryptographically verify the image at install time"
+grep -Fq 'TUF_ROOT", tuf_root' build/custom-installer-iso.sh \
+    || fail "custom installer does not isolate the runtime cosign trust cache"
+grep -Fq 'early_verified =' build/custom-installer-iso.sh \
+    || fail "custom installer does not require an unconditional Prepare gate"
+if grep -Fq 'KYTH_EARLY_SOURCE_VERIFY=1' build/custom-installer-iso.sh; then
+    fail "custom installer must not rely on an optional early-verification environment setting"
+fi
+grep -Fq 'self.verify_install_source(phase)?' build/custom-installer-iso.sh \
+    || fail "custom installer does not verify the source during Prepare"
+grep -Fq 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' build/custom-installer-iso.sh \
+    || fail "custom installer daemon cannot reach the registry for pre-storage verification"
+grep -Fq 'sha256sum -- "$(basename "${iso}")"' .github/workflows/build.yml \
+    || fail "ISO checksum does not use a portable basename"
+grep -Fq 'runroot_source="${IMAGE_PATH}.runroot"' .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed storage runroot source is not on the image's disk filesystem"
+grep -Fq 'findmnt -n -o MAJ:MIN' .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed storage action does not verify backing devices"
+grep -Fq 'findmnt -n -o FSTYPE' .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed storage action does not verify backing filesystems"
+grep -Fq '[[ "${graphroot}" == "${MOUNT_POINT}" ]]' .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed storage action does not verify the configured graphroot"
+grep -Fq '[[ "${runroot}" == "${RUNROOT}" ]]' .github/actions/setup-compressed-storage/action.yml \
+    || fail "compressed storage action does not verify the configured runroot"
+grep -Fq 'cosign sign-blob --yes --bundle' .github/workflows/build.yml \
+    || fail "ISO checksum is not signed"
+grep -Fq 'cosign verify-blob' .github/workflows/build.yml \
+    || fail "ISO checksum signature is not verified in CI"
+grep -Fq 'rowyn-custom-installer-*.iso.sigstore.json' .github/workflows/build.yml \
+    || fail "ISO signature bundle is not uploaded"
+grep -Fq 'skopeo inspect --no-creds' .github/workflows/build.yml \
+    || fail "custom installer does not assert anonymous source-image access"
+grep -Fq 'Rowyn uses the Ubuntu kernel included in the signed image' build/custom-installer-iso.sh \
+    || fail "custom installer script does not disable the unsupported Kyth kernel choice"
+if grep -Fq 'KYTH_COSIGN_IDENTITY' build/custom-installer-iso.sh; then
+    fail "custom installer signing identity must not be caller-overridable"
+fi
+
+python3 -B -m unittest discover -s build/tests -v
 
 echo "[validate] Rowyn source and CI contracts passed"
