@@ -41,6 +41,14 @@ for workflow in sorted(Path('.github/workflows').glob('*.yml')):
 PY
 echo "[validate] workflow YAML parsed"
 
+deprecated_tool_cache_count="$(grep -Fc 'tool-cache:' .github/workflows/build.yml || true)"
+(( deprecated_tool_cache_count == 0 )) \
+    || fail "workflow still uses deprecated free-disk-space tool-cache input"
+preinstalled_runtimes_count="$(grep -Fc 'preinstalled-runtimes: true' .github/workflows/build.yml || true)"
+(( preinstalled_runtimes_count == 2 )) \
+    || fail "both free-disk-space steps must use preinstalled-runtimes"
+echo "[validate] free-disk-space inputs passed"
+
 test -s Containerfile || fail "Containerfile is missing or empty"
 test -s os-release || fail "os-release is missing or empty"
 test -s keys/spike.pub || fail "spike public key is missing"
