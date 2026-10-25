@@ -95,5 +95,7 @@ grep -Fq -- '--digestfile' .github/workflows/build.yml \
     || fail "image publication does not record an immutable digest"
 grep -Fq 'IMAGE_DIGEST' .github/workflows/build.yml \
     || fail "ISO job does not consume the published image digest"
+grep -Fq -- '-v /var/lib/containers/storage:/var/lib/containers/storage' .github/workflows/build.yml \
+    || fail "ISO builder is missing the rootful Podman storage mount"
 
 echo "[validate] Rowyn source and CI contracts passed"

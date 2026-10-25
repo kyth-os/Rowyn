@@ -238,7 +238,7 @@ jobs:
         run: |
           mkdir -p output
           sudo podman run --rm --privileged --pull=newer \
-            -v /var/lib/containers:/var/lib/containers \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v "$PWD/output:/output" \
             quay.io/centos-bootc/bootc-image-builder:latest \
             --type anaconda-iso --rootfs ext4 \
