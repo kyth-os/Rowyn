@@ -49,8 +49,18 @@ grep -Fq 'LABEL containers.bootc 1' Containerfile \
     || fail "Containerfile is missing containers.bootc label"
 grep -Fq 'RUN bootc container lint' Containerfile \
     || fail "Containerfile is missing bootc container lint"
-grep -Fq 'mkdir -p /var/lib/apt/lists/partial' Containerfile \
-    || fail "KDE apt layer must recreate apt lists/partial after rootfs normalization"
+python3 - <<'PY'
+from pathlib import Path
+
+containerfile = Path('Containerfile').read_text(encoding='utf-8')
+kde_packages = containerfile.find('plasma-desktop')
+rootfs_normalization = containerfile.find('/ctx/shared/bootc-rootfs.sh')
+if kde_packages < 0 or rootfs_normalization < 0 or kde_packages > rootfs_normalization:
+    raise SystemExit(
+        'KDE packages must be installed before bootc-rootfs.sh removes /var'
+    )
+PY
+echo "[validate] KDE package ordering passed"
 grep -Fq 'CARGO_NET_OFFLINE=true' shared/build.sh \
     || fail "bootc source build is not explicitly offline"
 grep -Fq 'git clone --depth 1' build/fetch-assets.sh \

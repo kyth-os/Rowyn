@@ -47,6 +47,18 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,
   cp /boot/vmlinuz-* "$(find /usr/lib/modules -maxdepth 1 -type d | tail -n 1)/vmlinuz" && \
   apt clean -y
 
+# --- KDE Plasma package layer -------------------------------------------------
+# Install packages that still need the distro's dpkg database before
+# bootc-rootfs.sh removes /var. Desktop enablement remains below rootfs
+# normalization because it only writes final system configuration.
+RUN apt-get update && \
+    apt-get install -y \
+        plasma-desktop sddm konsole dolphin kinfocenter \
+        plasma-nm plasma-pa xdg-desktop-portal-kde \
+        network-manager pipewire wireplumber upower udisks2 \
+        fonts-noto-core && \
+    rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
+
 RUN systemctl enable systemd-networkd systemd-resolved ssh && \
     printf 'L! /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf\n' \
         > /usr/lib/tmpfiles.d/resolv-conf.conf && \
@@ -75,20 +87,6 @@ RUN useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn 
     chmod 0440 /etc/sudoers.d/90-rowyn-spike && \
     printf 'd /var/home/rowyn 0700 rowyn rowyn -\nd /var/home/rowyn/.ssh 0700 rowyn rowyn -\nC /var/home/rowyn/.ssh/authorized_keys 0600 rowyn rowyn - /usr/share/rowyn/spike.pub\n' \
         > /usr/lib/tmpfiles.d/rowyn-spike.conf
-
-# --- KDE Plasma desktop layer -------------------------------------------------
-# Curated Plasma desktop with SDDM. Recommends stay on: the Ubuntu package
-# graph uses them for the sound/session stack (pipewire, upower, udisks2,
-# xserver for the SDDM greeter), and a coherent first boot matters more
-# than image leanness at spike stage.
-RUN mkdir -p /var/lib/apt/lists/partial && \
-    apt-get update && \
-    apt-get install -y \
-        plasma-desktop sddm konsole dolphin kinfocenter \
-        plasma-nm plasma-pa xdg-desktop-portal-kde \
-        network-manager pipewire wireplumber upower udisks2 \
-        fonts-noto-core && \
-    rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
 
 # Desktop enablement:
 # - spike user gets a throwaway password (rowyn) so SDDM/console login works
