@@ -76,6 +76,35 @@ RUN useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn 
     printf 'd /var/home/rowyn 0700 rowyn rowyn -\nd /var/home/rowyn/.ssh 0700 rowyn rowyn -\nC /var/home/rowyn/.ssh/authorized_keys 0600 rowyn rowyn - /usr/share/rowyn/spike.pub\n' \
         > /usr/lib/tmpfiles.d/rowyn-spike.conf
 
+# --- KDE Plasma desktop layer -------------------------------------------------
+# Curated Plasma desktop with SDDM. Recommends stay on: the Ubuntu package
+# graph uses them for the sound/session stack (pipewire, upower, udisks2,
+# xserver for the SDDM greeter), and a coherent first boot matters more
+# than image leanness at spike stage.
+RUN apt-get update && \
+    apt-get install -y \
+        plasma-desktop sddm konsole dolphin kinfocenter \
+        plasma-nm plasma-pa xdg-desktop-portal-kde \
+        network-manager pipewire wireplumber upower udisks2 \
+        fonts-noto-core && \
+    rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
+
+# Desktop enablement:
+# - spike user gets a throwaway password (rowyn) so SDDM/console login works
+#   for local boot tests; SSH stays key-only. SPIKE ONLY — remove for release.
+# - NetworkManager owns networking on the desktop (plasma-nm expects it):
+#   a wildcard wired profile + an explicit "manage everything" drop-in,
+#   and systemd-networkd masked so it cannot race NM for the interface.
+RUN echo 'rowyn:rowyn' | chpasswd && \
+    mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d && \
+    printf '[connection]\nid=rowyn-wired\ntype=ethernet\nautoconnect=true\n\n[ethernet]\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
+        > /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
+    chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
+    printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
+    systemctl enable sddm.service NetworkManager.service && \
+    systemctl set-default graphical.target && \
+    systemctl mask systemd-networkd.service systemd-networkd-wait-online.service
+
 LABEL containers.bootc 1
 
 RUN bootc container lint

@@ -59,3 +59,59 @@ jobs:
           sudo podman tag rowyn:spike "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
           sudo podman push ghcr.io/kyth-os/rowyn:spike
           sudo podman push "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
+
+  # Installer ISO, built strictly AFTER the container image it embeds.
+  # Boot testing happens locally on the maintainer's machine, not in CI;
+  # this job only produces the artifact.
+  iso:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Ensure podman
+        run: |
+          if ! command -v podman >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y podman
+          fi
+          podman --version
+
+      - name: Pull the image built in this run
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo podman pull ghcr.io/kyth-os/rowyn:spike
+
+      - name: Build installer ISO (bootc-image-builder)
+        run: |
+          mkdir -p output
+          sudo podman run --rm --privileged --pull=newer \
+            -v /var/lib/containers:/var/lib/containers \
+            -v "$PWD/output:/output" \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type anaconda-iso --rootfs ext4 \
+            ghcr.io/kyth-os/rowyn:spike
+
+      - name: ISO summary
+        run: |
+          find output -name '*.iso' -exec ls -lh {} \;
+          find output -name '*.iso' -exec sha256sum {} \; >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rowyn-installer-iso
+          path: output/**/*.iso
+          retention-days: 7
+          if-no-files-found: error
