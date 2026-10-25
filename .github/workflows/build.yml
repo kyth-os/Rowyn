@@ -1,22 +1,73 @@
-name: build-spike
+name: Rowyn CI
 
-# Builds the Rowyn bootc image on GitHub-hosted runners (this project's
-# local build host has constrained egress and short-lived VMs) and publishes
-# it to GHCR so it can be pulled down for QEMU boot gates.
+# Validate the source before spending a hosted runner on the bootc image.
+# The image and ISO jobs are deliberately separate so the ISO only runs after
+# the exact image built by this run has been inspected and published.
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: rowyn-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn
 
 jobs:
-  build:
+  validate:
+    name: Validate source and CI
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install validation tools
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15; then
+              break
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying" >&2
+            sleep 5
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::apt-get update failed after three attempts" >&2
+              exit 1
+            fi
+          done
+          sudo apt-get install -y --no-install-recommends python3-yaml shellcheck
+
+      - name: Validate Rowyn source and CI contracts
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: ./build/validate.sh
+
+  build:
+    name: Build and publish image
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_ref: ${{ steps.publish.outputs.image_ref }}
+      image_digest: ${{ steps.publish.outputs.image_digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
@@ -30,46 +81,118 @@ jobs:
           swap-storage: false
 
       - name: Ensure podman
+        shell: bash --noprofile --norc -euo pipefail {0}
         run: |
           if ! command -v podman >/dev/null; then
-            sudo apt-get update && sudo apt-get install -y podman
+            sudo apt-get update -o Acquire::Retries=3
+            sudo apt-get install -y --no-install-recommends podman
           fi
           podman --version
 
       - name: Fetch build assets (toolchain tarball, bootc source, vendored deps)
+        shell: bash --noprofile --norc -euo pipefail {0}
         run: ./build/fetch-assets.sh
 
       - name: Build image (offline Containerfile)
-        run: sudo podman build -t rowyn:spike .
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: sudo podman build -t rowyn:ci .
 
-      - name: Inspect image
+      - name: Inspect image and run image smoke checks
+        shell: bash --noprofile --norc -euo pipefail {0}
         run: |
-          sudo podman run --rm rowyn:spike cat /usr/lib/os-release
-          sudo podman images rowyn:spike
+          sudo podman run --rm rowyn:ci cat /usr/lib/os-release
+          sudo podman run --rm --entrypoint /bin/sh rowyn:ci -euxc '
+            grep -Fqx "NAME=\"Rowyn\"" /usr/lib/os-release
+            grep -Fqx "ID=rowyn" /usr/lib/os-release
+            grep -Fqx "ID_LIKE=\"ubuntu debian\"" /usr/lib/os-release
+            id rowyn
+            test -s /etc/sudoers.d/90-rowyn-spike
+            test -s /usr/lib/tmpfiles.d/rowyn-spike.conf
+            test -s /etc/NetworkManager/system-connections/rowyn-wired.nmconnection
+            test -s /etc/NetworkManager/conf.d/99-rowyn-managed.conf
+            test "$(readlink -f /etc/systemd/system/default.target)" = /usr/lib/systemd/system/graphical.target
+            test -e /etc/systemd/system/display-manager.service
+            test -e /etc/systemd/system/multi-user.target.wants/NetworkManager.service
+            test "$(readlink /etc/systemd/system/systemd-networkd.service)" = /dev/null
+          '
           {
             echo '### Image'
-            sudo podman image inspect rowyn:spike --format '- size: {{.Size}} bytes
-            - digest: {{.Digest}}'
+            sudo podman image inspect rowyn:ci --format '- size: {{.Size}} bytes'
+            sudo podman image inspect rowyn:ci --format '- local digest: {{.Digest}}'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push to GHCR
+      - name: Push immutable image and spike alias to GHCR
+        id: publish
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          sudo podman tag rowyn:spike ghcr.io/kyth-os/rowyn:spike
-          sudo podman tag rowyn:spike "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
-          sudo podman push ghcr.io/kyth-os/rowyn:spike
-          sudo podman push "ghcr.io/kyth-os/rowyn:${GITHUB_SHA::7}"
+          image_ref="${IMAGE_REPOSITORY}:${GITHUB_SHA}"
+          digest_file="${RUNNER_TEMP}/rowyn-image.digest"
 
-  # Installer ISO, built strictly AFTER the container image it embeds.
-  # Boot testing happens locally on the maintainer's machine, not in CI;
-  # this job only produces the artifact.
+          echo "${GITHUB_TOKEN}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo podman tag rowyn:ci "${image_ref}"
+          sudo podman tag rowyn:ci "${IMAGE_REPOSITORY}:spike"
+
+          sudo podman push --digestfile "${digest_file}" "${image_ref}"
+          image_digest="$(cat "${digest_file}")"
+          [[ "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          # Keep the human-friendly spike tag, but never use it as the input to
+          # a downstream job. The ISO consumes image_ref@image_digest below.
+          sudo podman push "${IMAGE_REPOSITORY}:spike"
+
+          {
+            echo "image_ref=${image_ref}"
+            echo "image_digest=${image_digest}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo '### Published image'
+            echo "- ref: \`${image_ref}\`"
+            echo "- digest: \`${image_digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write immutable image metadata
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          IMAGE_REF: ${{ steps.publish.outputs.image_ref }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.image_digest }}
+        run: |
+          mkdir -p output
+          jq -n \
+            --arg image "${IMAGE_REF}" \
+            --arg digest "${IMAGE_DIGEST}" \
+            --arg source_sha "${GITHUB_SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            '{image: $image, digest: $digest, source_sha: $source_sha, run_id: $run_id}' \
+            > output/image-build-metadata.json
+
+      - name: Upload immutable image metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: rowyn-image-metadata-${{ github.sha }}
+          path: output/image-build-metadata.json
+          retention-days: 7
+          if-no-files-found: error
+
+  # Installer ISO, built strictly after the exact container image above.
+  # Boot testing remains a separate local/manual acceptance gate for now.
   iso:
+    name: Build installer ISO
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -82,18 +205,36 @@ jobs:
           swap-storage: false
 
       - name: Ensure podman
+        shell: bash --noprofile --norc -euo pipefail {0}
         run: |
           if ! command -v podman >/dev/null; then
-            sudo apt-get update && sudo apt-get install -y podman
+            sudo apt-get update -o Acquire::Retries=3
+            sudo apt-get install -y --no-install-recommends podman
           fi
           podman --version
 
-      - name: Pull the image built in this run
+      - name: Pull the exact image built in this run
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          sudo podman pull ghcr.io/kyth-os/rowyn:spike
+          test -n "${IMAGE_REF}"
+          test -n "${IMAGE_DIGEST}"
+          echo "${GITHUB_TOKEN}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo podman pull "${IMAGE_REF}@${IMAGE_DIGEST}"
+          {
+            echo '### ISO source image'
+            echo "- ref: \`${IMAGE_REF}\`"
+            echo "- digest: \`${IMAGE_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build installer ISO (bootc-image-builder)
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
         run: |
           mkdir -p output
           sudo podman run --rm --privileged --pull=newer \
@@ -101,17 +242,22 @@ jobs:
             -v "$PWD/output:/output" \
             quay.io/centos-bootc/bootc-image-builder:latest \
             --type anaconda-iso --rootfs ext4 \
-            ghcr.io/kyth-os/rowyn:spike
+            "${IMAGE_REF}@${IMAGE_DIGEST}"
 
-      - name: ISO summary
+      - name: ISO summary and checksums
+        shell: bash --noprofile --norc -euo pipefail {0}
         run: |
-          find output -name '*.iso' -exec ls -lh {} \;
-          find output -name '*.iso' -exec sha256sum {} \; >> "$GITHUB_STEP_SUMMARY"
+          mapfile -t isos < <(find output -type f -name '*.iso' -print)
+          (( ${#isos[@]} > 0 ))
+          for iso in "${isos[@]}"; do
+            ls -lh "${iso}"
+            sha256sum "${iso}" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rowyn-installer-iso
+          name: rowyn-installer-iso-${{ github.sha }}
           path: output/**/*.iso
           retention-days: 7
           if-no-files-found: error
