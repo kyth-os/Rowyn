@@ -43,7 +43,7 @@ FROM base AS system
 COPY --from=builder /output /
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,dst=/boot apt update -y && \
-  apt install -y btrfs-progs bubblewrap dosfstools e2fsprogs fdisk linux-firmware linux-image-generic netplan.io openssh-server systemd-resolved chrony skopeo systemd systemd-boot* xfsprogs libostree-dev dracut && \
+  apt install -y btrfs-progs bubblewrap dosfstools e2fsprogs fdisk linux-firmware linux-image-generic netplan.io openssh-server systemd-resolved chrony skopeo sudo systemd systemd-boot* xfsprogs libostree-dev dracut && \
   cp /boot/vmlinuz-* "$(find /usr/lib/modules -maxdepth 1 -type d | tail -n 1)/vmlinuz" && \
   apt clean -y
 
@@ -70,6 +70,7 @@ COPY os-release /usr/lib/os-release
 COPY keys/spike.pub /usr/share/rowyn/spike.pub
 RUN useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn && \
     usermod -aG sudo rowyn && \
+    mkdir -p /etc/sudoers.d && \
     printf 'rowyn ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-rowyn-spike && \
     chmod 0440 /etc/sudoers.d/90-rowyn-spike && \
     printf 'd /var/home/rowyn 0700 rowyn rowyn -\nd /var/home/rowyn/.ssh 0700 rowyn rowyn -\nC /var/home/rowyn/.ssh/authorized_keys 0600 rowyn rowyn - /usr/share/rowyn/spike.pub\n' \
