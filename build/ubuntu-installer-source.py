@@ -168,12 +168,14 @@ def port_source(root, digest):
     Err("installed Ubuntu payload lacks a matching kernel/initramfs pair".into())
 }''' + text[end:]
     assurance.write_text(text)
-    # Ubuntu's util-linux puts mount/umount and lsblk in /usr/bin, not /usr/sbin.
+    # Ubuntu's util-linux puts mount/umount and lsblk in /usr/bin, while
+    # blkid and blockdev live in /usr/sbin.
     for path in (crate / "src").glob("*.rs"):
         text = path.read_text()
         for binary in ("mount", "umount", "lsblk"):
             text = text.replace(f'/usr/sbin/{binary}', f'/usr/bin/{binary}')
-        text = text.replace('/usr/bin/blkid', '/usr/sbin/blkid')
+        for binary in ("blkid", "blockdev"):
+            text = text.replace(f'/usr/bin/{binary}', f'/usr/sbin/{binary}')
         text = text.replace('ghcr.io/kyth-os/kyth:latest', source)
         text = text.replace('"fedora"', '"ubuntu"')
         path.write_text('// Rowyn: modified for the Ubuntu-only installer port.\n' + text)

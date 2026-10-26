@@ -54,6 +54,7 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,
 RUN apt-get update && \
     apt-get install -y \
         plasma-desktop sddm konsole dolphin kinfocenter \
+        breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 \
         fonts-noto-core && \
@@ -73,6 +74,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     echo "HOME=/var/home" | tee -a "/etc/default/useradd" && \
     /ctx/shared/bootc-rootfs.sh
 
+# The rootfs normalizer deletes /var. Keep KDE defaults in /etc and in a
+# /usr-owned tmpfiles source so they survive stateless first boot.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/kde-dark-defaults.sh --root /
+
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
 
@@ -80,7 +86,9 @@ COPY os-release /usr/lib/os-release
 # /etc/passwd is committed by ostree; /var starts empty on install, so the
 # home directory and authorized_keys are created by tmpfiles on first boot.
 COPY keys/spike.pub /usr/share/rowyn/spike.pub
-RUN useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn && \
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn && \
+    /ctx/shared/kde-dark-defaults.sh --root / --user rowyn && \
     usermod -aG sudo rowyn && \
     mkdir -p /etc/sudoers.d && \
     printf 'rowyn ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-rowyn-spike && \

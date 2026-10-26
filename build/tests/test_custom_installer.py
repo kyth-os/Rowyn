@@ -9,6 +9,7 @@ ROWYN_TEST_ACTION / ROWYN_TEST_ADAPTER allow testing saved pre-fix files.
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -231,6 +232,94 @@ class LiveNetworkConfigurationTests(unittest.TestCase):
         self.assertTrue(is_unmanaged("bridge"))
 
 
+class DarkDefaultsTests(unittest.TestCase):
+    HELPER = ROOT / "shared/kde-dark-defaults.sh"
+
+    def run_helper(self, root, user=None, home=None):
+        command = ["bash", str(self.HELPER), "--root", str(root)]
+        if user:
+            command += ["--user", user]
+        if home:
+            command += ["--home", home]
+        return subprocess.run(command, text=True, capture_output=True)
+
+    def test_helper_generates_breeze_dark_system_and_user_defaults(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-dark-") as temp:
+            root = Path(temp)
+            home = root / "home/liveuser"
+            home.mkdir(parents=True)
+            result = self.run_helper(root, "liveuser", "/home/liveuser")
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            expected = {
+                "ColorScheme=BreezeDark",
+                "LookAndFeelPackage=org.kde.breezedark.desktop",
+                "Theme=breeze-dark",
+                "gtk-theme-name=Breeze-Dark",
+                "gtk-icon-theme-name=breeze-dark",
+            }
+            files = [
+                root / "etc/xdg/kdeglobals",
+                root / "etc/skel/.config/kdeglobals",
+                home / ".config/kdeglobals",
+                root / "etc/gtk-3.0/settings.ini",
+                home / ".config/gtk-3.0/settings.ini",
+            ]
+            for path in files:
+                self.assertTrue(path.is_file(), path)
+                text = path.read_text()
+                for value in expected:
+                    if value.startswith("gtk-") and "gtk-3.0" not in str(path):
+                        continue
+                    if value.startswith("gtk-"):
+                        self.assertIn(value, text, path)
+                if path.name == "kdeglobals":
+                    self.assertIn("ColorScheme=BreezeDark", text)
+                    self.assertIn("LookAndFeelPackage=org.kde.breezedark.desktop", text)
+
+            self.assertIn("[Theme]\nname=default", (root / "etc/xdg/plasmarc").read_text())
+            self.assertIn("library=org.kde.breeze", (root / "etc/xdg/kwinrc").read_text())
+            self.assertIn("theme=Breeze", (root / "etc/xdg/kwinrc").read_text())
+            self.assertIn("cursorTheme=breeze_cursors", (root / "etc/xdg/kcminputrc").read_text())
+            self.assertIn("Theme=org.kde.breeze.desktop", (root / "etc/xdg/ksplashrc").read_text())
+
+            self.assertTrue((root / "usr/share/rowyn/kde-dark-defaults/kdeglobals").is_file())
+
+    def test_helper_does_not_replace_existing_user_preferences_and_handles_var_home(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-dark-") as temp:
+            root = Path(temp)
+            result = self.run_helper(root, "rowyn", "/var/home/rowyn")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            tmpfiles = (root / "usr/lib/tmpfiles.d/zz-rowyn-kde-dark.conf").read_text()
+            self.assertIn("/var/home/rowyn/.config/kdeglobals", tmpfiles)
+            self.assertIn("/usr/share/rowyn/kde-dark-defaults/kdeglobals", tmpfiles)
+            self.assertIn("d /var/home/rowyn/.config/gtk-3.0 0700 rowyn rowyn -", tmpfiles)
+            self.assertIn("d /var/home/rowyn/.config/gtk-4.0 0700 rowyn rowyn -", tmpfiles)
+
+        with tempfile.TemporaryDirectory(prefix="rowyn-dark-") as temp:
+            root = Path(temp)
+            existing = root / "var/home/rowyn/.config/kdeglobals"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("[General]\nColorScheme=MyUserChoice\n")
+            result = self.run_helper(root, "rowyn", "/var/home/rowyn")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(existing.read_text(), "[General]\nColorScheme=MyUserChoice\n")
+
+    def test_both_image_paths_install_assets_and_run_shared_helper_after_rootfs(self):
+        payload = (ROOT / "Containerfile").read_text()
+        live = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        adapter = (ROOT / "build/custom-installer-iso.sh").read_text()
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        for text in (payload, live):
+            for package in ("breeze", "breeze-gtk-theme", "breeze-icon-theme", "kde-style-breeze", "kde-cli-tools"):
+                self.assertIn(package, text)
+        self.assertLess(payload.index("/ctx/shared/bootc-rootfs.sh"),
+                        payload.index("/ctx/shared/kde-dark-defaults.sh"))
+        self.assertIn("kde-dark-defaults.sh", adapter)
+        self.assertIn("kde-dark-defaults.sh", configure)
+        self.assertIn("--user liveuser", configure)
+
+
 class CasperProtectionTests(unittest.TestCase):
     def runner(self, mounts, devices, loops=None):
         calls = []
@@ -321,8 +410,78 @@ class PinnedSourceTests(unittest.TestCase):
                 self.assertNotIn('-cachy', fn)
                 with self.assertRaises(ValueError):
                     port.export_source(repo, root)
+
             self.assertEqual(*snapshots)
         self.assertEqual(original, subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]))
+
+    def test_adapted_pinned_source_uses_ubuntu_utility_paths(self):
+        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        expected = {
+            Path(path).name: path
+            for path in live.REQUIRED
+            if Path(path).name in {"blockdev", "blkid", "findmnt", "lsblk", "mount", "umount"}
+        }
+        with tempfile.TemporaryDirectory(prefix="rowyn-paths-") as temp:
+            root = Path(temp) / "source"
+            port.export_source(repo, root)
+            port.port_source(root, "sha256:" + "b"*64)
+            source = root / "src/kyth-installer-web/src-tauri/src"
+            for path in sorted(source.glob("*.rs")):
+                text = path.read_text()
+                for utility, expected_path in expected.items():
+                    actual = set(re.findall(rf"/usr/(?:bin|sbin)/{re.escape(utility)}", text))
+                    self.assertTrue(
+                        actual <= {expected_path},
+                        f"{path.relative_to(root)} uses non-Ubuntu {utility}: {sorted(actual)}",
+                    )
+            self.assertTrue(
+                any("/usr/sbin/blockdev" in path.read_text() for path in source.glob("*.rs")),
+                "pinned production source did not retain a blockdev sector-size probe",
+            )
+
+    def test_adapted_sector_probe_runs_with_safe_command_double(self):
+        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        if shutil.which("rustc") is None:
+            self.skipTest("rustc is required for the source-extracted probe")
+        with tempfile.TemporaryDirectory(prefix="rowyn-probe-") as temp:
+            root = Path(temp)
+            exported = root / "source"
+            port.export_source(repo, exported)
+            port.port_source(exported, "sha256:" + "b"*64)
+            source = (exported / "src/kyth-installer-web/src-tauri/src/installer_disk.rs").read_text()
+            start = source.index("pub(crate) fn logical_sector_size")
+            function = source[start:source.index("\n}\n", start) + 2]
+            self.assertIn('Command::new("/usr/sbin/blockdev")', function)
+
+            double = root / "blockdev-double"
+            log = root / "blockdev.args"
+            double.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$@\" > {log}\n"
+                "printf '4096\\n'\n"
+            )
+            double.chmod(0o755)
+            probe = root / "probe.rs"
+            command = function.replace(
+                'Command::new("/usr/sbin/blockdev")',
+                f"Command::new({json.dumps(str(double))})",
+            )
+            probe.write_text(
+                "use std::process::Command;\n"
+                + command
+                + "\nfn main() { println!(\"{}\", logical_sector_size(\"/dev/vda\").unwrap()); }\n"
+            )
+            binary = root / "probe"
+            compiled = subprocess.run(
+                ["rustc", str(probe), "-o", str(binary)],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "4096")
+            self.assertEqual(log.read_text().splitlines(), ["--getss", "/dev/vda"])
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
     apt-get update && apt-get install -y --no-install-recommends \
       linux-image-generic linux-firmware casper initramfs-tools systemd-sysv \
       plasma-desktop plasma-workspace sddm xserver-xorg xinit dbus-x11 \
+      breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
       network-manager netplan.io plasma-nm konsole kdialog fonts-noto-core \
       libwebkit2gtk-4.1-0 libgtk-3-0t64 libxdo3 libfontconfig1 libxkbcommon0 \
       libegl1 libgl1 libgl1-mesa-dri libinput10 libgbm1 libudev1 \

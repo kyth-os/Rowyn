@@ -36,6 +36,7 @@ chmod 644 /etc/kyth-installer.env
 # Casper requires its configured session user to own uid 1000.
 if getent passwd ubuntu >/dev/null; then userdel ubuntu; fi
 useradd --uid 1000 --create-home --shell /bin/bash --groups audio,video,render liveuser
+/rowyn/kde-dark-defaults.sh --root / --user liveuser --home /home/liveuser
 cat > /etc/casper.conf <<'EOF'
 export USERNAME="liveuser"
 export USERFULLNAME="Rowyn Live Session"
