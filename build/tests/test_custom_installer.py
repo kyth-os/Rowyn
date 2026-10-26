@@ -144,6 +144,7 @@ def load_module(name, file):
 port = load_module("ubuntu_source", "build/ubuntu-installer-source.py")
 live = load_module("ubuntu_live", "build/ubuntu-live-preflight.py")
 guard = load_module("ubuntu_guard", "build/ubuntu-only-check.py")
+network = load_module("ubuntu_live_network", "build/ubuntu-live-network.py")
 
 
 class UbuntuGuardTests(unittest.TestCase):
@@ -190,6 +191,44 @@ class UbuntuGuardTests(unittest.TestCase):
         result = subprocess.run(["bash", str(ADAPTER)], cwd=ROOT, env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("official Ubuntu", result.stderr)
+
+
+class LiveNetworkConfigurationTests(unittest.TestCase):
+    def test_live_image_installs_netplan_and_generates_policy(self):
+        containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        self.assertIn("network-manager netplan.io plasma-nm", containerfile)
+        self.assertIn("/usr/bin/python3 /rowyn/ubuntu-live-network.py --root /", configure)
+        self.assertIn("netplan generate --root-dir /", configure)
+
+    def test_generated_policy_manages_wired_and_wifi_but_not_other_devices(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-network-") as temp:
+            nm_path, netplan_path = network.configure(Path(temp))
+            nm_text = nm_path.read_text()
+            config = yaml.safe_load(netplan_path.read_text())
+            netplan_mode = netplan_path.stat().st_mode & 0o777
+
+        self.assertEqual(nm_path.name, "10-globally-managed-devices.conf")
+        self.assertEqual(netplan_mode, 0o600)
+        self.assertIn("unmanaged-devices=except:type:ethernet,except:type:wifi,except:type:gsm,except:type:cdma", nm_text)
+        self.assertIn("[ifupdown]\nmanaged=true", nm_text)
+        self.assertEqual(config["network"]["renderer"], "NetworkManager")
+        wired = config["network"]["ethernets"]["rowyn-wired"]
+        self.assertEqual(wired["match"]["name"], "en*")
+        self.assertTrue(wired["dhcp4"])
+        self.assertTrue(wired["dhcp6"])
+        self.assertTrue(wired["optional"])
+
+        # Exercise NetworkManager's policy shape: only the named device types
+        # are exceptions to the global unmanaged wildcard.
+        tokens = nm_text.split("unmanaged-devices=", 1)[1].splitlines()[0].split(",")
+        def is_unmanaged(device_type):
+            positive = "*" in tokens or all(token.startswith("except:") for token in tokens)
+            return positive and f"except:type:{device_type}" not in tokens
+
+        for device_type in ("ethernet", "wifi", "gsm", "cdma"):
+            self.assertFalse(is_unmanaged(device_type))
+        self.assertTrue(is_unmanaged("bridge"))
 
 
 class CasperProtectionTests(unittest.TestCase):

@@ -42,6 +42,11 @@ export USERFULLNAME="Rowyn Live Session"
 export HOST="rowyn-live"
 export BUILD_SYSTEM="Ubuntu"
 EOF
+# Ubuntu's packaged keyfile policy otherwise marks every Ethernet device
+# unmanaged. Keep NetworkManager authoritative for live wired DHCP and Wi-Fi;
+# netplan persists the NetworkManager renderer and the wired DHCP match.
+/usr/bin/python3 /rowyn/ubuntu-live-network.py --root /
+netplan generate --root-dir /
 mkdir -p /etc/sddm.conf.d /etc/xdg/autostart /etc/sudoers.d
 cat > /etc/sddm.conf.d/20-rowyn-live.conf <<'EOF'
 [Autologin]
