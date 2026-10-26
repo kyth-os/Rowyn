@@ -1,9 +1,7 @@
 """Behavioral tests for the emitted Ubuntu Secure Boot preflight policy."""
 from __future__ import annotations
 
-import importlib.util
-import json
-import os
+import ast
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,31 +9,30 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-PINNED_REPO = Path(os.environ.get("ROWYN_TEST_KYTH_REPO", "/var/home/phendrick/git/kyth.worktrees/main"))
-PIN = "2baf8496b5aa904c0784f4290df743ee17edae48"
 
 
-def load_port_module():
-    spec = importlib.util.spec_from_file_location(
-        "ubuntu_source_secure_boot", ROOT / "build/ubuntu-installer-source.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-port = load_port_module()
+def emitted_policy_source():
+    """Read the actual generated Rust literal without a developer checkout."""
+    adapter = ROOT / "build/ubuntu-installer-source.py"
+    tree = ast.parse(adapter.read_text())
+    matches = [
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "secure_boot_policy" for target in node.targets)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+    if len(matches) != 1:
+        raise AssertionError("expected exactly one emitted Secure Boot policy literal")
+    return matches[0]
 
 
 class EmittedSecureBootGateTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("rustc"), "rustc is required for emitted Rust behavior tests")
     def test_source_extracted_policy_rejects_unsafe_states_and_accepts_only_corroborated_states(self):
         with tempfile.TemporaryDirectory(prefix="rowyn-secure-boot-") as temp:
-            exported = Path(temp) / "source"
-            port.export_source(PINNED_REPO, exported)
-            port.port_source(exported, "sha256:" + "b" * 64)
-            source = (exported / "src/kyth-installer-web/src-tauri/src/installer_job_executor.rs").read_text()
+            source = emitted_policy_source()
             self.assertIn('env("LC_ALL", "C")', source)
             self.assertIn("run_output_timeout_capture", source)
             self.assertIn("/sys/firmware/efi/efivars", source)
