@@ -24,6 +24,42 @@ def replace_once(text, old, new):
     return text.replace(old, new)
 
 
+def adapt_installer_service(text):
+    """Apply the narrow writable-runtime contract to the pinned unit.
+
+    Keep every replacement anchored to the exact pinned upstream text.  A
+    service layout change must stop the port rather than silently broadening
+    or dropping the sandbox.
+    """
+    text = replace_once(
+        text,
+        "EnvironmentFile=-/etc/kyth-installer.env\n",
+        "EnvironmentFile=/etc/kyth-installer.env\n",
+    )
+    text = replace_once(
+        text,
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n",
+    )
+    text = replace_once(
+        text,
+        "UMask=0077\n",
+        "UMask=0077\n"
+        "# Provision bootc paths without re-owning the launcher's session-token tree.\n"
+        "RuntimeDirectory=bootc\n"
+        "RuntimeDirectoryMode=0750\n"
+        "StateDirectory=containers\n"
+        "StateDirectoryMode=0700\n",
+    )
+    text = replace_once(
+        text,
+        "ReadWritePaths=/run/kyth-installer /var/tmp /var/log\n",
+        "ReadWritePaths=/run/kyth-installer /var/tmp /var/log "
+        "/var/lib/containers /run/bootc\n",
+    )
+    return text.replace("KythOS", "Rowyn")
+
+
 def export_source(repo, destination):
     actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", PIN + "^{commit}"], text=True).strip()
     if actual != PIN:
@@ -536,9 +572,7 @@ pub(crate) fn run_output_timeout_capture(
         raise ValueError("upstream launcher no longer targets the Tauri shell")
     launcher.write_text(text.replace('KythOS', 'Rowyn'))
     service = root / "build_files/kyth-installerd.service"
-    text = service.read_text().replace('EnvironmentFile=-', 'EnvironmentFile=')
-    text = text.replace('RestrictAddressFamilies=AF_UNIX\n', 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n')
-    service.write_text(text.replace('KythOS', 'Rowyn'))
+    service.write_text(adapt_installer_service(service.read_text()))
     (root / 'ROWYN-PORT-NOTICE').write_text(
         f'Kyth installer source {PIN}, Apache-2.0 (LICENSE).\n'
         'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'

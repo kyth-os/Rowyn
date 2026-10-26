@@ -409,6 +409,112 @@ class CasperProtectionTests(unittest.TestCase):
                 live.assert_safe_target("/dev/sda", run)
 
 
+class InstallerServiceSandboxContractTests(unittest.TestCase):
+    """Model systemd's path provisioning without touching host services.
+
+    This is deliberately not presented as a mount-namespace test: the
+    contract model covers ProtectSystem/StateDirectory/RuntimeDirectory path
+    semantics, while systemd-analyze verification covers unit syntax.
+    """
+
+    ORIGINAL_SERVICE = (
+        "[Service]\n"
+        "ProtectSystem=strict\n"
+        "ReadWritePaths=/run/kyth-installer /var/tmp /var/log\n"
+        "EnvironmentFile=-/etc/kyth-installer.env\n"
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"
+        "UMask=0077\n"
+    )
+
+    def _paths(self, service):
+        values = {}
+        for line in service.splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
+                values.setdefault(key, []).append(value.split())
+        return values
+
+    def _model_mkdir(self, service, root, absolute_path):
+        paths = self._paths(service)
+        requested = Path(absolute_path)
+        writable = {Path(path) for group in paths.get("ReadWritePaths", []) for path in group}
+        writable.update(
+            Path("/var/lib") / name
+            for group in paths.get("StateDirectory", [])
+            for name in group
+        )
+        writable.update(
+            Path("/run") / name
+            for group in paths.get("RuntimeDirectory", [])
+            for name in group
+        )
+        allowed = any(requested == path or path in requested.parents for path in writable)
+        if paths.get("ProtectSystem") == [["strict"]] and not allowed:
+            raise PermissionError(f"modeled ProtectSystem=strict denial: {absolute_path}")
+        translated = root / requested.relative_to("/")
+        translated.mkdir(parents=True, exist_ok=True)
+
+    def test_original_denies_bootc_required_mkdir_and_fix_provisions_exact_paths(self):
+        fixed = port.adapt_installer_service(self.ORIGINAL_SERVICE)
+        with tempfile.TemporaryDirectory(prefix="rowyn-service-sandbox-") as temp:
+            root = Path(temp)
+            with self.assertRaises(PermissionError):
+                self._model_mkdir(self.ORIGINAL_SERVICE, root, "/var/lib/containers")
+            with self.assertRaises(PermissionError):
+                self._model_mkdir(self.ORIGINAL_SERVICE, root, "/run/bootc")
+
+            self._model_mkdir(fixed, root, "/var/lib/containers")
+            self._model_mkdir(fixed, root, "/run/bootc")
+            self.assertTrue((root / "var/lib/containers").is_dir())
+            self.assertTrue((root / "run/bootc").is_dir())
+            with self.assertRaises(PermissionError):
+                self._model_mkdir(fixed, root, "/var/lib/unrelated")
+
+    def test_fixed_service_preserves_runtime_and_mode_boundaries(self):
+        fixed = port.adapt_installer_service(self.ORIGINAL_SERVICE)
+        paths = self._paths(fixed)
+        self.assertEqual(paths["ProtectSystem"], [["strict"]])
+        self.assertEqual(paths["RuntimeDirectory"], [["bootc"]])
+        self.assertEqual(paths["RuntimeDirectoryMode"], [["0750"]])
+        self.assertEqual(paths["StateDirectory"], [["containers"]])
+        self.assertEqual(paths["StateDirectoryMode"], [["0700"]])
+        self.assertEqual(
+            paths["ReadWritePaths"],
+            [["/run/kyth-installer", "/var/tmp", "/var/log", "/var/lib/containers", "/run/bootc"]],
+        )
+        self.assertNotIn("/run", paths["ReadWritePaths"][0])
+        self.assertNotIn("/var", paths["ReadWritePaths"][0])
+        self.assertNotIn("ExecStartPre=", fixed)
+        self.assertNotIn("ProtectSystem=off", fixed)
+
+    def test_fixed_unit_passes_systemd_effective_unit_verification(self):
+        if shutil.which("systemd-analyze") is None:
+            self.skipTest("systemd-analyze is unavailable")
+        fixed = port.adapt_installer_service(self.ORIGINAL_SERVICE)
+        unit = "[Unit]\nDescription=Rowyn service fixture\n\n" + fixed
+        unit += "ExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n"
+        with tempfile.TemporaryDirectory(prefix="rowyn-systemd-unit-") as temp:
+            path = Path(temp) / "kyth-installerd.service"
+            path.write_text(unit)
+            result = subprocess.run(
+                ["systemd-analyze", "verify", str(path)],
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_service_adapter_fails_closed_when_pinned_anchor_changes(self):
+        for anchor in (
+            "EnvironmentFile=-/etc/kyth-installer.env",
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+            "UMask=0077",
+            "ReadWritePaths=/run/kyth-installer /var/tmp /var/log",
+        ):
+            mutated = self.ORIGINAL_SERVICE.replace(anchor, anchor + "-changed")
+            with self.assertRaises(ValueError, msg=anchor):
+                port.adapt_installer_service(mutated)
+
+
 @unittest.skipUnless(os.environ.get("ROWYN_TEST_KYTH_REPO"), "set ROWYN_TEST_KYTH_REPO for pinned-source integration")
 class PinnedSourceTests(unittest.TestCase):
     def test_exact_object_export_is_repeatable_and_ports_actual_source(self):
@@ -444,8 +550,36 @@ class PinnedSourceTests(unittest.TestCase):
                 service = (root / 'build_files/kyth-installerd.service').read_text()
                 self.assertIn('EnvironmentFile=/etc/kyth-installer.env', service)
                 self.assertIn('RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6', service)
-                self.assertIn('ReadWritePaths=/run/kyth-installer', service)
-                images = (root / 'src/kyth-shared-rs/src/system/installer_source.rs').read_text()
+                self.assertIn('RuntimeDirectory=bootc\n', service)
+                # The launcher owns the session-token tree. systemd must not
+                # re-own it as root:root and cut off the live UI's API access.
+                self.assertNotIn('kyth-installer', next(
+                    line for line in service.splitlines() if line.startswith('RuntimeDirectory=')
+                ))
+                self.assertIn('RuntimeDirectoryMode=0750', service)
+                self.assertIn('StateDirectory=containers', service)
+                self.assertIn('StateDirectoryMode=0700', service)
+                self.assertIn(
+                    'ReadWritePaths=/run/kyth-installer /var/tmp /var/log /var/lib/containers /run/bootc',
+                    service,
+                )
+                self.assertNotIn('ReadWritePaths=/run\n', service)
+                self.assertNotIn('ReadWritePaths=/var\n', service)
+                if shutil.which("systemd-analyze"):
+                    verify = service.replace(
+                        "ExecStart=/usr/bin/kyth-installerd",
+                        "ExecStart=/bin/true",
+                        1,
+                    )
+                    unit = root / "build_files/kyth-installerd-verify.service"
+                    unit.write_text(verify)
+                    result = subprocess.run(
+                        ["systemd-analyze", "verify", str(unit)],
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                images = (root / "src/kyth-shared-rs/src/system/installer_source.rs").read_text()
                 fn = images[images.index('pub fn install_images('):images.index('/// Classify')]
                 self.assertNotIn('-cachy', fn)
                 with self.assertRaises(ValueError):
