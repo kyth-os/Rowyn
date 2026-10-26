@@ -13,6 +13,31 @@ from pathlib import Path
 
 REFERENCE_SHA256 = "fc344b44914d28b496d6f1431aa729a92fbdcc124f7d93266a1ef885adcc961e"
 REFERENCE_RECORDS = 2183
+
+# Packages in the official Kubuntu live set that Rowyn deliberately does
+# not install: they implement Kubuntu's own installer (Calamares, its
+# settings packages, and the session installer prompt), which Rowyn
+# replaces with its own bootc installer. The reference manifest stays
+# byte-identical to the official file; the substitution lives here so
+# parity verification can enforce both directions — everything else
+# installed, these absent.
+SUBSTITUTED_DEBS = frozenset({
+    "calamares",
+    "calamares-data",
+    "calamares-settings-kubuntu",
+    "calamares-settings-ubuntu-common",
+    "calamares-settings-ubuntu-common-data",
+    "kubuntu-installer-prompt",
+    "libcalamares3.3",
+    "libcalamaresui3.3",
+})
+
+
+def expected_debs(package_set):
+    unknown = sorted(SUBSTITUTED_DEBS - set(package_set.debs))
+    if unknown:
+        raise ValueError("Substituted packages absent from the reference manifest: " + ", ".join(unknown))
+    return [name for name in package_set.debs if name not in SUBSTITUTED_DEBS]
 ARCHITECTURE = "amd64"
 PACKAGE_NAME = re.compile(r"[a-z0-9][a-z0-9+.-]*\Z")
 SNAP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
@@ -117,12 +142,13 @@ def run_checked(arguments, *, cwd=None):
 
 def install_deb_packages(manifest, runner=run_checked):
     package_set = verify_reference_manifest(manifest)
-    runner(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *package_set.debs])
+    wanted = expected_debs(package_set)
+    runner(["/usr/bin/apt-get", "install", "-y", "--no-install-recommends", *wanted])
     installed = runner([
         "/usr/bin/dpkg-query", "-W", "--showformat=${Package}\\n",
     ])
     installed_names = {normalize_package_name(line) for line in installed.splitlines() if line.strip()}
-    missing = sorted(set(package_set.debs) - installed_names)
+    missing = sorted(set(wanted) - installed_names)
     if missing:
         raise ValueError("Kubuntu desktop live packages were not installed: " + ", ".join(missing))
 
@@ -234,9 +260,12 @@ def verify_package_parity(manifest, installed_manifest, root=Path("/")):
         for line in installed_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     }
-    missing = sorted(set(package_set.debs) - installed_names)
+    missing = sorted(set(expected_debs(package_set)) - installed_names)
     if missing:
         raise ValueError("Kubuntu desktop live packages missing from image: " + ", ".join(missing))
+    substituted_present = sorted(SUBSTITUTED_DEBS & installed_names)
+    if substituted_present:
+        raise ValueError("Substituted Kubuntu installer packages present in image: " + ", ".join(substituted_present))
     records = _seeded_snap_records(package_set, root)
     existing = installed_path.read_text(encoding="utf-8").splitlines()
     present = {line.split()[0] for line in existing if line.split()}
@@ -245,7 +274,7 @@ def verify_package_parity(manifest, installed_manifest, root=Path("/")):
             key = f"snap:{name}"
             if key not in present:
                 output.write(f"{key}\t{channel}\t{revision}\n")
-    return len(package_set.debs), len(records)
+    return len(expected_debs(package_set)), len(records)
 
 
 def main(argv=None):

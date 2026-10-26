@@ -172,7 +172,7 @@ class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
         self.assertNotIn("gdm3", package_set.debs)
         self.assertNotIn("ubuntu-desktop", package_set.debs)
 
-    def test_install_passes_every_official_deb_package_to_apt(self):
+    def test_install_passes_every_official_deb_except_substituted_installer_packages_to_apt(self):
         package_set = self.packages.verify_reference_manifest(self.manifest)
         calls = []
 
@@ -185,8 +185,13 @@ class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
             raise AssertionError("unexpected command: " + str(arguments))
 
         self.packages.install_deb_packages(self.manifest, runner=fake_runner)
-        self.assertEqual(set(calls[0][4:]), set(package_set.debs))
-        self.assertEqual(len(calls[0][4:]), 2175)
+        self.assertEqual(set(calls[0][4:]), set(self.packages.expected_debs(package_set)))
+        self.assertEqual(len(calls[0][4:]), 2167)
+        # Calamares is Kubuntu's installer; Rowyn ships its own bootc
+        # installer, so the substituted packages never reach apt.
+        self.assertNotIn("calamares", calls[0][4:])
+        self.assertNotIn("kubuntu-installer-prompt", calls[0][4:])
+        self.assertIn("calamares", package_set.debs)
 
     def test_run_checked_error_includes_stdout_tail_where_dpkg_names_the_failing_package(self):
         completed = subprocess.CompletedProcess(
@@ -214,8 +219,17 @@ class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
         package_set = self.packages.verify_reference_manifest(self.manifest)
         with tempfile.TemporaryDirectory(prefix="rowyn-live-package-missing-snap-") as temporary:
             installed = Path(temporary) / "filesystem.manifest"
-            installed.write_text("".join(f"{name} 1\n" for name in package_set.debs), encoding="utf-8")
+            installed.write_text("".join(f"{name} 1\n" for name in self.packages.expected_debs(package_set)), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "snap seed is missing"):
+                self.packages.verify_package_parity(self.manifest, installed, root=temporary)
+
+    def test_parity_fails_closed_when_a_substituted_installer_package_is_present(self):
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+        with tempfile.TemporaryDirectory(prefix="rowyn-live-package-substituted-") as temporary:
+            installed = Path(temporary) / "filesystem.manifest"
+            names = self.packages.expected_debs(package_set) + ["calamares"]
+            installed.write_text("".join(f"{name} 1\n" for name in names), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Substituted Kubuntu installer packages present"):
                 self.packages.verify_package_parity(self.manifest, installed, root=temporary)
 
     def test_snap_seed_is_complete_and_parity_verification_records_it(self):
@@ -241,7 +255,7 @@ class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
                 ),
             )
             installed = root / "filesystem.manifest"
-            installed.write_text("".join(f"{name} 1\n" for name in package_set.debs), encoding="utf-8")
+            installed.write_text("".join(f"{name} 1\n" for name in self.packages.expected_debs(package_set)), encoding="utf-8")
             marker = root / "var/lib/snapd/seed/.snapd-explicit-install-stamp"
             marker.unlink()
             with self.assertRaisesRegex(ValueError, "explicit-install stamp is missing"):
@@ -251,7 +265,7 @@ class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
                 self.manifest, installed, root=root,
             )
             seed = json.loads((root / "var/lib/snapd/seed/seed.yaml").read_text(encoding="utf-8"))
-            self.assertEqual((deb_count, snap_count), (2175, 8))
+            self.assertEqual((deb_count, snap_count), (2167, 8))
             self.assertEqual(len(seed["snaps"]), 8)
             self.assertTrue(next(item for item in seed["snaps"] if item["name"] == "firefox")["classic"])
             self.assertTrue((root / "var/lib/snapd/seed/.snapd-explicit-install-stamp").is_file())
