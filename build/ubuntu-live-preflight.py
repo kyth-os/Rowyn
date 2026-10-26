@@ -22,6 +22,23 @@ def output(*args):
     return subprocess.check_output(args, text=True, timeout=15)
 
 
+PREPARE_ROOT_CONFIGS = (
+    "usr/lib/ostree/prepare-root.conf",
+    "etc/ostree/prepare-root.conf",
+)
+
+
+def require_prepare_root_config(root=Path("/")):
+    """bootc reads this policy from the running live root, even with --source-imgref."""
+    root = Path(root)
+    for relative in PREPARE_ROOT_CONFIGS:
+        path = root / relative
+        if path.is_file():
+            return path
+    expected = " or ".join("/" + path for path in PREPARE_ROOT_CONFIGS)
+    raise ValueError("missing bootc prepare-root.conf in live root; expected " + expected)
+
+
 def physical_disks(source, run=output, seen=None):
     """Resolve a block partition, stacked mapper, or loop backing to disks.
 
@@ -88,6 +105,7 @@ def assert_safe_target(target, run=output):
 
 def runtime_closure():
     import os
+    require_prepare_root_config()
     for binary in REQUIRED:
         if not os.access(binary, os.X_OK):
             raise ValueError('missing required Ubuntu runtime binary: ' + binary)

@@ -194,6 +194,37 @@ class UbuntuGuardTests(unittest.TestCase):
         self.assertIn("official Ubuntu", result.stderr)
 
 
+class LiveBootcConfigurationTests(unittest.TestCase):
+    def test_live_stage_uses_prepare_root_policy_from_pinned_payload(self):
+        containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
+        self.assertIn(
+            "COPY --from=payload /usr/lib/ostree/prepare-root.conf /usr/lib/ostree/prepare-root.conf",
+            live_stage,
+        )
+        preflight = (ROOT / "build/ubuntu-live-preflight.py").read_text()
+        self.assertIn("require_prepare_root_config()", preflight)
+
+    def test_runtime_preflight_requires_bootc_prepare_root_config(self):
+        validator = getattr(live, "require_prepare_root_config", None)
+        self.assertTrue(callable(validator), "live preflight must validate bootc prepare-root policy")
+        assert callable(validator)
+        with tempfile.TemporaryDirectory(prefix="rowyn-prepare-root-") as temp:
+            root = Path(temp)
+            with self.assertRaisesRegex(ValueError, "prepare-root.conf"):
+                validator(root)
+
+            for relative in (
+                "usr/lib/ostree/prepare-root.conf",
+                "etc/ostree/prepare-root.conf",
+            ):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+                self.assertEqual(validator(root), path)
+                path.unlink()
+
+
 class LiveNetworkConfigurationTests(unittest.TestCase):
     def test_live_image_installs_netplan_and_generates_policy(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()

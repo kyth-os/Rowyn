@@ -56,6 +56,9 @@ RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=payload /usr/bin/bootc /usr/bin/bootc
 COPY --from=payload /usr/lib/bootc/ /usr/lib/bootc/
+# bootc reads prepare-root policy from the running root even with --source-imgref.
+# Reuse the exact policy from this digest-pinned payload in the Ubuntu live host.
+COPY --from=payload /usr/lib/ostree/prepare-root.conf /usr/lib/ostree/prepare-root.conf
 COPY --from=compiler /binaries/ /usr/bin/
 COPY --from=compiler /dependency-licenses/ /usr/share/doc/rowyn-installer/dependency-licenses/
 COPY build_files/kyth-launch-installer /usr/bin/kyth-launch-installer
