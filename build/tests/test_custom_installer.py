@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 import yaml
 
@@ -178,6 +179,20 @@ class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
         self.packages.install_deb_packages(self.manifest, runner=fake_runner)
         self.assertEqual(set(calls[0][4:]), set(package_set.debs))
         self.assertEqual(len(calls[0][4:]), 1801)
+
+    def test_run_checked_error_includes_stdout_tail_where_dpkg_names_the_failing_package(self):
+        completed = subprocess.CompletedProcess(
+            args=["/usr/bin/apt-get"],
+            returncode=100,
+            stdout="Setting up example (1.0) ...\ndpkg: error processing package example (--configure)\n",
+            stderr="E: Sub-process /usr/bin/dpkg returned an error code (1)",
+        )
+        with unittest.mock.patch.object(self.packages.subprocess, "run", return_value=completed):
+            with self.assertRaises(RuntimeError) as raised:
+                self.packages.run_checked(["/usr/bin/apt-get", "install", "-y", "example"])
+        message = str(raised.exception)
+        self.assertIn("dpkg: error processing package example", message)
+        self.assertIn("E: Sub-process /usr/bin/dpkg returned an error code (1)", message)
 
     def test_parity_fails_closed_when_a_reference_deb_is_missing(self):
         package_set = self.packages.verify_reference_manifest(self.manifest)

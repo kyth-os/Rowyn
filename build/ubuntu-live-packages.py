@@ -88,7 +88,15 @@ def normalize_package_name(value):
 def run_checked(arguments, *, cwd=None):
     result = subprocess.run(arguments, cwd=cwd, text=True, capture_output=True, check=False)
     if result.returncode:
-        detail = (result.stderr or result.stdout).strip()
+        # apt-get reports only a summary line on stderr ("E: Sub-process
+        # /usr/bin/dpkg returned an error code (1)"); the dpkg output that
+        # names the failing package goes to stdout. Surface both, or the
+        # CI log cannot say which package failed.
+        stderr = (result.stderr or "").strip()
+        stdout_tail = "\n".join((result.stdout or "").splitlines()[-40:]).strip()
+        detail = stderr
+        if stdout_tail:
+            detail = f"{detail}\n--- stdout (last 40 lines) ---\n{stdout_tail}" if detail else stdout_tail
         raise RuntimeError(f"command failed ({result.returncode}): {arguments[0]}: {detail}")
     return result.stdout
 
