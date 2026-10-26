@@ -132,164 +132,158 @@ class StorageActionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
 
-# A deliberately small adapter fixture, not a substitute for pinned-source proof.
-FIXTURE = {
-    "build_files/scripts/rootful-podman.sh": "#!/bin/bash\nexec unshare --cgroup podman \"$@\"\n",
-    "build_files/build-live-iso.sh": "#!/bin/bash\nexit 99 # must never build in preflight\n",
-    "installer/Containerfile": "FROM fixture\n",
-    "installer/iso.yaml": "fixture: true\n",
-    "installer/build.sh": '''#!/bin/bash
-target_image=upstream
-cosign_identity=upstream
-cosign_bin=upstream
-cosign_transient=upstream
-''',  # No optional installer env file or token-file anchor exists here.
-    "src/kyth-installer-web/src/InstallerApp.tsx": 'options={["fedora", "cachyos"]} hint="CachyOS kernel: tuned for gaming and latency. Fedora: the stock, most conservative kernel."\n',
-    "src/kyth-installer-web/src-tauri/ui/installer.slint": '                                Button { text: "CachyOS"; clicked => { kernel = "cachyos"; select-kernel("cachyos"); } }\n',
-    EXECUTOR: '''const FILESYSTEM_STAGING_MOUNTPOINT: &str = "/run/kyth-installer/alongside-target";
-    fn verify_install_source(&self) {
-        Ok(())
-    }
-
-    fn check_storage_preflight() {}
-    fn run_phase() {
-        match phase {
-            Phase::Prepare => {
-                let power = crate::installer_orchestration::power_check();
-            }
-            Phase::Storage => self.storage(),
-            Phase::Image => self.execute_image(phase, cancellation),
-        }
-    }
-    fn execute_image() {
-        self.verify_install_source(phase)?;
-        self.check_storage_preflight(phase, cancellation)?;
-    }
-''',
-    "build_files/kyth-installerd.service": "RestrictAddressFamilies=AF_UNIX\n",
-}
+def load_module(name, file):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, ROOT / file)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def preflight(source, extra_env=None):
-    env = dict(os.environ, IMAGE_REF="ghcr.io/kyth-os/rowyn:" + "a" * 40,
-               IMAGE_DIGEST="sha256:" + "b" * 64, SOURCE_TAG="a" * 40,
-               KYTH_SOURCE_DIR=str(source), KYTH_INSTALLER_COMMIT=PIN,
-               KYTH_INSTALLER_BASE_IMAGE="ghcr.io/kyth-os/kyth@sha256:" + "c" * 64,
-               ROWYN_CUSTOM_INSTALLER_PREFLIGHT="1")
-    env.pop("KYTH_EARLY_SOURCE_VERIFY", None)
-    env.update(extra_env or {})
-    return subprocess.run(["bash", str(ADAPTER)], cwd=ROOT, env=env, text=True, capture_output=True)
+port = load_module("ubuntu_source", "build/ubuntu-installer-source.py")
+live = load_module("ubuntu_live", "build/ubuntu-live-preflight.py")
+guard = load_module("ubuntu_guard", "build/ubuntu-only-check.py")
 
 
-def assert_gate(test, source):
-    executor = (source / EXECUTOR).read_text()
-    prepare = executor.index("            Phase::Prepare => {")
-    power = executor.index("                let power = crate::installer_orchestration::power_check();", prepare)
-    test.assertEqual(executor[prepare:power], "            Phase::Prepare => {\n                self.verify_install_source(phase)?;\n")
-    test.assertNotIn("KYTH_EARLY_SOURCE_VERIFY", executor)
-    test.assertIn('Command::new("/usr/bin/kyth-cosign")', executor)
-    test.assertEqual(executor.count("const ROWYN_RELEASE_DIGEST:"), 1)
-    image = executor[executor.index("    fn execute_image("):]
-    test.assertLess(image.index("self.verify_install_source(phase)?;"), image.index("self.check_storage_preflight(phase, cancellation)?;"))
-    test.assertNotIn("KYTH_EARLY_SOURCE_VERIFY", (source / "installer/build.sh").read_text())
+class UbuntuGuardTests(unittest.TestCase):
+    def test_current_executable_path_is_ubuntu(self):
+        self.assertTrue(guard.validate(ROOT).startswith("docker.io/library/ubuntu@sha256:"))
 
+    def test_guard_rejects_non_ubuntu_stages_and_executables(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-guard-") as temp:
+            root = Path(temp)
+            files = ["Containerfile", ".github/workflows/installer-iso.yml", "build/custom-installer-iso.sh",
+                     "build/configure-live.sh", "build/assemble-iso.sh", "build/ubuntu-live.Containerfile"]
+            for file in files:
+                target = root / file
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / file).read_bytes())
+            for file, old, new in [
+                ("build/ubuntu-live.Containerfile", "FROM ${UBUNTU_IMAGE}", "FROM registry.fedoraproject.org/fedora:45"),
+                ("build/configure-live.sh", "set -euo pipefail", "set -euo pipefail\ndnf install -y rust"),
+                ("build/configure-live.sh", "set -euo pipefail", "set -euo pipefail\n    sudo rpm -q bootc"),
+                ("build/assemble-iso.sh", "set -euo pipefail", "set -euo pipefail\nbash build_files/build-live-iso.sh"),
+                (".github/workflows/installer-iso.yml", "docker.io/library/ubuntu@sha256:", "ghcr.io/kyth-os/kyth@sha256:"),
+            ]:
+                path = root / file
+                text = path.read_text()
+                self.assertIn(old, text)
+                path.write_text(text.replace(old, new))
+                with self.assertRaises(ValueError, msg=file):
+                    guard.validate(root)
+                path.write_text(text)
+            guard.validate(root)
 
-class AdapterFixtureTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="rowyn-adapter-")
-        self.addCleanup(self.temp.cleanup)
-        self.source = Path(self.temp.name) / "source"
-        for name, content in FIXTURE.items():
-            path = self.source / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        # Only the fixture's git queries are mocked; no fabricated real-source claim.
-        mockbin = Path(self.temp.name) / "bin"
-        mockbin.mkdir()
-        git = mockbin / "git"
-        real_git = shutil.which("git")
-        assert real_git is not None, "git is required for adapter tests"
-        git.write_text('#!/bin/bash\nif [[ "$1" == "-C" && "$2" == "$KYTH_SOURCE_DIR" ]]; then\n'
-                       '  case "$4" in --show-toplevel) printf "%s\\n" "$KYTH_SOURCE_DIR";; HEAD) printf "%s\\n" "$KYTH_INSTALLER_COMMIT";; *) exit 98;; esac\n'
-                       'else exec ' + real_git + ' "$@"; fi\n')
-        git.chmod(0o755)
-        self.env = {"PATH": str(mockbin) + os.pathsep + os.environ["PATH"]}
+    def test_port_rejects_ambiguous_anchors_and_bad_digest(self):
+        for text in ("", "anchor anchor"):
+            with self.assertRaises(ValueError):
+                port.replace_once(text, "anchor", "replacement")
+        with self.assertRaises(ValueError):
+            port.port_source(Path("/does/not/exist"), "sha256:bad")
 
-    def test_unconditional_prepare_without_optional_env_and_idempotence(self):
-        for early in (None, "0", "1"):
-            env = dict(self.env)
-            if early is not None:
-                env["KYTH_EARLY_SOURCE_VERIFY"] = early
-            result = preflight(self.source, env)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            assert_gate(self, self.source)
-            snapshot = {p: (self.source / p).read_bytes() for p in FIXTURE}
-            result = preflight(self.source, env)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(snapshot, {p: (self.source / p).read_bytes() for p in FIXTURE})
-
-    def test_hosted_wrapper_replacement_is_narrow_and_idempotent(self):
-        path = self.source / "build_files/scripts/rootful-podman.sh"
-        original = path.read_bytes()
-        result = preflight(self.source, dict(self.env, GITHUB_ACTIONS="false"))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(path.read_bytes(), original)
-        for _ in range(2):
-            result = preflight(self.source, dict(self.env, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted"))
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(path.read_bytes(), (ROOT / "build/rootful-podman.sh").read_bytes())
-            self.assertTrue(os.access(path, os.X_OK))
-
-    def test_duplicate_prepare_anchor_is_rejected(self):
-        path = self.source / EXECUTOR
-        path.write_text(path.read_text() + '            Phase::Prepare => {\n                let power = crate::installer_orchestration::power_check();\n')
-        result = preflight(self.source, self.env)
+    def test_legacy_base_rejected_before_container_execution(self):
+        env = dict(os.environ, IMAGE_REF="ghcr.io/kyth-os/rowyn:" + "a"*40,
+                   SOURCE_TAG="a"*40, IMAGE_DIGEST="sha256:" + "b"*64,
+                   KYTH_SOURCE_DIR="/never/read", KYTH_INSTALLER_COMMIT=PIN,
+                   UBUNTU_LIVE_IMAGE="ghcr.io/kyth-os/kyth@sha256:" + "c"*64)
+        result = subprocess.run(["bash", str(ADAPTER)], cwd=ROOT, env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Prepare", result.stderr)
+        self.assertIn("official Ubuntu", result.stderr)
 
-    def test_mixed_original_and_patched_prepare_is_rejected(self):
-        result = preflight(self.source, self.env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        path = self.source / EXECUTOR
-        path.write_text(path.read_text() + '            Phase::Prepare => {\n                let power = crate::installer_orchestration::power_check();\n')
-        result = preflight(self.source, self.env)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Prepare", result.stderr)
 
-    def test_missing_prepare_anchor_is_rejected(self):
-        path = self.source / EXECUTOR
-        path.write_text(path.read_text().replace("Phase::Prepare =>", "Phase::Missing =>"))
-        result = preflight(self.source, self.env)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Prepare", result.stderr)
+class CasperProtectionTests(unittest.TestCase):
+    def runner(self, mounts, devices, loops=None):
+        calls = []
+        def run(*args):
+            calls.append(args)
+            if args[0] == "/usr/bin/findmnt":
+                path = args[-1]
+                if path not in mounts:
+                    raise subprocess.CalledProcessError(1, args)
+                return mounts[path]
+            if args[0] == "/usr/bin/lsblk":
+                return json.dumps(dict(blockdevices=devices[args[-1]]))
+            if args[0] == "/usr/sbin/losetup":
+                assert loops is not None
+                return json.dumps(dict(loopdevices=[dict(name=args[-1], **{"back-file": loops[args[-1]]})]))
+            raise AssertionError(args)
+        return run, calls
+
+    def test_live_usb_whole_disk_and_partition_are_protected(self):
+        devices = {"/dev/sda1": [dict(name="/dev/sda1", type="part", children=[dict(name="/dev/sda", type="disk")])],
+                   "/dev/sda": [dict(name="/dev/sda", type="disk")],
+                   "/dev/nvme0n1": [dict(name="/dev/nvme0n1", type="disk")]}
+        run, calls = self.runner({"/cdrom": "/dev/sda1"}, devices)
+        live.assert_safe_target("/dev/nvme0n1", run)
+        for target in ("/dev/sda", "/dev/sda1"):
+            with self.assertRaisesRegex(ValueError, "overlaps"):
+                live.assert_safe_target(target, run)
+        self.assertTrue(all(a[0] in ("/usr/bin/findmnt", "/usr/bin/lsblk") for a in calls))
+
+    def test_loop_iso_backing_file_resolves_physical_media(self):
+        devices = {"/dev/loop0": [dict(name="/dev/loop0", type="loop")],
+                   "/dev/sda2": [dict(name="/dev/sda2", type="part", children=[dict(name="/dev/sda", type="disk")])],
+                   "/dev/sda": [dict(name="/dev/sda", type="disk")]}
+        run, _ = self.runner({"/cdrom": "/dev/loop0", "/isodevice": "/dev/sda2", "/isodevice/rowyn.iso": "/dev/sda2"},
+                             devices, {"/dev/loop0": "/isodevice/rowyn.iso"})
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            live.assert_safe_target("/dev/sda", run)
+
+    def test_unresolved_and_missing_live_media_fail_closed(self):
+        for mounts, devices, loops in (({}, {}, {}), ({"/cdrom": "overlay"}, {}, {}),
+            ({"/cdrom": "/dev/loop0", "/bad.iso": "overlay"},
+             {"/dev/loop0": [dict(name="/dev/loop0", type="loop")]}, {"/dev/loop0": "/bad.iso"}),
+            ({"/cdrom": "/dev/loop0", "/cycle.iso": "/dev/loop0"},
+             {"/dev/loop0": [dict(name="/dev/loop0", type="loop")]}, {"/dev/loop0": "/cycle.iso"})):
+            run, _ = self.runner(mounts, devices, loops)
+            with self.assertRaises(ValueError):
+                live.assert_safe_target("/dev/sda", run)
 
 
 @unittest.skipUnless(os.environ.get("ROWYN_TEST_KYTH_REPO"), "set ROWYN_TEST_KYTH_REPO for pinned-source integration")
 class PinnedSourceTests(unittest.TestCase):
-    def test_repeated_preflight_at_pinned_commit(self):
+    def test_exact_object_export_is_repeatable_and_ports_actual_source(self):
         repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        original = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"])
         with tempfile.TemporaryDirectory(prefix="rowyn-pinned-") as temp:
-            source = Path(temp) / "kyth"
-            subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", str(source), PIN], check=True, capture_output=True)
-            try:
-                head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-                self.assertEqual(head, PIN)
-                hosted = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
-                first = preflight(source, hosted)
-                self.assertEqual((source / "build_files/scripts/rootful-podman.sh").read_bytes(),
-                                 (ROOT / "build/rootful-podman.sh").read_bytes())
-                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-                assert_gate(self, source)
-                diff = subprocess.check_output(["git", "-C", str(source), "diff", "--binary"])
-                second = preflight(source, dict(hosted, KYTH_EARLY_SOURCE_VERIFY="0"))
-                self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-                self.assertEqual(diff, subprocess.check_output(["git", "-C", str(source), "diff", "--binary"]))
-                assert_gate(self, source)
-                subprocess.run(["git", "-C", str(source), "diff", "--check"], check=True)
-                if shutil.which("rustfmt"):
-                    subprocess.run(["rustfmt", "--check", "--edition", "2021", str(source / EXECUTOR)], check=True)
-            finally:
-                subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(source)], check=True, capture_output=True)
+            snapshots = []
+            for name in ("first", "second"):
+                root = Path(temp) / name
+                port.export_source(repo, root)
+                port.port_source(root, "sha256:" + "b"*64)
+                snapshots.append({str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()})
+                self.assertFalse((root / "installer/Containerfile").exists())
+                self.assertFalse((root / "build_files/build-live-iso.sh").exists())
+                self.assertFalse((root / "src/kyth-installer-web/node_modules").exists())
+                executor = (root / EXECUTOR).read_text()
+                prepare = executor[executor.index("            Phase::Prepare => {"):executor.index("            Phase::Storage =>")]
+                self.assertLess(prepare.index("self.verify_install_source(phase)?;"), prepare.index("rowyn-live-preflight"))
+                self.assertIn('Command::new("/usr/bin/kyth-cosign")', executor)
+                self.assertIn('"--certificate-identity"', executor)
+                self.assertIn(port.IDENTITY, executor)
+                image = executor[executor.index('    fn execute_image('):]
+                self.assertLess(image.index('self.verify_install_source(phase)?;'), image.index('self.check_storage_preflight(phase, cancellation)?;'))
+                crate = root / "src/kyth-installer-web/src-tauri"
+                accounts = (crate / "src/installer_accounts.rs").read_text()
+                self.assertNotIn("wheel", accounts)
+                self.assertIn('"sudo,video,audio,render"', accounts)
+                self.assertNotIn('apply_boot_ordering_fix(&plan.target_root)?;', (crate / "src/installer_configuration.rs").read_text())
+                self.assertIn('"/cdrom"', (crate / "src/installer_storage.rs").read_text())
+                daemon = (crate / "src/installer_daemon.rs").read_text()
+                dispatch = daemon[daemon.index('    fn dispatch('):]
+                self.assertLess(dispatch.index('return (403'), dispatch.index('let disk ='))
+                service = (root / 'build_files/kyth-installerd.service').read_text()
+                self.assertIn('EnvironmentFile=/etc/kyth-installer.env', service)
+                self.assertIn('RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6', service)
+                self.assertIn('ReadWritePaths=/run/kyth-installer', service)
+                images = (root / 'src/kyth-shared-rs/src/system/installer_source.rs').read_text()
+                fn = images[images.index('pub fn install_images('):images.index('/// Classify')]
+                self.assertNotIn('-cachy', fn)
+                with self.assertRaises(ValueError):
+                    port.export_source(repo, root)
+            self.assertEqual(*snapshots)
+        self.assertEqual(original, subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]))
 
 
 if __name__ == "__main__":

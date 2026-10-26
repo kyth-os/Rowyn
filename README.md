@@ -2,6 +2,14 @@
 
 Rowyn is an Ubuntu 26.10 bootc image with KDE Plasma.
 
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+
+The native installer desktop UI uses Slint under its Royalty-free Desktop,
+Mobile, and Web Applications License 2.0. Retain the public attribution badge
+when redistributing the desktop application. Upstream installer source is
+Apache-2.0; the vendored glib Rust backport declares MIT. Dependency license
+texts are retained in the compiler image and copied into live installer docs.
+
 ## Local image build
 
 Fetch the pinned offline build inputs, then build the image with Podman:
@@ -13,18 +21,96 @@ sudo podman build -t rowyn:spike .
 
 ## Custom installer ISO
 
-The GitHub Actions pipeline publishes the exact image digest, signs it with
-GitHub OIDC, and then builds `rowyn-custom-installer-<commit>.iso` with the
-pinned Kyth custom installer environment and Titanoboa assembly path. The ISO
-installs the signed Rowyn image; it does not use the distro-specific
-`bootc-image-builder`/Anaconda path.
+The live system, compiler toolchains, and ISO assembly environment are all
+Ubuntu 26.10; the installed system is the separately published Ubuntu bootc
+payload. `build/ubuntu-live.Containerfile` starts its compiler and live stages
+from the digest-pinned official Ubuntu image in `installer-iso.yml`. Apt supplies
+Rust, Cargo, Node, GTK/WebKit, Plasma, Casper, initramfs-tools, GRUB, xorriso and
+SquashFS tools. Neither an upstream OS Containerfile nor an upstream ISO wrapper
+is executed. There is no Fedora live base, RPM package transaction, or Titanoboa
+assembly step.
 
-The custom installer source and its Fedora-based live builder are pinned in
-`.github/workflows/installer-iso.yml`. Fedora is used only for the existing custom live
-installer environment; Rowyn's installed payload remains the Ubuntu image. The
-workflow requires anonymous access to the public immutable Rowyn registry image,
-cryptographically verifies that image again from the live installer before
-writing a disk, and publishes a signed ISO checksum bundle alongside the ISO.
+The Apache-2.0 Kyth installer Rust daemon, typed execution helper, native Slint
+UI, required shared crate and vendored glib dependency are exported from commit
+`2baf8496b5aa904c0784f4290df743ee17edae48`. Only that allowlisted source is
+exported with `git archive`; the input checkout is not modified. Licenses and a
+modification notice are shipped in `/usr/share/doc/rowyn-installer`. The Tauri
+web assets are compiled to satisfy the pinned build contract, but only the
+native UI, daemon and typed helper are installed into the live system.
+
+`build/ubuntu-installer-source.py` ports account groups (`sudo`, not `wheel`),
+Ubuntu tool paths, locale/keyboard configuration, kernel/image selection, and
+removes the Kyth-only installed-system account-repair call. A kernel selector
+can never rewrite the immutable image digest. The live initramfs is built by
+Casper/initramfs-tools; installed Rowyn keeps its original matching kernel and
+bootc/dracut initramfs. `shared/initramfs.sh` is unchanged. The Ubuntu-built
+`bootc` binary and its small `/usr/lib/bootc` helper directory come from the
+exact signed payload, with Ubuntu apt libraries and helpers checked in the
+live stage before ISO assembly. Bootc is explicitly instructed to use
+`--bootloader=systemd`, matching the payload's systemd-boot EFI files.
+
+### Scope and safety
+
+This port is **not boot/installation-qualified yet**. Its enabled candidate
+path is x86-64 UEFI, Secure Boot **disabled**, whole-disk Btrfs, **unencrypted**.
+BIOS/CSM, Secure Boot/MOK enrollment, manual partitioning, Windows/NTFS resize,
+partition replacement, free-space and TPM encryption are deliberately disabled,
+not silently treated as working. The native UI marks these modes unavailable;
+the daemon also rejects them, including the separate manual-disk mutation API
+which otherwise bypasses the job's Prepare phase. A real UEFI VM boot, session
+launch, installation to a disposable virtual disk and reboot of that disk are
+required before claiming bootability or installation acceptance.
+
+The workflow verifies the fixed `build.yml@refs/heads/main` payload signer
+before privileged storage setup. The live daemon unconditionally verifies the
+exact compiled-in Rowyn source/target and Cosign signer in **Prepare, before any
+storage mutation**, and repeats verification in Image. Anonymous registry
+access and network connectivity are required during installation; payload
+layers are not embedded. Casper `/cdrom` and `/isodevice` mounts are protected,
+including loop ISO backing files resolved to physical media. An unresolved
+backing device fails closed. Runtime binary/library/CLI checks also fail before
+storage changes. The privileged daemon retains its sandbox and authenticated
+liveuser socket; only the argument-free session launcher is passwordless.
+
+The assembler uses Ubuntu's `mksquashfs` and UEFI `grub-mkrescue`/xorriso inside
+a container with no host devices or privileged flag. It emits the ISO, source
+metadata, El Torito/system-area report and SquashFS report. CI signs and verifies
+the portable ISO checksum manifest, then uploads the artifact and signature
+bundle. Apt packages are resolved from current Ubuntu repositories, so the
+package manifest is recorded but the build is not bit-for-bit reproducible.
+
+### Local execution and validation
+
+Requirements: Podman, Git, Python 3 with PyYAML, network access, ample disk space,
+and a local Kyth repository containing the pinned commit. No host package
+installation or host chroot is performed. Set `TMPDIR` to a writable scratch
+filesystem (not a RAM-backed directory); all exported source/build scratch is
+placed beneath it. For example, using the exact signed payload above:
+
+```bash
+export TMPDIR="$HOME/.hermes/cache/scratch"
+export IMAGE_REF=ghcr.io/kyth-os/rowyn:009880f4e4a4e83ba490d879756911b47233e483
+export IMAGE_DIGEST=sha256:e24caab597cd24970714f776538cb3eaa9578d7c4b58e0784faa843ab32a2d45
+export SOURCE_TAG=009880f4e4a4e83ba490d879756911b47233e483
+export KYTH_SOURCE_DIR=/path/to/kyth
+export KYTH_INSTALLER_COMMIT=2baf8496b5aa904c0784f4290df743ee17edae48
+export UBUNTU_LIVE_IMAGE=docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
+ROWYN_CUSTOM_INSTALLER_PREFLIGHT=1 ./build/custom-installer-iso.sh
+./build/custom-installer-iso.sh
+```
+
+`./build/validate.sh` checks executable Ubuntu-only build guards, shell/YAML,
+workflow trust and safe regression tests. Set `ROWYN_TEST_KYTH_REPO` to enable
+real pinned-source export/adapter tests. The Ubuntu compiler additionally runs
+Rust tests extracted from the actual adapted shared image-source functions,
+checking digest preservation for every kernel-selector input. These tests and
+structure reports do **not** substitute for VM acceptance.
+
+References: Ubuntu's `casper(7)` manual and the Ubuntu Community Help
+`LiveCDCustomization` / `LiveCDCustomizationFromScratch` guides describe the
+Casper initramfs, `/casper` SquashFS/kernel layout and `.disk/info` requirement.
+This port uses that layout rather than treating the bootc payload as a live
+filesystem.
 
 The uploaded checksum bundle can be verified with Cosign, then the checksum can
 be checked against the ISO:
@@ -69,7 +155,7 @@ gh workflow run installer-iso.yml --ref main \
 This verifies the existing digest's original payload signature and builds only
 the live installer/ISO, not the Rowyn payload. Automatic runs require the image
 metadata artifact to remain available (currently seven days); manual retries do
-not depend on that artifact. On GitHub-hosted runners a narrow Podman wrapper
-keeps the host cgroup namespace instead of upstream's desktop/Distrobox
-`unshare --cgroup` workaround, while preserving rootful Podman and all upstream
-privileged live-ISO flags. Local upstream invocation is unchanged.
+not depend on that artifact. On GitHub-hosted runners the narrow Podman wrapper
+uses rootful Podman in the host cgroup namespace; local builds use rootless
+Podman. All OS compilation and filesystem/ISO tooling runs in Ubuntu containers.
+Assembly receives writable output/scratch directories, not host block devices.

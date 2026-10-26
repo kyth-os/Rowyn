@@ -23,6 +23,9 @@ on:
       - .github/workflows/installer-iso.yml
       - .github/actions/**
       - build/custom-installer-iso.sh
+      - build/ubuntu-*
+      - build/configure-live.sh
+      - build/assemble-iso.sh
       - build/rootful-podman.sh
       - build/iso-source.py
       - build/validate.sh
@@ -38,7 +41,7 @@ concurrency:
 env:
   IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn
   KYTH_INSTALLER_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
-  KYTH_INSTALLER_BASE_IMAGE: ghcr.io/kyth-os/kyth@sha256:cc141d5c85f605544c69809daf11fe5aa9cc4aaa23a21325b35b08680a33db4a
+  UBUNTU_LIVE_IMAGE: docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
 
 jobs:
   validate:
@@ -133,9 +136,9 @@ jobs:
       - name: Ensure podman
         shell: bash --noprofile --norc -euo pipefail {0}
         run: |
-          if ! command -v podman >/dev/null || ! command -v mkfs.btrfs >/dev/null || ! command -v skopeo >/dev/null; then
+          if ! command -v podman >/dev/null || ! command -v mkfs.btrfs >/dev/null || ! command -v skopeo >/dev/null || ! python3 -c 'import yaml' >/dev/null 2>&1; then
             sudo apt-get update -o Acquire::Retries=3
-            sudo apt-get install -y --no-install-recommends podman btrfs-progs skopeo
+            sudo apt-get install -y --no-install-recommends podman btrfs-progs skopeo python3-yaml
           fi
           podman --version
           mkfs.btrfs --version
@@ -164,6 +167,7 @@ jobs:
         env:
           KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
         run: |
+          sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/rowyn-iso-scratch
           git clone --filter=blob:none --no-checkout --depth 1 \
             https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/kyth-installer"
           git -C "${RUNNER_TEMP}/kyth-installer" fetch --depth 1 origin "${KYTH_INSTALLER_COMMIT}"
@@ -188,7 +192,7 @@ jobs:
             echo '### ISO source image'
             echo "- ref: \`${IMAGE_REF}\`"
             echo "- digest: \`${IMAGE_DIGEST}\`"
-            echo "- installer: custom Kyth environment at \`${KYTH_INSTALLER_COMMIT}\`"
+            echo "- installer: Ubuntu live/compiler \`${UBUNTU_LIVE_IMAGE}\`; pinned Rust source \`${KYTH_INSTALLER_COMMIT}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preflight pinned custom installer adapter
@@ -199,7 +203,8 @@ jobs:
           SOURCE_TAG: ${{ steps.source.outputs.source_sha }}
           KYTH_SOURCE_DIR: ${{ runner.temp }}/kyth-installer
           KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
-          KYTH_INSTALLER_BASE_IMAGE: ${{ env.KYTH_INSTALLER_BASE_IMAGE }}
+          UBUNTU_LIVE_IMAGE: ${{ env.UBUNTU_LIVE_IMAGE }}
+          TMPDIR: /mnt/rowyn-iso-scratch
           ROWYN_CUSTOM_INSTALLER_PREFLIGHT: "1"
         run: ./build/custom-installer-iso.sh
 
@@ -211,7 +216,8 @@ jobs:
           SOURCE_TAG: ${{ steps.source.outputs.source_sha }}
           KYTH_SOURCE_DIR: ${{ runner.temp }}/kyth-installer
           KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
-          KYTH_INSTALLER_BASE_IMAGE: ${{ env.KYTH_INSTALLER_BASE_IMAGE }}
+          UBUNTU_LIVE_IMAGE: ${{ env.UBUNTU_LIVE_IMAGE }}
+          TMPDIR: /mnt/rowyn-iso-scratch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "${GITHUB_TOKEN}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -247,5 +253,6 @@ jobs:
             output/rowyn-custom-installer-*.json
             output/rowyn-custom-installer-*.iso.sha256
             output/rowyn-custom-installer-*.iso.sigstore.json
+            output/rowyn-custom-installer-*.iso.*-report.txt
           retention-days: 7
           if-no-files-found: error
