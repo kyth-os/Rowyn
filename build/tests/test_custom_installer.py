@@ -148,6 +148,93 @@ guard = load_module("ubuntu_guard", "build/ubuntu-only-check.py")
 network = load_module("ubuntu_live_network", "build/ubuntu-live-network.py")
 
 
+class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.packages = load_module("ubuntu_live_packages", "build/ubuntu-live-packages.py")
+        cls.manifest = ROOT / "build/ubuntu-desktop-live-26.10-amd64.manifest"
+
+    def test_pinned_official_manifest_contains_the_complete_deb_and_snap_set(self):
+        metadata = json.loads((ROOT / "build/ubuntu-desktop-live-26.10-amd64.manifest.json").read_text())
+        self.assertEqual(metadata["sha256"], self.packages.REFERENCE_SHA256)
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+        self.assertEqual(len(package_set.debs), 1801)
+        self.assertEqual(len(package_set.snaps), 15)
+        self.assertIn("iputils-ping", package_set.debs)
+        self.assertIn("ubuntu-standard", package_set.debs)
+
+    def test_install_passes_every_official_deb_package_to_apt(self):
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+        calls = []
+
+        def fake_runner(arguments, **_kwargs):
+            calls.append(arguments)
+            if arguments[0] == "/usr/bin/apt-get":
+                return ""
+            if arguments[0] == "/usr/bin/dpkg-query":
+                return "".join(f"{name}\n" for name in package_set.debs)
+            raise AssertionError("unexpected command: " + str(arguments))
+
+        self.packages.install_deb_packages(self.manifest, runner=fake_runner)
+        self.assertEqual(set(calls[0][4:]), set(package_set.debs))
+        self.assertEqual(len(calls[0][4:]), 1801)
+
+    def test_parity_fails_closed_when_a_reference_deb_is_missing(self):
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+        with tempfile.TemporaryDirectory(prefix="rowyn-live-package-missing-deb-") as temporary:
+            installed = Path(temporary) / "filesystem.manifest"
+            installed.write_text("bash 1\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "iputils-ping"):
+                self.packages.verify_package_parity(self.manifest, installed, root=temporary)
+
+    def test_parity_fails_closed_when_the_snap_seed_is_missing(self):
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+        with tempfile.TemporaryDirectory(prefix="rowyn-live-package-missing-snap-") as temporary:
+            installed = Path(temporary) / "filesystem.manifest"
+            installed.write_text("".join(f"{name} 1\n" for name in package_set.debs), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "snap seed is missing"):
+                self.packages.verify_package_parity(self.manifest, installed, root=temporary)
+
+    def test_snap_seed_is_complete_and_parity_verification_records_it(self):
+        package_set = self.packages.verify_reference_manifest(self.manifest)
+
+        def fake_runner(arguments, **_kwargs):
+            self.assertEqual(arguments[:2], ["/usr/bin/snap", "download"])
+            name = arguments[2]
+            target = Path(next(arg.split("=", 1)[1] for arg in arguments if arg.startswith("--target-directory=")))
+            target.mkdir(parents=True, exist_ok=True)
+            (target / f"{name}_777.snap").write_bytes(b"test-snap")
+            (target / f"{name}_777.assert").write_text("type: snap-revision\n", encoding="utf-8")
+            return ""
+
+        with tempfile.TemporaryDirectory(prefix="rowyn-live-package-test-") as temporary:
+            root = Path(temporary)
+            self.packages.seed_snaps(
+                self.manifest,
+                root=root,
+                runner=fake_runner,
+                metadata_reader=lambda path, runner: (
+                    "classic" if Path(path).name.startswith("ubuntu-desktop-bootstrap_") else "strict"
+                ),
+            )
+            installed = root / "filesystem.manifest"
+            installed.write_text("".join(f"{name} 1\n" for name in package_set.debs), encoding="utf-8")
+            marker = root / "var/lib/snapd/seed/.snapd-explicit-install-stamp"
+            marker.unlink()
+            with self.assertRaisesRegex(ValueError, "explicit-install stamp is missing"):
+                self.packages.verify_package_parity(self.manifest, installed, root=root)
+            marker.touch()
+            deb_count, snap_count = self.packages.verify_package_parity(
+                self.manifest, installed, root=root,
+            )
+            seed = json.loads((root / "var/lib/snapd/seed/seed.yaml").read_text(encoding="utf-8"))
+            self.assertEqual((deb_count, snap_count), (1801, 15))
+            self.assertEqual(len(seed["snaps"]), 15)
+            self.assertTrue(next(item for item in seed["snaps"] if item["name"] == "ubuntu-desktop-bootstrap")["classic"])
+            self.assertTrue((root / "var/lib/snapd/seed/.snapd-explicit-install-stamp").is_file())
+            self.assertEqual(sum(line.startswith("snap:") for line in installed.read_text().splitlines()), 15)
+
+
 class UbuntuGuardTests(unittest.TestCase):
     def test_current_executable_path_is_ubuntu(self):
         self.assertTrue(guard.validate(ROOT).startswith("docker.io/library/ubuntu@sha256:"))
@@ -156,7 +243,8 @@ class UbuntuGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rowyn-guard-") as temp:
             root = Path(temp)
             files = ["Containerfile", ".github/workflows/installer-iso.yml", "build/custom-installer-iso.sh",
-                     "build/configure-live.sh", "build/assemble-iso.sh", "build/ubuntu-live.Containerfile"]
+                     "build/configure-live.sh", "build/assemble-iso.sh", "build/ubuntu-live.Containerfile",
+                     "build/ubuntu-live-packages.py"]
             for file in files:
                 target = root / file
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +283,16 @@ class UbuntuGuardTests(unittest.TestCase):
 
 
 class LiveBootcConfigurationTests(unittest.TestCase):
+    def test_live_stage_installs_the_regular_ubuntu_desktop_package_set(self):
+        containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
+        self.assertIn("ubuntu-desktop-live-26.10-amd64.manifest", live_stage)
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        self.assertIn("install-deb-packages", configure)
+        self.assertIn("seed-snaps", configure)
+        assembly = (ROOT / "build/assemble-iso.sh").read_text()
+        self.assertIn("verify-package-parity", assembly)
+
     def test_live_stage_uses_prepare_root_policy_from_pinned_payload(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
         live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]

@@ -31,6 +31,15 @@ printf 'KYTH_SOURCE_IMAGE=%s\nKYTH_TARGET_IMAGE=%s\nKYTH_SOURCE_DIGEST=%s\n' \
     "$INSTALL_SOURCE_IMAGE" "$INSTALL_SOURCE_IMAGE" "$digest" > /etc/kyth-installer.env
 chmod 644 /etc/kyth-installer.env
 
+# Match the official Ubuntu 26.10 desktop live package set, not only the
+# small installer bootstrap set. Seed its Snap applications for first boot.
+apt-get update
+/usr/bin/python3 /rowyn/ubuntu-live-packages.py install-deb-packages \
+    --manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest
+/usr/bin/python3 /rowyn/ubuntu-live-packages.py seed-snaps \
+    --manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest --root /
+rm -rf /var/lib/apt/lists/*
+
 # Casper's account and the launcher's authenticated socket group must agree.
 # The official Ubuntu container can contain an unused uid-1000 ubuntu account;
 # Casper requires its configured session user to own uid 1000.
@@ -119,6 +128,7 @@ cat > /etc/systemd/system/display-manager.service.d/rowyn-permissions.conf <<'EO
 ExecStartPre=/usr/bin/rm -f /etc/sudoers.d/casper
 ExecStartPre=/usr/sbin/usermod -G audio,video,render liveuser
 EOF
+systemctl disable gdm3.service >/dev/null 2>&1 || true
 systemctl enable sddm.service NetworkManager.service
 systemctl set-default graphical.target
 printf 'en_US.UTF-8 UTF-8\n' > /etc/locale.gen

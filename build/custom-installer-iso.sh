@@ -24,7 +24,7 @@ python3 -B build/ubuntu-only-check.py
 work="$(mktemp -d "${TMPDIR%/}/rowyn-ubuntu-iso.XXXXXX")"
 python3 build/ubuntu-installer-source.py "$KYTH_SOURCE_DIR" "$work/source" "$IMAGE_DIGEST"
 mkdir -p "$work/source/rowyn" "$work/assembly"
-cp build/{configure-live.sh,assemble-iso.sh,ubuntu-live-preflight.py,ubuntu-live-network.py,ubuntu-source-probes.py} "$work/source/rowyn/"
+cp build/{configure-live.sh,assemble-iso.sh,ubuntu-live-preflight.py,ubuntu-live-network.py,ubuntu-live-packages.py,ubuntu-source-probes.py,ubuntu-desktop-live-26.10-amd64.manifest} "$work/source/rowyn/"
 cp shared/kde-dark-defaults.sh "$work/source/rowyn/"
 if [[ "${ROWYN_CUSTOM_INSTALLER_PREFLIGHT:-0}" == 1 ]]; then
     printf 'Ubuntu installer source preflight passed: %s\n' "$work/source"

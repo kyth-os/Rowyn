@@ -21,7 +21,8 @@ def validate(root):
         if not job['runs-on'].startswith('ubuntu-'):
             raise ValueError('ISO workflow must run on Ubuntu')
     paths = [root / 'build/custom-installer-iso.sh', root / 'build/configure-live.sh',
-             root / 'build/assemble-iso.sh', root / 'build/ubuntu-live.Containerfile']
+             root / 'build/assemble-iso.sh', root / 'build/ubuntu-live.Containerfile',
+             root / 'build/ubuntu-live-packages.py']
     text = '\n'.join(path.read_text() for path in paths)
     if re.search(r'\b(dnf5?|rpm(?:-ostree)?|yum)\b|titanoboa|build_files/build-live-iso.sh|bash\s+/?\S*installer/build.sh', text, re.I):
         raise ValueError('non-Ubuntu executable ISO assembly/toolchain path')

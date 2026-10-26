@@ -65,6 +65,7 @@ COPY build_files/kyth-launch-installer /usr/bin/kyth-launch-installer
 COPY build_files/kyth-installerd.service /usr/lib/systemd/system/kyth-installerd.service
 COPY LICENSE ROWYN-PORT-NOTICE /usr/share/doc/rowyn-installer/
 COPY rowyn/ /rowyn/
+COPY rowyn/ubuntu-desktop-live-26.10-amd64.manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest
 ARG INSTALL_SOURCE_IMAGE
 RUN bash /rowyn/configure-live.sh
 # ISO assembly is a container entrypoint, never a host chroot or host install.
