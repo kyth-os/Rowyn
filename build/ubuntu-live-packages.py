@@ -93,10 +93,24 @@ def run_checked(arguments, *, cwd=None):
         # names the failing package goes to stdout. Surface both, or the
         # CI log cannot say which package failed.
         stderr = (result.stderr or "").strip()
-        stdout_tail = "\n".join((result.stdout or "").splitlines()[-40:]).strip()
+        stdout_lines = (result.stdout or "").splitlines()
+        # dpkg reports a failed maintainer script as "dpkg: error processing
+        # package <name> ..." on stdout, followed by the script's own error
+        # output; that block can sit far above the end of a long apt run, so
+        # surface every such block with context instead of only the tail.
+        blocks = []
+        for index, line in enumerate(stdout_lines):
+            if "dpkg: error" in line.lower():
+                start = max(0, index - 12)
+                blocks.append("\n".join(stdout_lines[start:index + 13]))
         detail = stderr
-        if stdout_tail:
-            detail = f"{detail}\n--- stdout (last 40 lines) ---\n{stdout_tail}" if detail else stdout_tail
+        if blocks:
+            excerpts = "\n...\n".join(blocks)
+            detail = f"{detail}\n--- dpkg error excerpts from stdout ---\n{excerpts}" if detail else excerpts
+        else:
+            stdout_tail = "\n".join(stdout_lines[-40:]).strip()
+            if stdout_tail:
+                detail = f"{detail}\n--- stdout (last 40 lines) ---\n{stdout_tail}" if detail else stdout_tail
         raise RuntimeError(f"command failed ({result.returncode}): {arguments[0]}: {detail}")
     return result.stdout
 
