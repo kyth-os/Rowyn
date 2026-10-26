@@ -330,6 +330,21 @@ class LiveBootcConfigurationTests(unittest.TestCase):
         assembly = (ROOT / "build/assemble-iso.sh").read_text()
         self.assertIn("verify-package-parity", assembly)
 
+    def test_live_install_diverts_bootctl_so_systemd_boot_trigger_postinst_survives(self):
+        # Regression: the manifest install lands shim-signed/grub packages,
+        # which fire systemd-boot's dpkg file triggers. Its postinst's
+        # remove_shim assigns esp_path="$(bootctl --print-esp-path)" under
+        # set -e and dies when bootctl finds no ESP in the build container.
+        # configure-live must divert bootctl around the install step only.
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        divert = configure.index("dpkg-divert --rename --add /usr/bin/bootctl")
+        install = configure.index("install-deb-packages")
+        undivert = configure.index("dpkg-divert --rename --remove /usr/bin/bootctl")
+        self.assertLess(divert, install)
+        self.assertLess(install, undivert)
+        self.assertIn('"--print-esp-path"', configure)
+        self.assertIn('exec /usr/bin/bootctl.distrib "$@"', configure)
+
     def test_live_stage_uses_prepare_root_policy_from_pinned_payload(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
         live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]

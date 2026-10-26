@@ -34,8 +34,33 @@ chmod 644 /etc/kyth-installer.env
 # Match the official Kubuntu 26.10 desktop live package set, not only the
 # small installer bootstrap set. Seed its Snap applications for first boot.
 apt-get update
+# systemd-boot is already installed from the bootstrap stage, so its dpkg
+# file triggers (interest in /usr/lib/shim and /usr/lib/grub) fire when this
+# install lands shim-signed and the grub packages. Its postinst then runs
+# remove_shim, which does esp_path="$(bootctl --print-esp-path)" under
+# set -e: with no EFI system partition in the build container, bootctl
+# exits non-zero, the assignment inherits that status, and the postinst
+# dies, failing the whole install (seen in CI runs 40403162528 and
+# 40416004281). Divert bootctl for this step only so --print-esp-path
+# reports "no ESP" cleanly (empty output, exit 0, which remove_shim
+# treats as nothing to do); every other invocation delegates to the real
+# binary. The diversion is removed immediately after the install, and a
+# failed install discards the layer anyway.
+dpkg-divert --rename --add /usr/bin/bootctl
+cat > /usr/bin/bootctl <<'EOF'
+#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = "--print-esp-path" ]; then
+        exit 0
+    fi
+done
+exec /usr/bin/bootctl.distrib "$@"
+EOF
+chmod 755 /usr/bin/bootctl
 /usr/bin/python3 /rowyn/ubuntu-live-packages.py install-deb-packages \
     --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest
+rm -f /usr/bin/bootctl
+dpkg-divert --rename --remove /usr/bin/bootctl
 /usr/bin/python3 /rowyn/ubuntu-live-packages.py seed-snaps \
     --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest --root /
 rm -rf /var/lib/apt/lists/*
