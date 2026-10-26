@@ -23,6 +23,7 @@ on:
       - .github/workflows/installer-iso.yml
       - .github/actions/**
       - build/custom-installer-iso.sh
+      - shared/kde-dark-defaults.sh
       - build/ubuntu-*
       - build/configure-live.sh
       - build/assemble-iso.sh

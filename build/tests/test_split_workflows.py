@@ -238,6 +238,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("build/**", paths)
         for path in ("build/custom-installer-iso.sh", ".github/workflows/installer-iso.yml", "build/tests/**"):
             self.assertNotIn(path, paths)
+        iso_paths = yaml.safe_load((ROOT / ".github/workflows/installer-iso.yml").read_text())[True]["push"]["paths"]
+        self.assertIn("shared/kde-dark-defaults.sh", iso_paths)
         for name in ("build.yml", "installer-iso.yml"):
             workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
             for job in workflow["jobs"].values():
