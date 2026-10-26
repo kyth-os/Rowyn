@@ -2,14 +2,6 @@
 
 Rowyn is an Ubuntu 26.10 bootc image with KDE Plasma.
 
-[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
-
-The native installer desktop UI uses Slint under its Royalty-free Desktop,
-Mobile, and Web Applications License 2.0. Retain the public attribution badge
-when redistributing the desktop application. Upstream installer source is
-Apache-2.0; the vendored glib Rust backport declares MIT. Dependency license
-texts are retained in the compiler image and copied into live installer docs.
-
 ## Local image build
 
 Fetch the pinned offline build inputs, then build the image with Podman:
@@ -159,3 +151,12 @@ not depend on that artifact. On GitHub-hosted runners the narrow Podman wrapper
 uses rootful Podman in the host cgroup namespace; local builds use rootless
 Podman. All OS compilation and filesystem/ISO tooling runs in Ubuntu containers.
 Assembly receives writable output/scratch directories, not host block devices.
+
+## Attribution
+
+The native installer UI uses Slint under its Royalty-free Desktop, Mobile, and
+Web Applications License 2.0. Upstream installer source is Apache-2.0; the
+vendored glib Rust backport declares MIT. Dependency license texts are included
+in the live installer documentation.
+
+<a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" width="120"></a>
