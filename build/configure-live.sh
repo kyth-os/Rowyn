@@ -31,13 +31,13 @@ printf 'KYTH_SOURCE_IMAGE=%s\nKYTH_TARGET_IMAGE=%s\nKYTH_SOURCE_DIGEST=%s\n' \
     "$INSTALL_SOURCE_IMAGE" "$INSTALL_SOURCE_IMAGE" "$digest" > /etc/kyth-installer.env
 chmod 644 /etc/kyth-installer.env
 
-# Match the official Ubuntu 26.10 desktop live package set, not only the
+# Match the official Kubuntu 26.10 desktop live package set, not only the
 # small installer bootstrap set. Seed its Snap applications for first boot.
 apt-get update
 /usr/bin/python3 /rowyn/ubuntu-live-packages.py install-deb-packages \
-    --manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest
+    --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest
 /usr/bin/python3 /rowyn/ubuntu-live-packages.py seed-snaps \
-    --manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest --root /
+    --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest --root /
 rm -rf /var/lib/apt/lists/*
 
 # Casper's account and the launcher's authenticated socket group must agree.

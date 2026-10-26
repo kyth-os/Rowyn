@@ -1,9 +1,0 @@
-{
-  "release": "Ubuntu 26.10",
-  "architecture": "amd64",
-  "purpose": "Package inventory for the official desktop live ISO",
-  "source": "https://releases.ubuntu.com/26.10/ubuntu-26.10-desktop-amd64.manifest",
-  "retrieved_on": "2026-10-26",
-  "sha256": "2cf6baaae80cc85397e664cee4f7ab9cbf8e0a4b83639ab16044e3687182cc98",
-  "records": 1816
-}

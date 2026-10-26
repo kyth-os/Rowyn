@@ -149,20 +149,28 @@ guard = load_module("ubuntu_guard", "build/ubuntu-only-check.py")
 network = load_module("ubuntu_live_network", "build/ubuntu-live-network.py")
 
 
-class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
+class KubuntuDesktopLivePackageParityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.packages = load_module("ubuntu_live_packages", "build/ubuntu-live-packages.py")
-        cls.manifest = ROOT / "build/ubuntu-desktop-live-26.10-amd64.manifest"
+        cls.manifest = ROOT / "build/kubuntu-desktop-live-26.10-amd64.manifest"
 
     def test_pinned_official_manifest_contains_the_complete_deb_and_snap_set(self):
-        metadata = json.loads((ROOT / "build/ubuntu-desktop-live-26.10-amd64.manifest.json").read_text())
+        metadata = json.loads((ROOT / "build/kubuntu-desktop-live-26.10-amd64.manifest.json").read_text())
         self.assertEqual(metadata["sha256"], self.packages.REFERENCE_SHA256)
         package_set = self.packages.verify_reference_manifest(self.manifest)
-        self.assertEqual(len(package_set.debs), 1801)
-        self.assertEqual(len(package_set.snaps), 15)
+        self.assertEqual(len(package_set.debs), 2175)
+        self.assertEqual(len(package_set.snaps), 8)
         self.assertIn("iputils-ping", package_set.debs)
         self.assertIn("ubuntu-standard", package_set.debs)
+        # The live desktop is KDE Plasma, not GNOME: the Kubuntu reference
+        # set must carry the Plasma stack and none of the GNOME desktop.
+        self.assertIn("plasma-desktop", package_set.debs)
+        self.assertIn("kubuntu-desktop", package_set.debs)
+        self.assertIn("sddm", package_set.debs)
+        self.assertNotIn("gnome-shell", package_set.debs)
+        self.assertNotIn("gdm3", package_set.debs)
+        self.assertNotIn("ubuntu-desktop", package_set.debs)
 
     def test_install_passes_every_official_deb_package_to_apt(self):
         package_set = self.packages.verify_reference_manifest(self.manifest)
@@ -178,7 +186,7 @@ class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
 
         self.packages.install_deb_packages(self.manifest, runner=fake_runner)
         self.assertEqual(set(calls[0][4:]), set(package_set.debs))
-        self.assertEqual(len(calls[0][4:]), 1801)
+        self.assertEqual(len(calls[0][4:]), 2175)
 
     def test_run_checked_error_includes_stdout_tail_where_dpkg_names_the_failing_package(self):
         completed = subprocess.CompletedProcess(
@@ -229,7 +237,7 @@ class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
                 root=root,
                 runner=fake_runner,
                 metadata_reader=lambda path, runner: (
-                    "classic" if Path(path).name.startswith("ubuntu-desktop-bootstrap_") else "strict"
+                    "classic" if Path(path).name.startswith("firefox_") else "strict"
                 ),
             )
             installed = root / "filesystem.manifest"
@@ -243,11 +251,11 @@ class UbuntuDesktopLivePackageParityTests(unittest.TestCase):
                 self.manifest, installed, root=root,
             )
             seed = json.loads((root / "var/lib/snapd/seed/seed.yaml").read_text(encoding="utf-8"))
-            self.assertEqual((deb_count, snap_count), (1801, 15))
-            self.assertEqual(len(seed["snaps"]), 15)
-            self.assertTrue(next(item for item in seed["snaps"] if item["name"] == "ubuntu-desktop-bootstrap")["classic"])
+            self.assertEqual((deb_count, snap_count), (2175, 8))
+            self.assertEqual(len(seed["snaps"]), 8)
+            self.assertTrue(next(item for item in seed["snaps"] if item["name"] == "firefox")["classic"])
             self.assertTrue((root / "var/lib/snapd/seed/.snapd-explicit-install-stamp").is_file())
-            self.assertEqual(sum(line.startswith("snap:") for line in installed.read_text().splitlines()), 15)
+            self.assertEqual(sum(line.startswith("snap:") for line in installed.read_text().splitlines()), 8)
 
 
 class UbuntuGuardTests(unittest.TestCase):
@@ -301,7 +309,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
     def test_live_stage_installs_the_regular_ubuntu_desktop_package_set(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
         live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
-        self.assertIn("ubuntu-desktop-live-26.10-amd64.manifest", live_stage)
+        self.assertIn("kubuntu-desktop-live-26.10-amd64.manifest", live_stage)
         configure = (ROOT / "build/configure-live.sh").read_text()
         self.assertIn("install-deb-packages", configure)
         self.assertIn("seed-snaps", configure)

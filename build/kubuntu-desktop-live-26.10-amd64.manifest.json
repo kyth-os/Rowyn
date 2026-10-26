@@ -1,0 +1,9 @@
+{
+  "release": "Kubuntu 26.10",
+  "architecture": "amd64",
+  "purpose": "Package inventory for the official Kubuntu desktop live ISO",
+  "source": "https://cdimage.ubuntu.com/kubuntu/releases/26.10/release/kubuntu-26.10-desktop-amd64.manifest",
+  "retrieved_on": "2026-10-26",
+  "sha256": "fc344b44914d28b496d6f1431aa729a92fbdcc124f7d93266a1ef885adcc961e",
+  "records": 2183
+}

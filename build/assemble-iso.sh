@@ -31,7 +31,7 @@ EOF
 mksquashfs / "$work/casper/filesystem.squashfs" -noappend -comp zstd -processors 4 \
     -wildcards -e 'proc/*' 'sys/*' 'dev/*' 'run/*' 'tmp/*' 'work' 'output' 'rowyn'
 dpkg-query -W --showformat='${Package} ${Version}\n' > "$work/casper/filesystem.manifest"
-/usr/bin/python3 /rowyn/ubuntu-live-packages.py verify-package-parity --manifest /usr/share/rowyn/ubuntu-desktop-live-26.10-amd64.manifest --installed-manifest "$work/casper/filesystem.manifest" --root /
+/usr/bin/python3 /rowyn/ubuntu-live-packages.py verify-package-parity --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest --installed-manifest "$work/casper/filesystem.manifest" --root /
 du -sx --block-size=1 /usr /etc /var /home | awk '{n += $1} END {print n}' > "$work/casper/filesystem.size"
 (cd "$work"; find . -type f ! -name md5sum.txt -print0 | sort -z | xargs -0 md5sum > md5sum.txt)
 iso="/output/rowyn-custom-installer-${SOURCE_TAG}.iso"

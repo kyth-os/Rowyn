@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install and verify the package set from Ubuntu 26.10 desktop live media."""
+"""Install and verify the package set from Kubuntu 26.10 desktop live media."""
 import argparse
 from dataclasses import dataclass
 import hashlib
@@ -11,8 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-REFERENCE_SHA256 = "2cf6baaae80cc85397e664cee4f7ab9cbf8e0a4b83639ab16044e3687182cc98"
-REFERENCE_RECORDS = 1816
+REFERENCE_SHA256 = "fc344b44914d28b496d6f1431aa729a92fbdcc124f7d93266a1ef885adcc961e"
+REFERENCE_RECORDS = 2183
 ARCHITECTURE = "amd64"
 PACKAGE_NAME = re.compile(r"[a-z0-9][a-z0-9+.-]*\Z")
 SNAP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
@@ -71,10 +71,10 @@ def verify_reference_manifest(path):
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if digest != REFERENCE_SHA256:
-        raise ValueError("Ubuntu 26.10 desktop live manifest hash does not match the pinned official file")
+        raise ValueError("Kubuntu 26.10 desktop live manifest hash does not match the pinned official file")
     rows = path.read_text(encoding="utf-8").splitlines()
     if len(rows) != REFERENCE_RECORDS:
-        raise ValueError("Ubuntu desktop live manifest record count changed")
+        raise ValueError("Kubuntu desktop live manifest record count changed")
     return parse_manifest(path)
 
 
@@ -124,7 +124,7 @@ def install_deb_packages(manifest, runner=run_checked):
     installed_names = {normalize_package_name(line) for line in installed.splitlines() if line.strip()}
     missing = sorted(set(package_set.debs) - installed_names)
     if missing:
-        raise ValueError("Ubuntu desktop live packages were not installed: " + ", ".join(missing))
+        raise ValueError("Kubuntu desktop live packages were not installed: " + ", ".join(missing))
 
 
 def _snap_metadata(snap_path, runner=run_checked):
@@ -188,25 +188,25 @@ def _seeded_snap_records(package_set, root):
     seed = Path(root) / "var/lib/snapd/seed"
     seed_yaml = seed / "seed.yaml"
     if not seed_yaml.is_file():
-        raise ValueError("Ubuntu desktop snap seed is missing")
+        raise ValueError("Kubuntu desktop snap seed is missing")
     if any(snap.name == "snapd" for snap in package_set.snaps) and not (seed / ".snapd-explicit-install-stamp").is_file():
-        raise ValueError("Ubuntu desktop snapd explicit-install stamp is missing")
+        raise ValueError("Kubuntu desktop snapd explicit-install stamp is missing")
     try:
         payload = json.loads(seed_yaml.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as error:
-        raise ValueError("Ubuntu desktop snap seed is unreadable") from error
+        raise ValueError("Kubuntu desktop snap seed is unreadable") from error
     entries = payload.get("snaps") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
-        raise ValueError("Ubuntu desktop snap seed has no snap list")
+        raise ValueError("Kubuntu desktop snap seed has no snap list")
     by_name = {entry.get("name"): entry for entry in entries if isinstance(entry, dict)}
     records = []
     for snap in package_set.snaps:
         entry = by_name.get(snap.name)
         if entry is None or entry.get("channel") != snap.channel:
-            raise ValueError("Ubuntu desktop snap is not seeded on its reference channel: " + snap.name)
+            raise ValueError("Kubuntu desktop snap is not seeded on its reference channel: " + snap.name)
         filename = entry.get("file")
         if not isinstance(filename, str) or Path(filename).name != filename:
-            raise ValueError("Ubuntu desktop snap seed has an unsafe archive path: " + snap.name)
+            raise ValueError("Kubuntu desktop snap seed has an unsafe archive path: " + snap.name)
         archive = seed / "snaps" / filename
         revision = archive.stem.rsplit("_", 1)[-1]
         assertion = seed / "assertions" / (archive.stem + ".assert")
@@ -217,12 +217,12 @@ def _seeded_snap_records(package_set, root):
             or not assertion.is_file()
             or assertion.stat().st_size == 0
         ):
-            raise ValueError("Ubuntu desktop snap archive/assertion is missing or empty: " + snap.name)
+            raise ValueError("Kubuntu desktop snap archive/assertion is missing or empty: " + snap.name)
         if entry.get("classic") not in (None, True):
-            raise ValueError("Ubuntu desktop snap has an invalid classic seed flag: " + snap.name)
+            raise ValueError("Kubuntu desktop snap has an invalid classic seed flag: " + snap.name)
         records.append((snap.name, snap.channel, revision))
     if len(entries) != len(package_set.snaps):
-        raise ValueError("Ubuntu desktop snap seed contains unexpected entries")
+        raise ValueError("Kubuntu desktop snap seed contains unexpected entries")
     return records
 
 
@@ -236,7 +236,7 @@ def verify_package_parity(manifest, installed_manifest, root=Path("/")):
     }
     missing = sorted(set(package_set.debs) - installed_names)
     if missing:
-        raise ValueError("Ubuntu desktop live packages missing from image: " + ", ".join(missing))
+        raise ValueError("Kubuntu desktop live packages missing from image: " + ", ".join(missing))
     records = _seeded_snap_records(package_set, root)
     existing = installed_path.read_text(encoding="utf-8").splitlines()
     present = {line.split()[0] for line in existing if line.split()}
@@ -264,15 +264,15 @@ def main(argv=None):
     try:
         if arguments.command == "install-deb-packages":
             install_deb_packages(arguments.manifest)
-            print("Installed all Debian packages from the Ubuntu desktop live manifest")
+            print("Installed all Debian packages from the Kubuntu desktop live manifest")
         elif arguments.command == "seed-snaps":
             seed_snaps(arguments.manifest, arguments.root)
-            print("Seeded all Snap packages from the Ubuntu desktop live manifest")
+            print("Seeded all Snap packages from the Kubuntu desktop live manifest")
         else:
             deb_count, snap_count = verify_package_parity(
                 arguments.manifest, arguments.installed_manifest, arguments.root,
             )
-            print(f"Verified Ubuntu live package parity: {deb_count} Debian packages, {snap_count} seeded snaps")
+            print(f"Verified Kubuntu live package parity: {deb_count} Debian packages, {snap_count} seeded snaps")
     except (OSError, RuntimeError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
