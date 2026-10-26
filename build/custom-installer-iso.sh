@@ -170,6 +170,13 @@ service_path.write_text(service_text, encoding="utf-8")
 
 PY
 
+# Adapt only the hosted-runner invocation; local/Distrobox upstream behavior is
+# unchanged. Install on every invocation, including preflight, for idempotence.
+if [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+    install -m 0755 "${repo_root}/build/rootful-podman.sh" \
+        "${source_repo}/build_files/scripts/rootful-podman.sh"
+fi
+
 if [[ "${ROWYN_CUSTOM_INSTALLER_PREFLIGHT:-0}" == "1" ]]; then
     bash -n "${source_repo}/build_files/build-live-iso.sh"
     bash -n "${source_repo}/installer/build.sh"

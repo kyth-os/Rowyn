@@ -134,6 +134,7 @@ class StorageActionTests(unittest.TestCase):
 
 # A deliberately small adapter fixture, not a substitute for pinned-source proof.
 FIXTURE = {
+    "build_files/scripts/rootful-podman.sh": "#!/bin/bash\nexec unshare --cgroup podman \"$@\"\n",
     "build_files/build-live-iso.sh": "#!/bin/bash\nexit 99 # must never build in preflight\n",
     "installer/Containerfile": "FROM fixture\n",
     "installer/iso.yaml": "fixture: true\n",
@@ -227,6 +228,18 @@ class AdapterFixtureTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(snapshot, {p: (self.source / p).read_bytes() for p in FIXTURE})
 
+    def test_hosted_wrapper_replacement_is_narrow_and_idempotent(self):
+        path = self.source / "build_files/scripts/rootful-podman.sh"
+        original = path.read_bytes()
+        result = preflight(self.source, dict(self.env, GITHUB_ACTIONS="false"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(path.read_bytes(), original)
+        for _ in range(2):
+            result = preflight(self.source, dict(self.env, GITHUB_ACTIONS="true", RUNNER_ENVIRONMENT="github-hosted"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(path.read_bytes(), (ROOT / "build/rootful-podman.sh").read_bytes())
+            self.assertTrue(os.access(path, os.X_OK))
+
     def test_duplicate_prepare_anchor_is_rejected(self):
         path = self.source / EXECUTOR
         path.write_text(path.read_text() + '            Phase::Prepare => {\n                let power = crate::installer_orchestration::power_check();\n')
@@ -261,11 +274,14 @@ class PinnedSourceTests(unittest.TestCase):
             try:
                 head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
                 self.assertEqual(head, PIN)
-                first = preflight(source)
+                hosted = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}
+                first = preflight(source, hosted)
+                self.assertEqual((source / "build_files/scripts/rootful-podman.sh").read_bytes(),
+                                 (ROOT / "build/rootful-podman.sh").read_bytes())
                 self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
                 assert_gate(self, source)
                 diff = subprocess.check_output(["git", "-C", str(source), "diff", "--binary"])
-                second = preflight(source, {"KYTH_EARLY_SOURCE_VERIFY": "0"})
+                second = preflight(source, dict(hosted, KYTH_EARLY_SOURCE_VERIFY="0"))
                 self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
                 self.assertEqual(diff, subprocess.check_output(["git", "-C", str(source), "diff", "--binary"]))
                 assert_gate(self, source)

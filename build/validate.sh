@@ -41,10 +41,10 @@ for workflow in sorted(Path('.github/workflows').glob('*.yml')):
 PY
 echo "[validate] workflow YAML parsed"
 
-deprecated_tool_cache_count="$(grep -Fc 'tool-cache:' .github/workflows/build.yml || true)"
+deprecated_tool_cache_count="$( { grep -Fh 'tool-cache:' .github/workflows/{build,installer-iso}.yml || true; } | wc -l)"
 (( deprecated_tool_cache_count == 0 )) \
     || fail "workflow still uses deprecated free-disk-space tool-cache input"
-preinstalled_runtimes_count="$(grep -Fc 'preinstalled-runtimes: true' .github/workflows/build.yml || true)"
+preinstalled_runtimes_count="$(grep -Fc 'preinstalled-runtimes: true' .github/workflows/{build,installer-iso}.yml | awk -F: '{sum += $NF} END {print sum}')"
 (( preinstalled_runtimes_count == 2 )) \
     || fail "both free-disk-space steps must use preinstalled-runtimes"
 echo "[validate] free-disk-space inputs passed"
@@ -96,30 +96,30 @@ grep -Fq 'grep -Fqx "ID_LIKE=\"ubuntu debian\"" /usr/lib/os-release' .github/wor
     || fail "image smoke check has an invalid Ubuntu family pattern"
 grep -Fq -- '--digestfile' .github/workflows/build.yml \
     || fail "image publication does not record an immutable digest"
-grep -Fq 'IMAGE_DIGEST' .github/workflows/build.yml \
+grep -Fq 'steps.source.outputs.image_digest' .github/workflows/installer-iso.yml \
     || fail "ISO job does not consume the published image digest"
-if grep -Fq -- '/var/lib/containers/storage:/var/lib/containers/storage' .github/workflows/build.yml; then
+if grep -Fq -- '/var/lib/containers/storage:/var/lib/containers/storage' .github/workflows/installer-iso.yml; then
     fail "custom installer ISO path must not use the obsolete bootc-image-builder storage mount"
 fi
 
-if grep -Eq 'bootc-image-builder|anaconda-iso' .github/workflows/build.yml; then
+if grep -Eq 'bootc-image-builder|anaconda-iso' .github/workflows/installer-iso.yml; then
     fail "Rowyn ISO path must use the custom installer environment, not anaconda-iso"
 fi
-grep -Fq 'needs: [build, sign]' .github/workflows/build.yml \
-    || fail "custom installer ISO is not gated on image signing"
+grep -Fq 'workflows: [Rowyn CI]' .github/workflows/installer-iso.yml \
+    || fail "custom installer ISO is not downstream of image workflow"
 grep -Fq 'id-token: write' .github/workflows/build.yml \
     || fail "image signing job is missing OIDC permission"
 grep -Fq 'cosign sign -y' .github/workflows/build.yml \
     || fail "image signing job does not sign the immutable image"
-grep -Fq 'KYTH_INSTALLER_COMMIT' .github/workflows/build.yml \
+grep -Fq 'KYTH_INSTALLER_COMMIT' .github/workflows/installer-iso.yml \
     || fail "custom installer source commit is not pinned"
-grep -Fq 'KYTH_INSTALLER_BASE_IMAGE' .github/workflows/build.yml \
+grep -Fq 'KYTH_INSTALLER_BASE_IMAGE' .github/workflows/installer-iso.yml \
     || fail "custom installer base image is not pinned"
-grep -Fq './.github/actions/setup-compressed-storage' .github/workflows/build.yml \
+grep -Fq './.github/actions/setup-compressed-storage' .github/workflows/installer-iso.yml \
     || fail "custom installer ISO does not provision compressed Podman storage"
-grep -Fq 'size: 65G' .github/workflows/build.yml \
+grep -Fq 'size: 65G' .github/workflows/installer-iso.yml \
     || fail "custom installer Podman storage size is not explicit"
-grep -Fq 'ROWYN_CUSTOM_INSTALLER_PREFLIGHT' .github/workflows/build.yml \
+grep -Fq 'ROWYN_CUSTOM_INSTALLER_PREFLIGHT' .github/workflows/installer-iso.yml \
     || fail "custom installer adapter preflight is missing"
 grep -Fq 'INSTALL_SOURCE_IMAGE' build/custom-installer-iso.sh \
     || fail "custom installer script does not pass the immutable Rowyn source"
@@ -146,7 +146,7 @@ grep -Fq 'self.verify_install_source(phase)?' build/custom-installer-iso.sh \
     || fail "custom installer does not verify the source during Prepare"
 grep -Fq 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' build/custom-installer-iso.sh \
     || fail "custom installer daemon cannot reach the registry for pre-storage verification"
-grep -Fq 'sha256sum -- "$(basename "${iso}")"' .github/workflows/build.yml \
+grep -Fq 'sha256sum -- "$(basename "${iso}")"' .github/workflows/installer-iso.yml \
     || fail "ISO checksum does not use a portable basename"
 grep -Fq 'runroot_source="${IMAGE_PATH}.runroot"' .github/actions/setup-compressed-storage/action.yml \
     || fail "compressed storage runroot source is not on the image's disk filesystem"
@@ -158,13 +158,13 @@ grep -Fq '[[ "${graphroot}" == "${MOUNT_POINT}" ]]' .github/actions/setup-compre
     || fail "compressed storage action does not verify the configured graphroot"
 grep -Fq '[[ "${runroot}" == "${RUNROOT}" ]]' .github/actions/setup-compressed-storage/action.yml \
     || fail "compressed storage action does not verify the configured runroot"
-grep -Fq 'cosign sign-blob --yes --bundle' .github/workflows/build.yml \
+grep -Fq 'cosign sign-blob --yes --bundle' .github/workflows/installer-iso.yml \
     || fail "ISO checksum is not signed"
-grep -Fq 'cosign verify-blob' .github/workflows/build.yml \
+grep -Fq 'cosign verify-blob' .github/workflows/installer-iso.yml \
     || fail "ISO checksum signature is not verified in CI"
-grep -Fq 'rowyn-custom-installer-*.iso.sigstore.json' .github/workflows/build.yml \
+grep -Fq 'rowyn-custom-installer-*.iso.sigstore.json' .github/workflows/installer-iso.yml \
     || fail "ISO signature bundle is not uploaded"
-grep -Fq 'skopeo inspect --no-creds' .github/workflows/build.yml \
+grep -Fq 'skopeo inspect --no-creds' .github/workflows/installer-iso.yml \
     || fail "custom installer does not assert anonymous source-image access"
 grep -Fq 'Rowyn uses the Ubuntu kernel included in the signed image' build/custom-installer-iso.sh \
     || fail "custom installer script does not disable the unsupported Kyth kernel choice"
