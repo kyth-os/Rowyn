@@ -37,7 +37,10 @@ du -sx --block-size=1 /usr /etc /var /home | awk '{n += $1} END {print n}' > "$w
 iso="/output/rowyn-custom-installer-${SOURCE_TAG}.iso"
 # Ubuntu's grub-mkrescue builds the El Torito EFI image and hybrid disk layout.
 # No signed shim is supplied: never claim Secure Boot qualification.
-grub-mkrescue -d /usr/lib/grub/x86_64-efi -o "$iso" "$work" -- -volid ROWYN_LIVE
+# -iso-level 3 (forwarded to xorriso) allows files over 4 GiB in the image:
+# the full Kubuntu live squashfs exceeds the ISO 9660 level-2 single-file
+# limit and xorriso otherwise aborts (seen in CI run 40419853080).
+grub-mkrescue -d /usr/lib/grub/x86_64-efi -o "$iso" "$work" -- -volid ROWYN_LIVE -iso-level 3
 xorriso -indev "$iso" -report_el_torito plain -report_system_area plain \
     > "${iso}.boot-report.txt" 2>&1
 unsquashfs -s "$work/casper/filesystem.squashfs" > "${iso}.squashfs-report.txt"

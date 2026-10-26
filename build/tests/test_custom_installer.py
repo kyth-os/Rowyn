@@ -345,6 +345,16 @@ class LiveBootcConfigurationTests(unittest.TestCase):
         self.assertIn('"--print-esp-path"', configure)
         self.assertIn('exec /usr/bin/bootctl.distrib "$@"', configure)
 
+    def test_iso_assembly_allows_files_over_4gib(self):
+        # Regression: the full Kubuntu live squashfs exceeds the ISO 9660
+        # level-2 single-file limit (4 GiB - 1); xorriso aborted the
+        # grub-mkrescue run until -iso-level 3 was forwarded to it.
+        assemble = (ROOT / "build/assemble-iso.sh").read_text()
+        mkrescue = next(
+            line for line in assemble.splitlines() if line.startswith("grub-mkrescue")
+        )
+        self.assertIn("-iso-level 3", mkrescue)
+
     def test_live_stage_uses_prepare_root_policy_from_pinned_payload(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
         live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
