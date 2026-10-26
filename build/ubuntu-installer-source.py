@@ -195,6 +195,12 @@ def port_source(root, digest):
     text = replace_once(text, 'const steps = ["network", "welcome", "disk", "kernel", "software", "config", "review", "install"] as const;',
                         'const steps = ["network", "welcome", "disk", "software", "config", "review", "install"] as const;')
     text = replace_once(text, '{step === "kernel" && <ChoiceStep title="Choose kernel" value={request.kernel} options={["fedora", "cachyos"]} hint="CachyOS kernel: tuned for gaming and latency. Fedora: the stock, most conservative kernel." onChange={(v) => update("kernel", v)} onBack={() => setStep("disk")} onNext={() => setStep("software")} />}', '')
+    # ChoiceStep existed only for the kernel step; tsc rejects the orphan.
+    app_lines = text.splitlines(keepends=True)
+    kept = [line for line in app_lines if not line.startswith('function ChoiceStep(')]
+    if len(kept) != len(app_lines) - 1:
+        raise ValueError("expected exactly one ChoiceStep definition to remove")
+    text = ''.join(kept)
     text = replace_once(text, 'onBack={() => setStep("welcome")} onNext={() => setStep("kernel")}',
                         'onBack={() => setStep("welcome")} onNext={() => setStep("software")}')
     text = replace_once(text, 'onBack={() => setStep("kernel")} onNext={() => setStep("config")}',
