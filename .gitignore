@@ -9,3 +9,6 @@ build/bootable.img
 build/ovmf-vars.fd
 build/qemu.pid
 build/serial.log
+
+# Python bytecode caches
+__pycache__/
