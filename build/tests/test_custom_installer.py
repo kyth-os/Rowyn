@@ -320,6 +320,46 @@ class DarkDefaultsTests(unittest.TestCase):
         self.assertIn("--user liveuser", configure)
 
 
+class LiveScreenLockTests(unittest.TestCase):
+    def test_liveuser_screen_lock_override_is_after_user_creation_and_casper_reasserted(self):
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        user_creation = configure.index(
+            "useradd --uid 1000 --create-home --shell /bin/bash --groups audio,video,render liveuser"
+        )
+        live_config = configure.index("/home/liveuser/.config/kscreenlockerrc")
+        casper_config = configure.index("cat > /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-screenlock")
+        self.assertLess(user_creation, live_config)
+        self.assertLess(live_config, casper_config)
+
+        self.assertIn(
+            "[Daemon]\nAutolock=false\nLockOnResume=false",
+            configure,
+        )
+        self.assertIn("chmod 755 /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-screenlock", configure)
+        self.assertIn("grep -q 'scripts/casper-bottom/99rowyn-screenlock'", configure)
+        hook = configure.split("scripts/casper-bottom/99rowyn-screenlock <<'EOF'", 1)[1].split("\nEOF", 1)[0]
+        self.assertNotIn("install -d", hook, "initramfs must not require the coreutils install binary")
+        self.assertIn("chroot /root chown liveuser:liveuser", hook)
+        self.assertNotIn("/etc/xdg/kscreenlockerrc", configure)
+
+    def test_screen_lock_override_is_not_in_installed_payload_or_shared_defaults(self):
+        payload = (ROOT / "Containerfile").read_text()
+        helper = (ROOT / "shared/kde-dark-defaults.sh").read_text()
+        self.assertNotIn("kscreenlockerrc", payload)
+        self.assertNotIn("Autolock=false", payload)
+        self.assertNotIn("kscreenlockerrc", helper)
+        self.assertNotIn("Autolock=false", helper)
+
+    def test_live_screen_lock_change_does_not_expand_sudo_or_password_policy(self):
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        block_start = configure.index("# The live installer session must not lock itself")
+        block_end = configure.index("cat > /etc/casper.conf", block_start)
+        screen_lock_block = configure[block_start:block_end]
+        self.assertNotIn("sudo", screen_lock_block)
+        self.assertNotIn("passwd", screen_lock_block)
+        self.assertNotIn("chpasswd", screen_lock_block)
+
+
 class CasperProtectionTests(unittest.TestCase):
     def runner(self, mounts, devices, loops=None):
         calls = []

@@ -101,13 +101,316 @@ def port_source(root, digest):
                     return Err(NativePhaseError::Execution { phase,
                         message: "Rowyn currently requires UEFI firmware (CSM/BIOS unsupported)".into() });
                 }
-                let state = Command::new("/usr/bin/mokutil").arg("--sb-state").output();
-                if !state.map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("SecureBoot disabled")).unwrap_or(false) {
-                    return Err(NativePhaseError::Execution { phase,
-                        message: "Disable Secure Boot: Rowyn's systemd-boot chain is not qualified; no Kyth MOK is used".into() });
-                }
+                classify_secure_boot_probe(phase, cancellation)?;
 ''')
+    # Rowyn's firmware policy is deliberately explicit: the only accepted
+    # states are ordinary disabled firmware and a documented unsupported state
+    # corroborated by both systemd and mokutil. All other evidence fails closed.
+    secure_boot_policy = r'''// ROWYN_SECURE_BOOT_POLICY_BEGIN
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecureBootProbeState {
+    Disabled,
+    Unsupported,
+}
+
+#[derive(Debug, Clone)]
+struct SecureBootCommandEvidence {
+    status: Option<i32>,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+}
+
+fn secure_boot_command_diagnostic(name: &str, evidence: &SecureBootCommandEvidence) -> String {
+    if let Some(error) = &evidence.error {
+        return format!("{name} execution failed: {error}");
+    }
+    format!(
+        "{name} returned status={:?}, stderr={:?}, stdout={:?}",
+        evidence.status,
+        evidence.stderr.trim_end(),
+        evidence.stdout.trim_end(),
+    )
+}
+
+fn parse_bootctl_secure_boot(evidence: &SecureBootCommandEvidence) -> Result<&'static str, String> {
+    if evidence.error.is_some() || evidence.status != Some(0) {
+        return Err(secure_boot_command_diagnostic("bootctl", evidence));
+    }
+    let matches: Vec<&str> = evidence
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            line.strip_prefix("Secure Boot:")
+                .or_else(|| line.strip_prefix("secure boot:"))
+                .map(str::trim)
+        })
+        .collect();
+    if matches.len() != 1 {
+        return Err(format!(
+            "bootctl Secure Boot status is missing or ambiguous: {}",
+            secure_boot_command_diagnostic("bootctl", evidence)
+        ));
+    }
+    match matches[0] {
+        "enabled" => Ok("enabled"),
+        "disabled" => Ok("disabled"),
+        "disabled (unsupported)" => Ok("unsupported"),
+        _ => Err(format!(
+            "bootctl Secure Boot status is unknown: {}",
+            secure_boot_command_diagnostic("bootctl", evidence)
+        )),
+    }
+}
+
+fn parse_mokutil_secure_boot(evidence: &SecureBootCommandEvidence) -> Result<&'static str, String> {
+    if evidence.error.is_some() {
+        return Err(secure_boot_command_diagnostic("mokutil", evidence));
+    }
+    let stdout = evidence.stdout.trim();
+    let stderr = evidence.stderr.trim();
+    match (evidence.status, stdout, stderr) {
+        (Some(0), "SecureBoot enabled", "") => Ok("enabled"),
+        (Some(0), "SecureBoot disabled", "") => Ok("disabled"),
+        // mokutil has used both 1 and 255 for this documented unsupported
+        // condition across releases. The exact diagnostic is required; an
+        // arbitrary non-zero exit is never treated as unsupported.
+        (Some(1 | 255), "", "EFI variables are not supported on the system.")
+        | (Some(1 | 255), "", "This system doesn't support Secure Boot")
+        | (Some(1 | 255), "This system doesn't support Secure Boot", "") => Ok("unsupported"),
+        _ => Err(secure_boot_command_diagnostic("mokutil", evidence)),
+    }
+}
+
+fn classify_secure_boot_evidence(
+    efi_vars_readable: bool,
+    efi_secure_boot: Option<bool>,
+    bootctl: &SecureBootCommandEvidence,
+    mokutil: &SecureBootCommandEvidence,
+) -> Result<SecureBootProbeState, String> {
+    if !efi_vars_readable {
+        return Err("EFI variable filesystem is not readable".into());
+    }
+    let bootctl_state = parse_bootctl_secure_boot(bootctl)?;
+    let mokutil_state = parse_mokutil_secure_boot(mokutil)?;
+    if bootctl_state == "enabled" || mokutil_state == "enabled" || efi_secure_boot == Some(true) {
+        return Err(format!(
+            "Secure Boot is enabled or contradictory: bootctl={bootctl_state}, mokutil={mokutil_state}, EFI SecureBoot={efi_secure_boot:?}"
+        ));
+    }
+    if bootctl_state != mokutil_state {
+        return Err(format!(
+            "Secure Boot evidence is contradictory: bootctl={bootctl_state}, mokutil={mokutil_state}, EFI SecureBoot={efi_secure_boot:?}"
+        ));
+    }
+    match (bootctl_state, efi_secure_boot) {
+        ("disabled", None | Some(false)) => Ok(SecureBootProbeState::Disabled),
+        // Missing SecureBoot is not enough by itself. Here it is accepted only
+        // because the readable EFI variable store plus exact systemd and
+        // mokutil unsupported reports corroborate one another.
+        ("unsupported", None) => Ok(SecureBootProbeState::Unsupported),
+        ("unsupported", Some(false)) => Err(
+            "Secure Boot evidence is contradictory: firmware exposes SecureBoot=0 but systemd reports unsupported".into(),
+        ),
+        _ => Err(format!(
+            "Secure Boot state is unavailable or ambiguous: bootctl={bootctl_state}, mokutil={mokutil_state}, EFI SecureBoot={efi_secure_boot:?}"
+        )),
+    }
+}
+// ROWYN_SECURE_BOOT_POLICY_END
+
+fn read_secure_boot_efi_variable() -> Result<Option<bool>, String> {
+    let directory = Path::new("/sys/firmware/efi/efivars");
+    let mut entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("cannot read EFI variable filesystem {directory:?}: {error}"))?;
+    let mut has_variable = false;
+    let mut secure_boot_path = None;
+    while let Some(entry) = entries.next() {
+        let entry = entry.map_err(|error| format!("cannot enumerate EFI variables: {error}"))?;
+        has_variable = true;
+        if entry.file_name() == "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" {
+            secure_boot_path = Some(entry.path());
+        }
+    }
+    if !has_variable {
+        return Err("EFI variable filesystem is empty or unavailable".into());
+    }
+    let Some(path) = secure_boot_path else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("cannot read EFI SecureBoot variable {path:?}: {error}"))?;
+    if bytes.len() != 5 {
+        return Err(format!(
+            "EFI SecureBoot variable has invalid length {}; expected 5 bytes",
+            bytes.len()
+        ));
+    }
+    match bytes[4] {
+        0 => Ok(Some(false)),
+        1 => Ok(Some(true)),
+        value => Err(format!("EFI SecureBoot variable has invalid value {value}")),
+    }
+}
+
+fn run_secure_boot_command(
+    program: &str,
+    args: &[&str],
+    cancellation: &CancellationToken,
+    operation: &str,
+) -> SecureBootCommandEvidence {
+    let mut command = Command::new(program);
+    command.args(args).env("LC_ALL", "C");
+    match super::installer_stream::run_output_timeout_capture(
+        &mut command,
+        || cancellation.is_cancelled(),
+        std::time::Duration::from_secs(15),
+        operation,
+    ) {
+        Ok(output) => {
+            let stdout = match String::from_utf8(output.stdout) {
+                Ok(value) => value,
+                Err(_) => return SecureBootCommandEvidence {
+                    status: output.status.code(),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some(format!("{operation} stdout was not valid UTF-8")),
+                },
+            };
+            let stderr = match String::from_utf8(output.stderr) {
+                Ok(value) => value,
+                Err(_) => return SecureBootCommandEvidence {
+                    status: output.status.code(),
+                    stdout,
+                    stderr: String::new(),
+                    error: Some(format!("{operation} stderr was not valid UTF-8")),
+                },
+            };
+            SecureBootCommandEvidence {
+                status: output.status.code(),
+                stdout,
+                stderr,
+                error: None,
+            }
+        },
+        Err(error) => SecureBootCommandEvidence {
+            status: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            error: Some(error),
+        },
+    }
+}
+
+fn classify_secure_boot_probe(
+    phase: Phase,
+    cancellation: &CancellationToken,
+) -> Result<(), NativePhaseError> {
+    let efi_secure_boot = read_secure_boot_efi_variable().map_err(|message| {
+        NativePhaseError::Execution {
+            phase,
+            message: format!("Secure Boot EFI evidence failed: {message}"),
+        }
+    })?;
+    let bootctl = run_secure_boot_command(
+        "/usr/bin/bootctl",
+        &["--no-pager", "status"],
+        cancellation,
+        "bootctl Secure Boot probe",
+    );
+    let mokutil = run_secure_boot_command(
+        "/usr/bin/mokutil",
+        &["--sb-state"],
+        cancellation,
+        "mokutil Secure Boot probe",
+    );
+    classify_secure_boot_evidence(true, efi_secure_boot, &bootctl, &mokutil).map_err(|message| {
+        NativePhaseError::Execution {
+            phase,
+            message: format!("Secure Boot probe rejected: {message}"),
+        }
+    })?;
+    Ok(())
+}
+'''
+    text = replace_once(text, "impl NativeInstallRequest {", secure_boot_policy + "\nimpl NativeInstallRequest {")
     executor.write_text(text)
+    # The pinned stream helper already bounds command lifetime and cancellation
+    # but its original output helper intentionally rejects non-zero status.
+    # Secure Boot needs the exact status/stderr pair for a positive unsupported
+    # classification, so add a narrow capture variant rather than refactoring
+    # the shared streaming path.
+    stream = crate / "src/installer_stream.rs"
+    text = stream.read_text()
+    anchor = "pub(crate) fn run_output_timeout(\n"
+    text = replace_once(text, anchor, '''pub(crate) struct CapturedCommandOutput {
+    pub(crate) status: ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+}
+
+/// Bounded capture for fixed read-only probes that need status and stderr.
+/// Unlike `run_output_timeout`, non-zero exits are returned to the caller so
+/// it can distinguish a documented unsupported state from an arbitrary
+/// command failure. Output is capped after collection; these fixed probes
+/// must remain small and fail closed if they do not.
+pub(crate) fn run_output_timeout_capture(
+    command: &mut Command,
+    cancel_requested: impl Fn() -> bool,
+    timeout: Duration,
+    operation: &str,
+) -> Result<CapturedCommandOutput, String> {
+    let mut child = command
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not spawn {operation}: {error}"))?;
+    let started = Instant::now();
+    loop {
+        if cancel_requested() {
+            kill_process_group(&mut child);
+            let _ = child.wait();
+            return Err(format!("{operation} cancelled"));
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("could not collect {operation} output: {error}"))?;
+                const MAX_PROBE_OUTPUT: usize = 64 * 1024;
+                if output.stdout.len() > MAX_PROBE_OUTPUT || output.stderr.len() > MAX_PROBE_OUTPUT {
+                    return Err(format!("{operation} output exceeded {MAX_PROBE_OUTPUT} bytes"));
+                }
+                return Ok(CapturedCommandOutput {
+                    status: output.status,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                });
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(50))
+            }
+            Ok(None) => {
+                kill_process_group(&mut child);
+                let _ = child.wait();
+                return Err(format!(
+                    "{operation} timed out after {} seconds",
+                    timeout.as_secs()
+                ));
+            }
+            Err(error) => {
+                kill_process_group(&mut child);
+                let _ = child.wait();
+                return Err(format!("could not wait for {operation}: {error}"));
+            }
+        }
+    }
+}
+
+''' + anchor)
+    stream.write_text(text)
     storage = crate / "src/installer_storage.rs"
     text = storage.read_text()
     text = replace_once(text, 'const PROTECTED_MOUNT_TARGETS: [&str; 6]', 'const PROTECTED_MOUNT_TARGETS: [&str; 8]')

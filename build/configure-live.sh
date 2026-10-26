@@ -37,6 +37,17 @@ chmod 644 /etc/kyth-installer.env
 if getent passwd ubuntu >/dev/null; then userdel ubuntu; fi
 useradd --uid 1000 --create-home --shell /bin/bash --groups audio,video,render liveuser
 /rowyn/kde-dark-defaults.sh --root / --user liveuser --home /home/liveuser
+# The live installer session must not lock itself while unattended. Keep this
+# in the selected live user's home, not the shared payload defaults: the
+# installed Rowyn session retains KDE's normal locking behavior.
+install -d -m 700 -o liveuser -g liveuser /home/liveuser/.config
+cat > /home/liveuser/.config/kscreenlockerrc <<'EOF'
+[Daemon]
+Autolock=false
+LockOnResume=false
+EOF
+chown liveuser:liveuser /home/liveuser/.config/kscreenlockerrc
+chmod 600 /home/liveuser/.config/kscreenlockerrc
 cat > /etc/casper.conf <<'EOF'
 export USERNAME="liveuser"
 export USERFULLNAME="Rowyn Live Session"
@@ -84,6 +95,23 @@ rm -f /root/etc/sudoers.d/casper
 chroot /root /usr/sbin/usermod -G audio,video,render liveuser
 EOF
 chmod 755 /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-permissions
+# Casper's 25adduser runs later and may recreate session-user state. Reassert
+# the live-only KDE config after Casper so it cannot replace the chosen file.
+cat > /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-screenlock <<'EOF'
+#!/bin/sh
+case "${1:-}" in prereqs) exit 0;; esac
+mkdir -p /root/home/liveuser/.config
+chroot /root chmod 700 /home/liveuser/.config
+chroot /root chown liveuser:liveuser /home/liveuser/.config
+cat > /root/home/liveuser/.config/kscreenlockerrc <<'CONFIG'
+[Daemon]
+Autolock=false
+LockOnResume=false
+CONFIG
+chroot /root chown liveuser:liveuser /home/liveuser/.config/kscreenlockerrc
+chmod 600 /root/home/liveuser/.config/kscreenlockerrc
+EOF
+chmod 755 /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-screenlock
 # Live-only differences: the installed signed payload is never modified here.
 mkdir -p /etc/systemd/system/display-manager.service.d
 cat > /etc/systemd/system/display-manager.service.d/rowyn-permissions.conf <<'EOF'
@@ -107,6 +135,7 @@ lsinitramfs "/boot/initrd.img-${kernel}" > /var/tmp/rowyn-initrd-list
 # Keep the listing in build evidence, but fail if Casper is absent.
 grep -q 'scripts/casper' /var/tmp/rowyn-initrd-list
 grep -q 'scripts/casper-bottom/99rowyn-permissions' /var/tmp/rowyn-initrd-list
+grep -q 'scripts/casper-bottom/99rowyn-screenlock' /var/tmp/rowyn-initrd-list
 /usr/libexec/rowyn-live-preflight --runtime-only
 # Record apt packages for diagnosis; these packages are deliberately not EVR-pinned.
 dpkg-query -W > /usr/share/doc/rowyn-installer/live-packages.tsv
