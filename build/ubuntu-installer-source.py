@@ -186,20 +186,43 @@ def port_source(root, digest):
     text = text.replace('standard KythOS kernel does not require custom MOK enrollment',
                         'Rowyn uses the signed Ubuntu payload kernel; Secure Boot must remain disabled')
     secure.write_text(text)
-    ui = crate / "ui/installer.slint"
-    text = ui.read_text()
-    text = replace_once(text, '                                Button { text: "CachyOS"; clicked => { kernel = "cachyos"; select-kernel("cachyos"); } }\n', '')
-    text = text.replace('"fedora"', '"ubuntu"').replace('"Fedora"', '"Ubuntu"').replace('KythOS', 'Rowyn')
-    for label in ('Keep Windows', 'Replace partition', 'Free space', 'Manual', 'TPM2'):
-        text = replace_once(text, f'Button {{ text: "{label}"; clicked', f'Button {{ text: "{label}"; enabled: false; clicked')
-    text = text.replace('Install request', 'Install Rowyn: UEFI, Secure Boot OFF; whole-disk plaintext only')
-    text = text.replace('TPM2 needs a to-disk install and a recovery key plan.', 'Encryption and non-wipe modes are not qualified for this Ubuntu port.')
-    ui.write_text('// Rowyn: Ubuntu-only kernel choice and identity.\n' + text)
-    native = crate / "src/native_main.rs"
-    native.write_text(native.read_text().replace('KythOS', 'Rowyn'))
+    # Rowyn ships the upstream Tauri shell + web frontend, as Kyth does.
+    # The crate's native Slint UI is not built or installed (see Containerfile).
+    web = root / "src/kyth-installer-web"
+    app = web / "src/InstallerApp.tsx"
+    text = app.read_text()
+    # Ubuntu has one kernel: drop the kernel-choice step entirely.
+    text = replace_once(text, 'const steps = ["network", "welcome", "disk", "kernel", "software", "config", "review", "install"] as const;',
+                        'const steps = ["network", "welcome", "disk", "software", "config", "review", "install"] as const;')
+    text = replace_once(text, '{step === "kernel" && <ChoiceStep title="Choose kernel" value={request.kernel} options={["fedora", "cachyos"]} hint="CachyOS kernel: tuned for gaming and latency. Fedora: the stock, most conservative kernel." onChange={(v) => update("kernel", v)} onBack={() => setStep("disk")} onNext={() => setStep("software")} />}', '')
+    text = replace_once(text, 'onBack={() => setStep("welcome")} onNext={() => setStep("kernel")}',
+                        'onBack={() => setStep("welcome")} onNext={() => setStep("software")}')
+    text = replace_once(text, 'onBack={() => setStep("kernel")} onNext={() => setStep("config")}',
+                        'onBack={() => setStep("disk")} onNext={() => setStep("config")}')
+    text = replace_once(text, 'kernel: "fedora"', 'kernel: "ubuntu"')
+    text = replace_once(text, 'hostname: "kyth"', 'hostname: "rowyn"')
+    # Only whole-disk wipe is qualified in this port (the executor enforces it too).
+    text = replace_once(text, '<option value="wipe">Erase full disk</option><option value="resize_ntfs">Keep Windows and install alongside</option><option value="alongside">Replace a partition</option><option value="free_space">Use free space</option><option value="manual">Manual partitioning</option>',
+                        '<option value="wipe">Erase full disk</option>')
+    text = replace_once(text, '<option value="none">None</option><option value="tpm2">TPM2-bound</option>',
+                        '<option value="none">None</option>')
+    text = replace_once(text, 'Install the immutable gaming and development desktop. Coming from Windows? Keep it for anti-cheat titles and shrink it below — KythOS plays everything else.',
+                        'Install the immutable gaming and development desktop. This installer erases the disk you select and installs Rowyn on it.')
+    app.write_text('// Rowyn: Ubuntu-only kernel, wipe-only modes, Rowyn identity.\n' + text.replace('KythOS', 'Rowyn'))
+    for page in [web / "index.html", *sorted((web / "src").rglob("*.ts*"))]:
+        if page != app:
+            page.write_text(page.read_text().replace('KythOS', 'Rowyn'))
+    conf = crate / "tauri.conf.json"
+    text = conf.read_text()
+    text = replace_once(text, '"productName": "KythOS Installer"', '"productName": "Rowyn Installer"')
+    text = replace_once(text, '"identifier": "com.kythos.installer"', '"identifier": "com.rowyn.installer"')
+    text = replace_once(text, '"title": "KythOS Installer"', '"title": "Rowyn Installer"')
+    conf.write_text(text)
+    # The launcher stays on the upstream Tauri shell binary.
     launcher = root / "build_files/kyth-launch-installer"
-    text = launcher.read_text().replace('/usr/bin/kyth-installer-shell --socket-path',
-                                        '/usr/bin/kyth-installer-native --socket-path')
+    text = launcher.read_text()
+    if '/usr/bin/kyth-installer-shell --socket-path' not in text:
+        raise ValueError("upstream launcher no longer targets the Tauri shell")
     launcher.write_text(text.replace('KythOS', 'Rowyn'))
     service = root / "build_files/kyth-installerd.service"
     text = service.read_text().replace('EnvironmentFile=-', 'EnvironmentFile=')
@@ -207,7 +230,7 @@ def port_source(root, digest):
     service.write_text(text.replace('KythOS', 'Rowyn'))
     (root / 'ROWYN-PORT-NOTICE').write_text(
         f'Kyth installer source {PIN}, Apache-2.0 (LICENSE).\n'
-        'Modified by Rowyn: Ubuntu accounts, tool paths, native UI, source trust, firmware policy.\n'
+        'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'
         'Upstream OS/image/ISO assembly scripts are not included or invoked.\n')
 
 

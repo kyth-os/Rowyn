@@ -91,7 +91,7 @@ def runtime_closure():
     for binary in REQUIRED:
         if not os.access(binary, os.X_OK):
             raise ValueError('missing required Ubuntu runtime binary: ' + binary)
-    for binary in ('/usr/bin/bootc', '/usr/bin/kyth-installerd', '/usr/bin/kyth-installer-native'):
+    for binary in ('/usr/bin/bootc', '/usr/bin/kyth-installerd', '/usr/bin/kyth-installer-shell'):
         result = subprocess.run(['/usr/bin/ldd', binary], text=True, capture_output=True, timeout=15)
         if result.returncode or 'not found' in result.stdout:
             raise ValueError('unresolved dynamic library closure: ' + binary)

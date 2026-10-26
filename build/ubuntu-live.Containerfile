@@ -25,8 +25,8 @@ RUN python3 /source-probes.py /build /source-probes
 WORKDIR /build/src/kyth-installer-web
 RUN npm ci && npm run build
 WORKDIR /build/src/kyth-installer-web/src-tauri
-RUN cargo build --release --locked --bin kyth-installer-native --bin kyth-installerd --bin kyth-installer-exec && \
-    mkdir /binaries && cp target/release/kyth-installer-native target/release/kyth-installerd target/release/kyth-installer-exec /binaries/
+RUN cargo build --release --locked --bin kyth-installer-shell --bin kyth-installerd --bin kyth-installer-exec && \
+    mkdir /binaries && cp target/release/kyth-installer-shell target/release/kyth-installerd target/release/kyth-installer-exec /binaries/
 RUN mkdir /dependency-licenses && \
     find /root/.cargo/registry/src -type f \
       \( -iname '*license*' -o -iname 'copying*' -o -iname 'notice*' \) \
@@ -47,7 +47,7 @@ RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
       network-manager plasma-nm konsole kdialog fonts-noto-core \
       libwebkit2gtk-4.1-0 libgtk-3-0t64 libxdo3 libfontconfig1 libxkbcommon0 \
       libegl1 libgl1 libgl1-mesa-dri libinput10 libgbm1 libudev1 \
-      ca-certificates curl python3 sudo openssl locales tzdata \
+      ca-certificates curl python3 sudo openssl locales tzdata bubblewrap \
       ostree libostree-1-1 skopeo btrfs-progs dosfstools e2fsprogs xfsprogs \
       gdisk parted fdisk util-linux mount udev ntfs-3g cryptsetup-bin mokutil efibootmgr \
       systemd-boot systemd-boot-efi jq binutils \

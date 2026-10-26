@@ -22,13 +22,15 @@ SquashFS tools. Neither an upstream OS Containerfile nor an upstream ISO wrapper
 is executed. There is no Fedora live base, RPM package transaction, or Titanoboa
 assembly step.
 
-The Apache-2.0 Kyth installer Rust daemon, typed execution helper, native Slint
-UI, required shared crate and vendored glib dependency are exported from commit
+The Apache-2.0 Kyth installer Rust daemon, typed execution helper, Tauri
+shell and web frontend, required shared crate and vendored glib dependency are
+exported from commit
 `2baf8496b5aa904c0784f4290df743ee17edae48`. Only that allowlisted source is
 exported with `git archive`; the input checkout is not modified. Licenses and a
-modification notice are shipped in `/usr/share/doc/rowyn-installer`. The Tauri
-web assets are compiled to satisfy the pinned build contract, but only the
-native UI, daemon and typed helper are installed into the live system.
+modification notice are shipped in `/usr/share/doc/rowyn-installer`. The live
+system installs the Tauri shell (with the web frontend embedded, launched by
+the upstream session launcher exactly as Kyth launches it), the daemon and the
+typed helper; the crate's native Slint UI binary is not built or installed.
 
 `build/ubuntu-installer-source.py` ports account groups (`sudo`, not `wheel`),
 Ubuntu tool paths, locale/keyboard configuration, kernel/image selection, and
@@ -154,9 +156,7 @@ Assembly receives writable output/scratch directories, not host block devices.
 
 ## Attribution
 
-The native installer UI uses Slint under its Royalty-free Desktop, Mobile, and
-Web Applications License 2.0. Upstream installer source is Apache-2.0; the
-vendored glib Rust backport declares MIT. Dependency license texts are included
-in the live installer documentation.
-
-<a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" width="120"></a>
+The installer UI is upstream Kyth's Tauri shell and web frontend. Upstream
+installer source is Apache-2.0; Tauri is MIT/Apache-2.0; the vendored glib
+Rust backport declares MIT. Dependency license texts are included in the live
+installer documentation.
