@@ -247,3 +247,18 @@ class WorkflowTests(unittest.TestCase):
                     if "run" in step:
                         result = subprocess.run(["bash", "-n"], input=step["run"], text=True, capture_output=True)
                         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_every_validation_caller_sets_explicit_mount_fixture_privilege(self):
+        callers = []
+        for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            workflow = yaml.safe_load(workflow_path.read_text())
+            for job_name, job in workflow["jobs"].items():
+                for step in job["steps"]:
+                    if step.get("run") == "./build/validate.sh":
+                        callers.append((workflow_path.name, job_name, step))
+        self.assertEqual(
+            [(workflow, job) for workflow, job, _ in callers],
+            [("build.yml", "validate"), ("installer-iso.yml", "validate")],
+        )
+        for _, _, step in callers:
+            self.assertEqual(step["env"].get("ROWYN_MOUNT_FIXTURE_PRIVILEGED"), "1")

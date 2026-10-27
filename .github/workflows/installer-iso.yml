@@ -82,6 +82,8 @@ jobs:
 
       - name: Validate Rowyn source and CI contracts
         shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          ROWYN_MOUNT_FIXTURE_PRIVILEGED: "1"
         run: ./build/validate.sh
 
   iso:

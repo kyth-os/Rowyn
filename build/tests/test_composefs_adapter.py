@@ -9,6 +9,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def mount_fixture_command(*, privileged):
+    """Return the fixed namespace command selected by the caller's policy."""
+    if privileged:
+        return ['sudo', '-n', 'unshare', '--mount', '--propagation', 'private']
+    return ['unshare', '--user', '--map-root-user', '--mount', '--propagation', 'private']
+
+
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'build' / (name + '.py'))
     assert spec is not None and spec.loader is not None
@@ -132,11 +139,22 @@ fn main() {
             subprocess.run(['rustc', '--edition=2021', str(source), '-o', str(Path(tmp) / 'probe')], check=True)
             subprocess.run([str(Path(tmp) / 'probe')], check=True)
 
-    @unittest.skipUnless(Path('/usr/bin/unshare').exists(), 'unshare is required for mount fixture')
+    def test_mount_fixture_command_selection_is_explicit_and_fixed(self):
+        self.assertEqual(
+            mount_fixture_command(privileged=False),
+            ['unshare', '--user', '--map-root-user', '--mount', '--propagation', 'private'],
+        )
+        self.assertEqual(
+            mount_fixture_command(privileged=True),
+            ['sudo', '-n', 'unshare', '--mount', '--propagation', 'private'],
+        )
+
     def test_util_linux_bind_remount_is_private_and_leaves_source_writable(self):
         script = r'''
 set -eu
 root="$1"
+propagation="$(findmnt --noheadings --output PROPAGATION /)"
+test "$propagation" = private
 mkdir "$root/source" "$root/private"
 mount -t tmpfs tmpfs "$root/source"
 touch "$root/source/journal-file"
@@ -150,8 +168,9 @@ umount "$root/private"
 umount "$root/source"
 '''
         with tempfile.TemporaryDirectory(prefix='rowyn-esp-real-mount-') as tmp:
+            privileged = os.environ.get('ROWYN_MOUNT_FIXTURE_PRIVILEGED') == '1'
             result = subprocess.run(
-                ['unshare', '-Urnm', 'sh', '-c', script, 'fixture', tmp],
+                mount_fixture_command(privileged=privileged) + ['sh', '-c', script, 'fixture', tmp],
                 capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
