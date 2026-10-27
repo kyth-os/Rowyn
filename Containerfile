@@ -53,7 +53,7 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,
 # normalization because it only writes final system configuration.
 RUN apt-get update && \
     apt-get install -y \
-        plasma-desktop sddm konsole dolphin kinfocenter \
+        plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 \
@@ -61,8 +61,6 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
 
 RUN systemctl enable systemd-networkd systemd-resolved ssh && \
-    printf 'L! /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf\n' \
-        > /usr/lib/tmpfiles.d/resolv-conf.conf && \
     mkdir -p /etc/netplan && \
     printf 'network:\n  version: 2\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml
 
@@ -74,8 +72,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     echo "HOME=/var/home" | tee -a "/etc/default/useradd" && \
     /ctx/shared/bootc-rootfs.sh
 
-# The rootfs normalizer deletes /var. Keep KDE defaults in /etc and in a
-# /usr-owned tmpfiles source so they survive stateless first boot.
+# First-boot policy must be generated after stateless normalization. It keeps
+# mutable SDDM/resolver overrides in /etc and masks only the unused Budgie
+# background cache activation paths.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/installed-desktop-defaults.sh --root /
+
+# The rootfs normalizer deletes /var. Keep KDE defaults in /etc so they
+# survive stateless first boot.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/kde-dark-defaults.sh --root /
 

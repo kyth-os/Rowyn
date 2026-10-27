@@ -660,6 +660,131 @@ class DarkDefaultsTests(unittest.TestCase):
         self.assertIn("--user liveuser", configure)
 
 
+class InstalledPayloadDesktopTests(unittest.TestCase):
+    HELPER = ROOT / "shared/installed-desktop-defaults.sh"
+
+    def run_helper(self, root):
+        return subprocess.run(
+            ["bash", str(self.HELPER), "--root", str(root)],
+            text=True,
+            capture_output=True,
+        )
+
+    def seed_units(self, root):
+        for name in (
+            "sddm-backgrounds-cache.service",
+            "sddm-backgrounds-cache.path",
+            "sddm-backgrounds-cache.timer",
+        ):
+            path = root / "usr/lib/systemd/system" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("[Unit]\nDescription=fixture\n")
+
+    def test_helper_writes_kde_x11_sddm_defaults_and_masks_only_unused_budgie_cache(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-installed-desktop-") as temp:
+            root = Path(temp)
+            self.seed_units(root)
+            result = self.run_helper(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            config = (root / "etc/sddm.conf.d/20-rowyn-desktop.conf").read_text()
+            self.assertIn("DisplayServer=x11", config)
+            self.assertIn("Current=breeze", config)
+            self.assertIn("DisplayCommand=/usr/share/sddm/scripts/Xsetup", config)
+            self.assertIn("GreeterEnvironment=QT_IM_MODULE=qtvirtualkeyboard", config)
+            self.assertNotIn("ubuntu-budgie", config)
+            self.assertNotIn("budgie-sddm-display-setup", config)
+
+            for name in (
+                "sddm-backgrounds-cache.service",
+                "sddm-backgrounds-cache.path",
+                "sddm-backgrounds-cache.timer",
+            ):
+                masked = root / "etc/systemd/system" / name
+                self.assertTrue(masked.is_symlink(), masked)
+                self.assertEqual(masked.resolve(), Path("/dev/null"))
+            self.assertFalse((root / "etc/systemd/system/sddm.service").exists())
+
+    def test_helper_installs_late_resolver_override_without_writing_usr(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-installed-resolver-") as temp:
+            root = Path(temp)
+            self.seed_units(root)
+            result = self.run_helper(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            policy = (root / "etc/tmpfiles.d/systemd-resolve.conf").read_text()
+            self.assertIn("L!+ /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf", policy)
+            self.assertFalse((root / "usr/lib/tmpfiles.d/resolv-conf.conf").exists())
+
+    def test_tmpfiles_repairs_empty_and_regular_resolver_in_installed_fixture(self):
+        tmpfiles = shutil.which("systemd-tmpfiles")
+        self.assertIsNotNone(tmpfiles, "systemd-tmpfiles is required for resolver regression")
+        assert tmpfiles is not None
+        with tempfile.TemporaryDirectory(prefix="rowyn-installed-resolv-tmpfiles-") as temp:
+            root = Path(temp)
+            self.seed_units(root)
+            vendor = root / "usr/lib/tmpfiles.d/systemd-resolve.conf"
+            vendor.parent.mkdir(parents=True, exist_ok=True)
+            vendor.write_text("L! /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf\n")
+            result = self.run_helper(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            resolv = root / "etc/resolv.conf"
+            resolv.touch()
+
+            def apply_rule():
+                applied = subprocess.run(
+                    [tmpfiles, f"--root={root}", "--create", "--boot"],
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(applied.returncode, 0, applied.stderr)
+
+            apply_rule()
+            self.assertTrue(resolv.is_symlink())
+            self.assertEqual(resolv.readlink(), Path("/run/systemd/resolve/stub-resolv.conf"))
+            resolv.unlink()
+            resolv.write_text("stale\\n", encoding="utf-8")
+            apply_rule()
+            self.assertTrue(resolv.is_symlink())
+            self.assertEqual(resolv.readlink(), Path("/run/systemd/resolve/stub-resolv.conf"))
+
+    def test_containerfile_installs_xorg_and_breeze_theme_before_normalization(self):
+        payload = (ROOT / "Containerfile").read_text()
+        package_start = payload.index("apt-get install -y", payload.index("# --- KDE Plasma package layer"))
+        package_end = payload.index("rm -rf /var/lib/apt/lists", package_start)
+        package_block = payload[package_start:package_end]
+        for package in ("xserver-xorg", "sddm-theme-breeze"):
+            self.assertRegex(package_block, rf"\b{re.escape(package)}\b")
+        self.assertLess(payload.index("installed-desktop-defaults.sh"), payload.index("# --- Rowyn identity"))
+        self.assertLess(payload.index("/ctx/shared/bootc-rootfs.sh"), payload.index("installed-desktop-defaults.sh"))
+
+    @unittest.skipUnless(
+        os.environ.get("ROWYN_TEST_UBUNTU_PACKAGE_CLOSURE"),
+        "set ROWYN_TEST_UBUNTU_PACKAGE_CLOSURE=1 for the isolated Ubuntu package closure",
+    )
+    def test_pinned_ubuntu_fixture_has_xorg_breeze_theme_and_qml_closure(self):
+        script = r'''set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d
+chmod 755 /usr/sbin/policy-rc.d
+apt-get update
+apt-get install -y --no-install-recommends sddm xserver-xorg sddm-theme-breeze
+test -x /usr/bin/Xorg
+test -x /usr/lib/xorg/Xorg
+test -f /usr/share/sddm/themes/breeze/Main.qml
+test -f /usr/share/sddm/themes/breeze/metadata.desktop
+test -f /usr/share/sddm/themes/breeze/theme.conf
+test -f /usr/share/sddm/scripts/Xsetup
+test -f /usr/share/wayland-sessions/plasma.desktop
+'''
+        result = subprocess.run(
+            ["podman", "run", "--rm", "--network=host", "docker.io/library/ubuntu:26.10", "bash", "-c", script],
+            text=True,
+            capture_output=True,
+            timeout=900,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class LiveScreenLockTests(unittest.TestCase):
     def test_liveuser_screen_lock_override_is_after_user_creation_and_casper_reasserted(self):
         configure = (ROOT / "build/configure-live.sh").read_text()
