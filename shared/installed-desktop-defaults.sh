@@ -58,7 +58,9 @@ for unit in \
     sddm-backgrounds-cache.path \
     sddm-backgrounds-cache.timer; do
     vendor="$(root_path "/usr/lib/systemd/system/$unit")"
-    [[ -f "$vendor" ]] || { echo "missing confirmed Budgie cache unit: $unit" >&2; exit 1; }
+    # Breeze may prevent the optional Budgie theme package from being selected.
+    # An absent updater needs no mask; present activation paths stay disabled.
+    [[ -f "$vendor" ]] || continue
     target="$(root_path "/etc/systemd/system/$unit")"
     install -d "$(dirname "$target")"
     rm -f "$target"

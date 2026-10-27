@@ -705,6 +705,16 @@ class InstalledPayloadDesktopTests(unittest.TestCase):
                 self.assertEqual(masked.resolve(), Path("/dev/null"))
             self.assertFalse((root / "etc/systemd/system/sddm.service").exists())
 
+    def test_absent_budgie_cache_units_do_not_block_breeze_defaults(self):
+        # Explicit Breeze selection can leave Budgie's optional package absent.
+        with tempfile.TemporaryDirectory(prefix="rowyn-no-budgie-") as temp:
+            root = Path(temp)
+            result = self.run_helper(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Current=breeze", (root / "etc/sddm.conf.d/20-rowyn-desktop.conf").read_text())
+            for name in ("sddm-backgrounds-cache.service", "sddm-backgrounds-cache.path", "sddm-backgrounds-cache.timer"):
+                self.assertFalse((root / "etc/systemd/system" / name).is_symlink())
+
     def test_helper_installs_late_resolver_override_without_writing_usr(self):
         with tempfile.TemporaryDirectory(prefix="rowyn-installed-resolver-") as temp:
             root = Path(temp)
