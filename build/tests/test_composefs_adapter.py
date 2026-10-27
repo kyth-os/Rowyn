@@ -54,7 +54,7 @@ fn main() {
 
     def test_fstab_esp_must_resolve_to_selected_partition(self):
         policy = load('ubuntu-composefs-source').ESP_POLICY
-        code = 'fn validate_esp_match' + policy.split('fn validate_esp_match', 1)[1]
+        code = 'fn validate_esp_match' + policy.split('fn validate_esp_match', 1)[1].split('fn finish_esp_check', 1)[0]
         harness = r'''
 fn main() {
     let root = std::path::PathBuf::from(std::env::args().nth(1).unwrap());
@@ -82,6 +82,79 @@ fn main() {
             self.assertIn('/usr/bin/' + helper, text)
         self.assertIn('--composefs-backend', text)
         self.assertIn("'mount'", text)
+
+    def test_esp_verifier_uses_private_bind_remount_and_exact_mount_identity(self):
+        policy = load('ubuntu-composefs-source').ESP_POLICY
+        verifier = load('ubuntu-composefs-source').ESP_VERIFY_METHOD
+        self.assertIn('--bind', verifier)
+        self.assertIn('remount,bind,ro', verifier)
+        self.assertIn('VFS-OPTIONS', policy)
+        self.assertIn('"filesystems"', policy)
+        self.assertIn('validate_esp_mount_record', policy)
+        self.assertNotIn('ro=vfs', policy + verifier)
+
+        code = 'fn validate_esp_mount_record' + policy.split('fn validate_esp_mount_record', 1)[1].split('fn mounted_esp_records', 1)[0]
+        harness = r'''
+fn main() {
+    assert!(validate_esp_mount_record(
+        "/dev/vda2", "/run/kyth-installer/esp-journal", "/dev/vda2", "vfat", "ro,relatime", true
+    ).is_ok());
+    assert!(validate_esp_mount_record(
+        "/dev/vda2", "/run/kyth-installer/esp-journal", "/dev/vda3", "vfat", "ro,relatime", true
+    ).is_err());
+    assert!(validate_esp_mount_record(
+        "/dev/vda2", "/run/kyth-installer/esp-journal", "/dev/vda2", "vfat", "rw,relatime", true
+    ).is_err());
+    assert!(validate_esp_mount_record(
+        "/dev/vda2", "/run/kyth-installer/esp-journal", "/dev/vda2", "ext4", "ro,relatime", true
+    ).is_err());
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='rowyn-esp-mount-policy-') as tmp:
+            source = Path(tmp) / 'probe.rs'
+            source.write_text(code + harness)
+            subprocess.run(['rustc', '--edition=2021', str(source), '-o', str(Path(tmp) / 'probe')], check=True)
+            subprocess.run([str(Path(tmp) / 'probe')], check=True)
+
+    def test_esp_verifier_rejects_cleanup_failure_after_read_check(self):
+        policy = load('ubuntu-composefs-source').ESP_POLICY
+        code = 'fn finish_esp_check' + policy.split('fn finish_esp_check', 1)[1].split('fn validate_esp_mount_record', 1)[0]
+        harness = r'''
+fn main() {
+    assert!(finish_esp_check(Ok("bootx64.efi landed".into()), true).is_ok());
+    assert!(finish_esp_check(Err("missing loader".into()), true).is_err());
+    assert!(finish_esp_check(Ok("bootx64.efi landed".into()), false).is_err());
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='rowyn-esp-cleanup-policy-') as tmp:
+            source = Path(tmp) / 'probe.rs'
+            source.write_text(code + harness)
+            subprocess.run(['rustc', '--edition=2021', str(source), '-o', str(Path(tmp) / 'probe')], check=True)
+            subprocess.run([str(Path(tmp) / 'probe')], check=True)
+
+    @unittest.skipUnless(Path('/usr/bin/unshare').exists(), 'unshare is required for mount fixture')
+    def test_util_linux_bind_remount_is_private_and_leaves_source_writable(self):
+        script = r'''
+set -eu
+root="$1"
+mkdir "$root/source" "$root/private"
+mount -t tmpfs tmpfs "$root/source"
+touch "$root/source/journal-file"
+mount --bind "$root/source" "$root/private"
+mount -o remount,bind,ro "$root/private"
+opts="$(findmnt --noheadings --mountpoint "$root/private" --output VFS-OPTIONS)"
+case ",$opts," in *",ro,"*) ;; *) exit 11 ;; esac
+if touch "$root/private/must-fail" 2>/dev/null; then exit 12; fi
+touch "$root/source/journal-still-rw"
+umount "$root/private"
+umount "$root/source"
+'''
+        with tempfile.TemporaryDirectory(prefix='rowyn-esp-real-mount-') as tmp:
+            result = subprocess.run(
+                ['unshare', '-Urnm', 'sh', '-c', script, 'fixture', tmp],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipUnless(os.environ.get('ROWYN_TEST_KYTH_REPO'), 'optional pinned-source integration requires ROWYN_TEST_KYTH_REPO')

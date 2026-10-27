@@ -168,8 +168,207 @@ fn validate_esp_match(fstab: Option<&str>, discovered: &str) -> Result<(), Strin
     }
     Ok(())
 }
+
+fn finish_esp_check(check: Result<String, String>, unmounted: bool) -> Result<String, String> {
+    if !unmounted {
+        return Err("ESP bootloader check mount could not be released".into());
+    }
+    check
+}
+
+fn validate_esp_mount_record(
+    selected: &str, target: &str, source: &str, fstype: &str, vfs_options: &str,
+    require_readonly: bool,
+) -> Result<(), String> {
+    if !target.starts_with('/') || target == "/" {
+        return Err("ESP mountpoint is not an absolute private directory".into());
+    }
+    if source != selected {
+        return Err("ESP mount source does not match the selected partition".into());
+    }
+    if !fstype.eq_ignore_ascii_case("vfat") {
+        return Err("selected ESP mount is not vfat".into());
+    }
+    let options: Vec<&str> = vfs_options.split(',').map(str::trim).collect();
+    if require_readonly && (!options.contains(&"ro") || options.contains(&"rw")) {
+        return Err("ESP verification mount is not read-only".into());
+    }
+    Ok(())
+}
+
+fn mounted_esp_records(output: &str) -> Result<Vec<(String, String, String, String)>, String> {
+    fn walk(value: &serde_json::Value, records: &mut Vec<(String, String, String, String)>) {
+        if let Some(object) = value.as_object() {
+            if let (Some(target), Some(source), Some(fstype), Some(options)) = (
+                object.get("target").and_then(serde_json::Value::as_str),
+                object.get("source").and_then(serde_json::Value::as_str),
+                object.get("fstype").and_then(serde_json::Value::as_str),
+                object.get("vfs-options").and_then(serde_json::Value::as_str),
+            ) {
+                records.push((target.into(), source.into(), fstype.into(), options.into()));
+            }
+            for key in ["filesystems", "children"] {
+                if let Some(children) = object.get(key) {
+                    walk(children, records);
+                }
+            }
+        } else if let Some(array) = value.as_array() {
+            for child in array { walk(child, records); }
+        }
+    }
+    let value: serde_json::Value = serde_json::from_str(output)
+        .map_err(|error| format!("could not parse ESP mount table: {error}"))?;
+    let mut records = Vec::new();
+    walk(&value, &mut records);
+    Ok(records)
+}
+
+fn canonical_block_device(path: &str) -> Result<PathBuf, String> {
+    use std::os::unix::fs::FileTypeExt;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("ESP device {path} is not usable: {error}"))?;
+    let metadata = fs::symlink_metadata(&canonical)
+        .map_err(|error| format!("ESP device {path} is not usable: {error}"))?;
+    if !metadata.file_type().is_block_device() {
+        return Err(format!("ESP device {path} is not a block device"));
+    }
+    Ok(canonical)
+}
+
+fn mounted_esp_target(device: &Path) -> Result<Option<String>, String> {
+    let output = command_output("/usr/bin/findmnt", &[
+        "--json", "--real", "--output", "TARGET,SOURCE,FSTYPE,VFS-OPTIONS",
+    ])?;
+    let selected = device.to_string_lossy();
+    let mut matches = Vec::new();
+    for (target, source, fstype, options) in mounted_esp_records(&output)? {
+        let Ok(canonical_source) = canonical_block_device(&source) else { continue; };
+        if canonical_source == device {
+            let target_path = Path::new(&target);
+            let real = fs::symlink_metadata(target_path)
+                .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+                .unwrap_or(false);
+            if real && fstype.eq_ignore_ascii_case("vfat") {
+                validate_esp_mount_record(&selected, &target, &canonical_source.to_string_lossy(), &fstype, &options, false)?;
+                matches.push(target);
+            }
+        }
+    }
+    if matches.iter().any(|target| target == "/run/kyth-installer/esp-journal") {
+        return Ok(Some("/run/kyth-installer/esp-journal".into()));
+    }
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.into_iter().next()),
+        _ => Err("selected ESP has multiple ambiguous existing mounts".into()),
+    }
+}
+
+fn verify_esp_mount(target: &Path, device: &Path) -> Result<(), String> {
+    let target_string = target.to_string_lossy().into_owned();
+    let output = command_output("/usr/bin/findmnt", &[
+        "--json", "--mountpoint", &target_string,
+        "--output", "TARGET,SOURCE,FSTYPE,VFS-OPTIONS",
+    ])?;
+    let records = mounted_esp_records(&output)?;
+    if records.len() != 1 {
+        return Err("ESP verification mount is missing or ambiguous".into());
+    }
+    let (record_target, source, fstype, options) = &records[0];
+    let canonical_source = canonical_block_device(source)?;
+    if canonical_source != device {
+        return Err("ESP verification mount source changed".into());
+    }
+    validate_esp_mount_record(
+        &device.to_string_lossy(), record_target, &canonical_source.to_string_lossy(),
+        fstype, options, true,
+    )
+}
 '''
 
+ESP_VERIFY_METHOD = r'''fn verify_esp_bootloaders(device: &str) -> Result<String, String> {
+    let selected = canonical_block_device(device)?;
+    let mountpoint = tempfile::Builder::new()
+        .prefix("kyth-esp-verify-")
+        .tempdir()
+        .map_err(|error| format!("could not create ESP check mountpoint: {error}"))?;
+    let target = mountpoint.path();
+
+    let existing = mounted_esp_target(&selected)?;
+    if let Some(journal) = existing {
+        let bind = Command::new("/usr/bin/mount")
+            .args(["--bind", &journal, &target.to_string_lossy()])
+            .output()
+            .map_err(|error| format!("could not create private ESP verification mount: {error}"))?;
+        if !bind.status.success() {
+            return Err(format!(
+                "could not create private ESP verification mount: {}",
+                String::from_utf8_lossy(&bind.stderr).trim()
+            ));
+        }
+        let remount = match Command::new("/usr/bin/mount")
+            .args(["-o", "remount,bind,ro", &target.to_string_lossy()])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                let cleanup = Command::new("/usr/bin/umount").arg(target).output();
+                if cleanup.as_ref().map(|output| !output.status.success()).unwrap_or(true) {
+                    return Err("ESP verification mount remount failed and private mount could not be released".into());
+                }
+                return Err(format!("could not remount ESP verification mount read-only: {error}"));
+            }
+        };
+        if !remount.status.success() {
+            let cleanup = Command::new("/usr/bin/umount").arg(target).output();
+            if cleanup.as_ref().map(|output| !output.status.success()).unwrap_or(true) {
+                return Err("ESP verification mount remount failed and private mount could not be released".into());
+            }
+            return Err(format!(
+                "could not remount ESP verification mount read-only: {}",
+                String::from_utf8_lossy(&remount.stderr).trim()
+            ));
+        }
+    } else {
+        let mounted = Command::new("/usr/bin/mount")
+            .args(["-o", "ro", device, &target.to_string_lossy()])
+            .output()
+            .map_err(|error| format!("could not mount ESP read-only: {error}"))?;
+        if !mounted.status.success() {
+            return Err(format!(
+                "could not mount ESP read-only: {}",
+                String::from_utf8_lossy(&mounted.stderr).trim()
+            ));
+        }
+    }
+
+    let check = (|| {
+        verify_esp_mount(target, &selected)?;
+        let boot_dir = target.join("EFI").join("BOOT");
+        let loader = ["bootx64.efi", "BOOTX64.EFI", "Bootx64.efi"]
+            .iter()
+            .map(|name| boot_dir.join(name))
+            .find(|path| {
+                fs::symlink_metadata(path)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| "ESP has no EFI/BOOT/bootx64.efi".to_string())?;
+        if !efi_file_present(&target.join("EFI")) {
+            return Err("ESP has no .efi bootloader payload under EFI/".to_string());
+        }
+        Ok(format!(
+            "{} landed on the ESP",
+            loader.strip_prefix(target).unwrap_or(&loader).display()
+        ))
+    })();
+    let unmounted = Command::new("/usr/bin/umount")
+        .arg(target)
+        .output()
+        .map_err(|error| format!("could not release ESP check mount: {error}"))?;
+    finish_esp_check(check, unmounted.status.success())
+}
+'''
 
 def adapt_configuration_tests(text):
     """Keep upstream coverage, updating only intentional Ubuntu contracts."""
@@ -281,6 +480,9 @@ def adapt(root):
 
     assurance = crate / 'installer_assurance.rs'
     text = assurance.read_text()
+    verify_start = text.index('fn verify_esp_bootloaders(')
+    verify_end = text.index('\nfn kernel_detail(', verify_start)
+    text = text[:verify_start] + ESP_VERIFY_METHOD + text[verify_end:]
     text = replace(text, '    if !deploy.starts_with(root.join("ostree/deploy")) {',
                    '    if root == Path::new("/run/kyth-installer/install-root") {\n'
                    '        crate::installer_configuration::verify_mounted_view(\n'
