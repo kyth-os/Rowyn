@@ -353,7 +353,10 @@ class LiveBootcConfigurationTests(unittest.TestCase):
         mkrescue = next(
             line for line in assemble.splitlines() if line.startswith("grub-mkrescue")
         )
-        self.assertIn("-iso_level 3", mkrescue)
+        self.assertIn("-iso-level 3", mkrescue)
+        # The flag must be on the mkisofs side of the -- separator; after
+        # it, xorriso is in native command mode and rejects the option.
+        self.assertLess(mkrescue.index("-iso-level 3"), mkrescue.index(" -- "))
 
     def test_live_stage_uses_prepare_root_policy_from_pinned_payload(self):
         containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
