@@ -6,6 +6,7 @@ The input checkout is read-only; git archive exports exactly the pinned objects.
 """
 import argparse
 import io
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -87,6 +88,13 @@ def export_source(repo, destination):
 def port_source(root, digest):
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ValueError("invalid release digest")
+    spec = importlib.util.spec_from_file_location(
+        "rowyn_composefs", Path(__file__).with_name("ubuntu-composefs-source.py"))
+    assert spec is not None and spec.loader is not None
+    composefs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(composefs)
+    if composefs.completed(root, digest):
+        return
     crate = root / "src/kyth-installer-web/src-tauri"
     executor = crate / "src/installer_job_executor.rs"
     text = executor.read_text()
@@ -607,6 +615,9 @@ pub(crate) fn run_output_timeout_capture(
         f'Kyth installer source {PIN}, Apache-2.0 (LICENSE).\n'
         'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'
         'Upstream OS/image/ISO assembly scripts are not included or invoked.\n')
+
+    composefs.adapt(root)
+    composefs.record(root, digest)
 
 
 def main():

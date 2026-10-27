@@ -51,7 +51,7 @@ RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
       ca-certificates curl python3 sudo openssl locales tzdata bubblewrap podman crun \
       ostree libostree-1-1 skopeo btrfs-progs dosfstools e2fsprogs xfsprogs \
       gdisk parted fdisk util-linux mount udev ntfs-3g cryptsetup-bin mokutil efibootmgr \
-      systemd-boot systemd-boot-efi jq binutils \
+      systemd-boot systemd-boot-efi jq binutils zstd \
       squashfs-tools xorriso grub-common grub-pc-bin grub-efi-amd64-bin mtools && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=payload /usr/bin/bootc /usr/bin/bootc

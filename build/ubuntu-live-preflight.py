@@ -9,6 +9,7 @@ import sys
 # Fixed programs used by the enabled whole-disk path, including bootc helpers.
 REQUIRED = (
     '/usr/bin/bootc', '/usr/bin/bootctl', '/usr/bin/ostree', '/usr/bin/skopeo',
+    '/usr/bin/zstd', '/usr/bin/setpriv', '/usr/bin/systemctl',
     '/usr/bin/podman', '/usr/bin/crun',
     '/usr/bin/lsblk', '/usr/bin/findmnt', '/usr/bin/mount', '/usr/bin/umount',
     '/usr/sbin/blockdev', '/usr/bin/udevadm', '/usr/bin/openssl', '/usr/bin/mokutil',
@@ -128,6 +129,13 @@ def runtime_closure(root=Path("/"), runner=output, process_runner=subprocess.run
         for option in ('--source-imgref', '--target-imgref', '--bootloader'):
             if option not in help_text:
                 raise ValueError('bootc CLI lacks ' + option)
+    disk_help = runner(str(rooted('/usr/bin/bootc')), 'install', 'to-disk', '--help')
+    if '--composefs-backend' not in disk_help:
+        raise ValueError('bootc CLI lacks --composefs-backend')
+    mount_help = runner(str(rooted('/usr/bin/bootc')), 'install', 'mount', '--help')
+    for option in ('--sysroot', '--latest'):
+        if option not in mount_help:
+            raise ValueError('bootc install mount lacks ' + option)
     if not rooted('/usr/lib/systemd/boot/efi/systemd-bootx64.efi').is_file():
         raise ValueError('missing systemd-boot EFI binary')
 

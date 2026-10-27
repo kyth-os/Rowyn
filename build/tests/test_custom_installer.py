@@ -366,7 +366,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             def runner(*arguments):
                 calls.append(arguments)
                 if arguments[0] == str(root / "usr/bin/bootc"):
-                    return "--source-imgref --target-imgref --bootloader"
+                    return "--source-imgref --target-imgref --bootloader --composefs-backend --sysroot --latest"
                 if arguments[0] == str(root / "usr/bin/podman"):
                     return "podman version 5.8.6"
                 raise AssertionError("unexpected external command: " + repr(arguments))
@@ -400,7 +400,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             def runner(*arguments):
                 calls.append(arguments)
                 if arguments[0] == str(root / "usr/bin/bootc"):
-                    return "--source-imgref --target-imgref --bootloader"
+                    return "--source-imgref --target-imgref --bootloader --composefs-backend --sysroot --latest"
                 if arguments[0] == str(root / "usr/bin/podman") and arguments[1:] == ("--version",):
                     return "podman version 5.8.6"
                 raise AssertionError("unexpected external command: " + repr(arguments))
@@ -411,6 +411,16 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             live.runtime_closure(root=root, runner=runner, process_runner=process_runner)
             self.assertIn((str(root / "usr/bin/podman"), "--version"), calls)
             self.assertNotIn((str(root / "usr/bin/podman"), "info"), calls)
+            # A copied bootc executable is insufficient if its backend/mount
+            # capabilities differ from the pinned installer's contract.
+            def missing_backend(*arguments):
+                return runner(*arguments).replace("--composefs-backend", "")
+            with self.assertRaisesRegex(ValueError, "lacks --composefs-backend"):
+                live.runtime_closure(root=root, runner=missing_backend, process_runner=process_runner)
+            def missing_mount(*arguments):
+                return runner(*arguments).replace("--latest", "")
+            with self.assertRaisesRegex(ValueError, "mount lacks --latest"):
+                live.runtime_closure(root=root, runner=missing_mount, process_runner=process_runner)
 
     def test_live_install_diverts_bootctl_so_systemd_boot_trigger_postinst_survives(self):
         # Regression: the manifest install lands shim-signed/grub packages,
