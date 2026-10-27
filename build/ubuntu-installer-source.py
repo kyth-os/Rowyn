@@ -379,6 +379,36 @@ fn classify_secure_boot_probe(
     # the shared streaming path.
     stream = crate / "src/installer_stream.rs"
     text = stream.read_text()
+    anchor = "/// Own a long-running executor child until it exits, is cancelled, or times out.\n"
+    text = replace_once(text, anchor, '''fn merge_stderr_into_stdout(command: &mut Command) {
+    // The streaming model reads stdout only. Preserve helper diagnostics in
+    // the failure tail without opening a second unbounded reader for stderr.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::dup2(libc::STDOUT_FILENO, libc::STDERR_FILENO) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+''' + anchor)
+    anchor = '''pub(crate) fn run_command(
+    command: &mut Command,
+    cancel_requested: impl Fn() -> bool,
+) -> Result<ExitStatus, String> {
+    let mut child = command
+'''
+    text = replace_once(text, anchor, anchor.replace("    let mut child = command\n", "    merge_stderr_into_stdout(command);\n    let mut child = command\n"))
+    anchor = '''pub(crate) fn run_command_timeout(
+    command: &mut Command,
+    cancel_requested: impl Fn() -> bool,
+    timeout: Duration,
+) -> Result<ExitStatus, String> {
+    let mut child = command
+'''
+    text = replace_once(text, anchor, anchor.replace("    let mut child = command\n", "    merge_stderr_into_stdout(command);\n    let mut child = command\n"))
     anchor = "pub(crate) fn run_output_timeout(\n"
     text = replace_once(text, anchor, '''pub(crate) struct CapturedCommandOutput {
     pub(crate) status: ExitStatus,

@@ -48,7 +48,7 @@ RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
       network-manager netplan.io plasma-nm konsole kdialog fonts-noto-core \
       libwebkit2gtk-4.1-0 libgtk-3-0t64 libxdo3 libfontconfig1 libxkbcommon0 \
       libegl1 libgl1 libgl1-mesa-dri libinput10 libgbm1 libudev1 \
-      ca-certificates curl python3 sudo openssl locales tzdata bubblewrap \
+      ca-certificates curl python3 sudo openssl locales tzdata bubblewrap podman crun \
       ostree libostree-1-1 skopeo btrfs-progs dosfstools e2fsprogs xfsprogs \
       gdisk parted fdisk util-linux mount udev ntfs-3g cryptsetup-bin mokutil efibootmgr \
       systemd-boot systemd-boot-efi jq binutils \

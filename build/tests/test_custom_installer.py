@@ -330,6 +330,88 @@ class LiveBootcConfigurationTests(unittest.TestCase):
         assembly = (ROOT / "build/assemble-iso.sh").read_text()
         self.assertIn("verify-package-parity", assembly)
 
+    def test_live_stage_explicitly_installs_podman_and_crun_for_bootc_storage(self):
+        containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
+        package_line = live_stage.split("apt-get install -y --no-install-recommends", 1)[1].split("&&", 1)[0]
+        self.assertRegex(package_line, r"\bpodman\b")
+        self.assertRegex(package_line, r"\bcrun\b")
+
+    def test_runtime_preflight_rejects_missing_podman_with_hermetic_external_discovery(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-runtime-closure-") as temp:
+            root = Path(temp)
+            for binary in live.REQUIRED:
+                path = root / binary.lstrip("/")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+            (root / "usr/lib/ostree/prepare-root.conf").parent.mkdir(parents=True, exist_ok=True)
+            (root / "usr/lib/ostree/prepare-root.conf").touch()
+            (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").parent.mkdir(parents=True, exist_ok=True)
+            (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").touch()
+            for binary in ("kyth-installerd", "kyth-installer-shell"):
+                path = root / "usr/bin" / binary
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+
+            podman = root / "usr/bin/podman"
+            podman.parent.mkdir(parents=True, exist_ok=True)
+            podman.write_text("#!/bin/sh\n")
+            podman.chmod(0o755)
+            (root / "usr/bin/crun").write_text("#!/bin/sh\n")
+            (root / "usr/bin/crun").chmod(0o755)
+            podman.unlink()
+            calls = []
+
+            def runner(*arguments):
+                calls.append(arguments)
+                if arguments[0] == str(root / "usr/bin/bootc"):
+                    return "--source-imgref --target-imgref --bootloader"
+                if arguments[0] == str(root / "usr/bin/podman"):
+                    return "podman version 5.8.6"
+                raise AssertionError("unexpected external command: " + repr(arguments))
+
+            def process_runner(arguments, **kwargs):
+                self.assertEqual(arguments[0], str(root / "usr/bin/ldd"))
+                return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+            with self.assertRaisesRegex(ValueError, r"missing required Ubuntu runtime binary: /usr/bin/podman"):
+                live.runtime_closure(root=root, runner=runner, process_runner=process_runner)
+            self.assertEqual(calls, [], "missing podman must fail before storage/version probes")
+
+    def test_runtime_preflight_uses_bounded_podman_version_probe_not_storage_info(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-runtime-closure-ok-") as temp:
+            root = Path(temp)
+            for binary in live.REQUIRED:
+                path = root / binary.lstrip("/")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+            (root / "usr/lib/ostree/prepare-root.conf").parent.mkdir(parents=True, exist_ok=True)
+            (root / "usr/lib/ostree/prepare-root.conf").touch()
+            (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").parent.mkdir(parents=True, exist_ok=True)
+            (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").touch()
+            for binary in ("kyth-installerd", "kyth-installer-shell"):
+                path = root / "usr/bin" / binary
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+            calls = []
+
+            def runner(*arguments):
+                calls.append(arguments)
+                if arguments[0] == str(root / "usr/bin/bootc"):
+                    return "--source-imgref --target-imgref --bootloader"
+                if arguments[0] == str(root / "usr/bin/podman") and arguments[1:] == ("--version",):
+                    return "podman version 5.8.6"
+                raise AssertionError("unexpected external command: " + repr(arguments))
+
+            def process_runner(arguments, **kwargs):
+                return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+            live.runtime_closure(root=root, runner=runner, process_runner=process_runner)
+            self.assertIn((str(root / "usr/bin/podman"), "--version"), calls)
+            self.assertNotIn((str(root / "usr/bin/podman"), "info"), calls)
+
     def test_live_install_diverts_bootctl_so_systemd_boot_trigger_postinst_survives(self):
         # Regression: the manifest install lands shim-signed/grub packages,
         # which fire systemd-boot's dpkg file triggers. Its postinst's
@@ -366,7 +448,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             live_stage,
         )
         preflight = (ROOT / "build/ubuntu-live-preflight.py").read_text()
-        self.assertIn("require_prepare_root_config()", preflight)
+        self.assertIn("require_prepare_root_config(root)", preflight)
 
     def test_runtime_preflight_requires_bootc_prepare_root_config(self):
         validator = getattr(live, "require_prepare_root_config", None)
@@ -860,6 +942,20 @@ class PinnedSourceTests(unittest.TestCase):
                 any("/usr/sbin/blockdev" in path.read_text() for path in source.glob("*.rs")),
                 "pinned production source did not retain a blockdev sector-size probe",
             )
+
+    def test_adapted_stream_merges_stderr_into_failure_output(self):
+        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        with tempfile.TemporaryDirectory(prefix="rowyn-stream-") as temp:
+            exported = Path(temp) / "source"
+            port.export_source(repo, exported)
+            port.port_source(exported, "sha256:" + "b" * 64)
+            stream = (exported / "src/kyth-installer-web/src-tauri/src/installer_stream.rs").read_text()
+            self.assertIn("fn merge_stderr_into_stdout", stream)
+            for function in ("pub(crate) fn run_command(", "pub(crate) fn run_command_timeout("):
+                start = stream.index(function)
+                body = stream[start:stream.index("\n}\n", start) + 2]
+                self.assertIn("merge_stderr_into_stdout(command);", body)
+            self.assertIn("libc::dup2(libc::STDOUT_FILENO, libc::STDERR_FILENO)", stream)
 
     def test_adapted_sector_probe_runs_with_safe_command_double(self):
         repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])

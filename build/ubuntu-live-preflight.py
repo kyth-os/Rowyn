@@ -9,6 +9,7 @@ import sys
 # Fixed programs used by the enabled whole-disk path, including bootc helpers.
 REQUIRED = (
     '/usr/bin/bootc', '/usr/bin/bootctl', '/usr/bin/ostree', '/usr/bin/skopeo',
+    '/usr/bin/podman', '/usr/bin/crun',
     '/usr/bin/lsblk', '/usr/bin/findmnt', '/usr/bin/mount', '/usr/bin/umount',
     '/usr/sbin/blockdev', '/usr/bin/udevadm', '/usr/bin/openssl', '/usr/bin/mokutil',
     '/usr/bin/kyth-cosign', '/usr/bin/kyth-installer-exec',
@@ -103,22 +104,31 @@ def assert_safe_target(target, run=output):
         raise ValueError('target overlaps the physical live medium')
 
 
-def runtime_closure():
+def runtime_closure(root=Path("/"), runner=output, process_runner=subprocess.run):
     import os
-    require_prepare_root_config()
+    root = Path(root)
+
+    def rooted(path):
+        return root / path.lstrip('/')
+
+    require_prepare_root_config(root)
     for binary in REQUIRED:
-        if not os.access(binary, os.X_OK):
+        if not os.access(rooted(binary), os.X_OK):
             raise ValueError('missing required Ubuntu runtime binary: ' + binary)
     for binary in ('/usr/bin/bootc', '/usr/bin/kyth-installerd', '/usr/bin/kyth-installer-shell'):
-        result = subprocess.run(['/usr/bin/ldd', binary], text=True, capture_output=True, timeout=15)
+        result = process_runner([str(rooted('/usr/bin/ldd')), str(rooted(binary))],
+                                text=True, capture_output=True, timeout=15)
         if result.returncode or 'not found' in result.stdout:
             raise ValueError('unresolved dynamic library closure: ' + binary)
+    podman_version = runner(str(rooted('/usr/bin/podman')), '--version').strip()
+    if not podman_version.startswith('podman version '):
+        raise ValueError('podman version probe returned unexpected output: ' + podman_version)
     for subcommand in ('to-disk', 'to-filesystem'):
-        help_text = output('/usr/bin/bootc', 'install', subcommand, '--help')
+        help_text = runner(str(rooted('/usr/bin/bootc')), 'install', subcommand, '--help')
         for option in ('--source-imgref', '--target-imgref', '--bootloader'):
             if option not in help_text:
                 raise ValueError('bootc CLI lacks ' + option)
-    if not Path('/usr/lib/systemd/boot/efi/systemd-bootx64.efi').is_file():
+    if not rooted('/usr/lib/systemd/boot/efi/systemd-bootx64.efi').is_file():
         raise ValueError('missing systemd-boot EFI binary')
 
 
