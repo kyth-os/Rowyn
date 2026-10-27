@@ -65,6 +65,18 @@ dpkg-divert --rename --remove /usr/bin/bootctl
     --manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest --root /
 rm -rf /var/lib/apt/lists/*
 
+# Containers commonly bind-mount /etc/resolv.conf, so do not try to replace
+# that path during the image build. Persist the live-only link as a tmpfiles
+# rule and let systemd create it after the container mount is gone. Override
+# systemd-resolved's vendor rule by basename so the replacement is not treated
+# as a duplicate path and ignored.
+install -d -m 755 /etc/tmpfiles.d
+cat > /etc/tmpfiles.d/systemd-resolve.conf <<'EOF'
+# ! applies this at boot; + replaces a stale regular file captured by the ISO.
+L!+ /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf
+EOF
+systemctl enable systemd-resolved.service
+
 # Casper's account and the launcher's authenticated socket group must agree.
 # The official Ubuntu container can contain an unused uid-1000 ubuntu account;
 # Casper requires its configured session user to own uid 1000.
@@ -146,6 +158,18 @@ chroot /root chown liveuser:liveuser /home/liveuser/.config/kscreenlockerrc
 chmod 600 /root/home/liveuser/.config/kscreenlockerrc
 EOF
 chmod 755 /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-screenlock
+# Casper does not own resolver policy, but its initramfs can expose the root
+# before the first normal systemd tmpfiles run. Reapply and verify the live
+# resolver link as the last Casper-bottom action; the installed payload is not
+# involved in this live-only hook.
+cat > /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-resolver <<'EOF'
+#!/bin/sh
+case "${1:-}" in prereqs) exit 0;; esac
+chroot /root /usr/bin/systemd-tmpfiles --create --boot /etc/tmpfiles.d/systemd-resolve.conf
+test -L /root/etc/resolv.conf
+test "$(readlink /root/etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf
+EOF
+chmod 755 /usr/share/initramfs-tools/scripts/casper-bottom/99rowyn-resolver
 # Live-only differences: the installed signed payload is never modified here.
 mkdir -p /etc/systemd/system/display-manager.service.d
 cat > /etc/systemd/system/display-manager.service.d/rowyn-permissions.conf <<'EOF'
@@ -171,6 +195,7 @@ lsinitramfs "/boot/initrd.img-${kernel}" > /var/tmp/rowyn-initrd-list
 grep -q 'scripts/casper' /var/tmp/rowyn-initrd-list
 grep -q 'scripts/casper-bottom/99rowyn-permissions' /var/tmp/rowyn-initrd-list
 grep -q 'scripts/casper-bottom/99rowyn-screenlock' /var/tmp/rowyn-initrd-list
+grep -q 'scripts/casper-bottom/99rowyn-resolver' /var/tmp/rowyn-initrd-list
 /usr/libexec/rowyn-live-preflight --runtime-only
 # Record apt packages for diagnosis; these packages are deliberately not EVR-pinned.
 dpkg-query -W > /usr/share/doc/rowyn-installer/live-packages.tsv

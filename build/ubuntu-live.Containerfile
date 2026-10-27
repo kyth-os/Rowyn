@@ -42,7 +42,7 @@ ENV DEBIAN_FRONTEND=noninteractive DRACUT_NO_XATTR=1
 RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10 && \
     printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d && \
     apt-get update && apt-get install -y --no-install-recommends \
-      linux-image-generic linux-firmware casper initramfs-tools systemd-sysv \
+      linux-image-generic linux-firmware casper initramfs-tools systemd-sysv systemd-resolved \
       plasma-desktop plasma-workspace sddm xserver-xorg xinit dbus-x11 \
       breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
       network-manager netplan.io plasma-nm konsole kdialog fonts-noto-core \

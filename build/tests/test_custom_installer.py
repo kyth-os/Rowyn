@@ -387,6 +387,60 @@ class LiveBootcConfigurationTests(unittest.TestCase):
                 self.assertEqual(validator(root), path)
                 path.unlink()
 
+    def test_live_dns_uses_persistent_tmpfiles_policy_and_casper_final_check(self):
+        containerfile = (ROOT / "build/ubuntu-live.Containerfile").read_text()
+        live_stage = containerfile.split("FROM ${UBUNTU_IMAGE} AS live", 1)[1]
+        self.assertIn("systemd-resolved", live_stage)
+
+        configure = (ROOT / "build/configure-live.sh").read_text()
+        self.assertIn("systemctl enable systemd-resolved", configure)
+        self.assertIn("/etc/tmpfiles.d/systemd-resolve.conf", configure)
+        self.assertIn(
+            "L!+ /etc/resolv.conf - - - - /run/systemd/resolve/stub-resolv.conf",
+            configure,
+        )
+        hook_name = "scripts/casper-bottom/99rowyn-resolver"
+        self.assertIn(f"{hook_name} <<'EOF'", configure)
+        hook = configure.split(f"{hook_name} <<'EOF'", 1)[1].split("\nEOF", 1)[0]
+        self.assertIn("systemd-tmpfiles --create --boot /etc/tmpfiles.d/systemd-resolve.conf", hook)
+        self.assertIn("/root/etc/resolv.conf", hook)
+        self.assertIn("stub-resolv.conf", hook)
+        self.assertIn("grep -q 'scripts/casper-bottom/99rowyn-resolver'", configure)
+
+    def test_tmpfiles_repairs_empty_and_wrong_resolver_files_idempotently(self):
+        tmpfiles = shutil.which("systemd-tmpfiles")
+        self.assertIsNotNone(tmpfiles, "systemd-tmpfiles is required for the live resolver regression")
+        assert tmpfiles is not None
+        with tempfile.TemporaryDirectory(prefix="rowyn-resolv-tmpfiles-") as temp:
+            root = Path(temp)
+            rule = root / "etc/tmpfiles.d/systemd-resolve.conf"
+            rule.parent.mkdir(parents=True)
+            configure = (ROOT / "build/configure-live.sh").read_text()
+            policy = configure.split("cat > /etc/tmpfiles.d/systemd-resolve.conf <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+            rule.write_text(policy + "\n", encoding="utf-8")
+            resolv = root / "etc/resolv.conf"
+            resolv.touch()
+
+            def apply_rule():
+                result = subprocess.run(
+                    [tmpfiles, f"--root={root}", "--create", "--boot"],
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            apply_rule()
+            self.assertTrue(resolv.is_symlink())
+            self.assertEqual(resolv.readlink(), Path("/run/systemd/resolve/stub-resolv.conf"))
+            apply_rule()
+            self.assertTrue(resolv.is_symlink())
+
+            resolv.unlink()
+            resolv.write_text("wrong\\n", encoding="utf-8")
+            apply_rule()
+            self.assertTrue(resolv.is_symlink())
+            self.assertEqual(resolv.readlink(), Path("/run/systemd/resolve/stub-resolv.conf"))
+
 
 class LiveNetworkConfigurationTests(unittest.TestCase):
     def test_live_image_installs_netplan_and_generates_policy(self):
