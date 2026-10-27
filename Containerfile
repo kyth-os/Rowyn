@@ -43,7 +43,7 @@ FROM base AS system
 COPY --from=builder /output /
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,dst=/boot apt update -y && \
-  apt install -y btrfs-progs bubblewrap dosfstools e2fsprogs fdisk linux-firmware linux-image-generic netplan.io openssh-server systemd-resolved chrony skopeo sudo systemd systemd-boot* xfsprogs libostree-dev dracut && \
+  apt install -y btrfs-progs bubblewrap dosfstools e2fsprogs fdisk linux-firmware linux-image-generic netplan.io openssh-server systemd-resolved chrony skopeo podman crun sudo systemd systemd-boot* xfsprogs libostree-dev dracut && \
   cp /boot/vmlinuz-* "$(find /usr/lib/modules -maxdepth 1 -type d | tail -n 1)/vmlinuz" && \
   apt clean -y
 
@@ -58,11 +58,16 @@ RUN apt-get update && \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 \
         fonts-noto-core && \
+    apt-get install -y --no-install-recommends \
+        flatpak plasma-discover-backend-flatpak distrobox \
+        slirp4netns uidmap fuse-overlayfs && \
+    apt-get purge -y plasma-discover-backend-snap snapd && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
 
-RUN systemctl enable systemd-networkd systemd-resolved ssh && \
+RUN systemctl enable systemd-resolved ssh && \
     mkdir -p /etc/netplan && \
-    printf 'network:\n  version: 2\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml
+    printf 'network:\n  version: 2\n  renderer: NetworkManager\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml && \
+    chmod 0600 /etc/netplan/90-default.yaml
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
@@ -76,7 +81,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # mutable SDDM/resolver overrides in /etc and masks only the unused Budgie
 # background cache activation paths.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/shared/installed-desktop-defaults.sh --root /
+    /ctx/shared/installed-desktop-defaults.sh --root / && \
+    /ctx/shared/installed-apps.sh --root /
 
 # The rootfs normalizer deletes /var. Keep KDE defaults in /etc so they
 # survive stateless first boot.
@@ -114,7 +120,8 @@ RUN echo 'rowyn:rowyn' | chpasswd && \
     printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
     systemctl enable sddm.service NetworkManager.service && \
     systemctl set-default graphical.target && \
-    systemctl mask systemd-networkd.service systemd-networkd-wait-online.service
+    systemctl mask systemd-networkd.service systemd-networkd-wait-online.service && \
+    netplan generate --root-dir /
 
 LABEL containers.bootc 1
 

@@ -661,6 +661,76 @@ class DarkDefaultsTests(unittest.TestCase):
 
 
 class InstalledPayloadDesktopTests(unittest.TestCase):
+    def test_payload_netplan_selects_the_enabled_desktop_network_manager(self):
+        # Without renderer, Netplan denies Ethernet to NM although networkd is masked.
+        payload = (ROOT / "Containerfile").read_text()
+        match = re.search(r"printf '([^']+)' > /etc/netplan/90-default.yaml", payload)
+        assert match is not None
+        generated = subprocess.run(["bash", "-c", "printf '" + match.group(1) + "'"],
+                                   check=True, text=True, capture_output=True).stdout
+        config = yaml.safe_load(generated)["network"]
+        self.assertEqual(config.get("renderer"), "NetworkManager")
+        for group, pattern in (("all-en", "en*"), ("all-eth", "eth*")):
+            self.assertEqual(config["ethernets"][group]["match"]["name"], pattern)
+            self.assertTrue(config["ethernets"][group]["dhcp4"])
+        self.assertIn("chmod 0600 /etc/netplan/90-default.yaml", payload)
+        self.assertIn("netplan generate --root-dir /", payload)
+
+    def test_installed_payload_has_bootc_container_storage_runtime(self):
+        # A working live installer did not provide Podman to installed bootc upgrade.
+        payload = (ROOT / "Containerfile").read_text()
+        system = payload.split("FROM base AS system", 1)[1]
+        packages = re.search(r"apt install -y (.*?) &&", system, re.DOTALL)
+        assert packages is not None
+        for package in ("podman", "crun"):
+            self.assertIn(package, packages.group(1).split())
+        self.assertLess(system.index("apt install -y"), system.index("/ctx/shared/bootc-rootfs.sh"))
+
+    def test_payload_smoke_checks_bootc_runtime_and_effective_netplan_renderer(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/build.yml").read_text())
+        smoke = next(step["run"] for job in workflow["jobs"].values()
+                     for step in job.get("steps", [])
+                     if step.get("name") == "Inspect image and run image smoke checks")
+        for check in ("podman --version", "crun --version", "netplan get network.renderer",
+                      "netplan generate --root-dir /", "netplan-all-en.nmconnection",
+                      "netplan-all-eth.nmconnection", "NM_UNMANAGED"):
+            self.assertIn(check, smoke)
+
+    @unittest.skipUnless(os.environ.get("ROWYN_TEST_UBUNTU_NETWORK_POLICY") == "1",
+                         "opt-in real Ubuntu Netplan generation fixture")
+    def test_real_ubuntu_netplan_no_longer_denies_desktop_ethernet(self):
+        payload = (ROOT / "Containerfile").read_text()
+        match = re.search(r"printf '([^']+)' > /etc/netplan/90-default.yaml", payload)
+        assert match is not None
+        fixed = subprocess.run(["bash", "-c", "printf '" + match.group(1) + "'"],
+                               check=True, text=True, capture_output=True).stdout
+        broken = fixed.replace("  renderer: NetworkManager\n", "")
+        self.assertNotEqual(broken, fixed)
+        with tempfile.TemporaryDirectory(prefix="rowyn-netplan-") as temp:
+            base = Path(temp)
+            for state, text in (("broken", broken), ("fixed", fixed)):
+                config = base / state / "etc/netplan/90-default.yaml"
+                config.parent.mkdir(parents=True)
+                config.write_text(text)
+                config.chmod(0o600)
+            image = os.environ.get("ROWYN_TEST_UBUNTU_COMPONENT_IMAGE",
+                                   "localhost/rowyn-ubuntu-components:verified")
+            result = subprocess.run([
+                "podman", "run", "--rm", "--network", "none", "--entrypoint", "/bin/sh",
+                "-v", f"{base}:/fixture:Z", image, "-ec",
+                "netplan generate --root-dir /fixture/broken; netplan generate --root-dir /fixture/fixed",
+            ], text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            rules = "run/udev/rules.d/90-netplan.rules"
+            self.assertIn('NM_UNMANAGED}=\"1\"', (base / "broken" / rules).read_text())
+            fixed_rules = base / "fixed" / rules
+            if fixed_rules.exists():
+                self.assertNotIn('NM_UNMANAGED}=\"1\"', fixed_rules.read_text())
+            for group in ("all-en", "all-eth"):
+                profile = base / "fixed/run/NetworkManager/system-connections" / f"netplan-{group}.nmconnection"
+                self.assertTrue(profile.is_file(), profile)
+                self.assertIn("method=auto", profile.read_text())
+
     HELPER = ROOT / "shared/installed-desktop-defaults.sh"
 
     def run_helper(self, root):

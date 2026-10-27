@@ -121,6 +121,26 @@ jobs:
             test -e /etc/systemd/system/display-manager.service
             test -e /etc/systemd/system/multi-user.target.wants/NetworkManager.service
             test "$(readlink /etc/systemd/system/systemd-networkd.service)" = /dev/null
+            podman --version
+            crun --version
+            test "$(readlink /etc/systemd/system/packagekit.service)" = /dev/null
+            flatpak remotes --system --columns=name,url > /tmp/rowyn-flatpak-remotes
+            grep -F "https://dl.flathub.org/repo/" /tmp/rowyn-flatpak-remotes
+            backends=$(QT_QPA_PLATFORM=offscreen LC_ALL=C.UTF-8 plasma-discover --listbackends)
+            echo "$backends" | grep -F " * flatpak-backend"
+            if echo "$backends" | grep -E " \* (packagekit|snap)-backend"; then
+              echo "Native package backend exposed on immutable OS" >&2
+              exit 1
+            fi
+            distrobox-create --help > /tmp/rowyn-distrobox-help
+            grep -F "default: docker.io/library/ubuntu:26.10" /tmp/rowyn-distrobox-help
+            test "$(netplan get network.renderer)" = NetworkManager
+            netplan generate --root-dir /
+            test -s /run/NetworkManager/system-connections/netplan-all-en.nmconnection
+            test -s /run/NetworkManager/system-connections/netplan-all-eth.nmconnection
+            if test -f /run/udev/rules.d/90-netplan.rules; then
+              ! grep -F "NM_UNMANAGED}=\"1\"" /run/udev/rules.d/90-netplan.rules
+            fi
           '
           {
             echo '### Image'
