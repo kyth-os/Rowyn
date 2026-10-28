@@ -15,12 +15,18 @@ REFERENCE_SHA256 = "fc344b44914d28b496d6f1431aa729a92fbdcc124f7d93266a1ef885adcc
 REFERENCE_RECORDS = 2183
 
 # Packages in the official Kubuntu live set that Rowyn deliberately does
-# not install: they implement Kubuntu's own installer (Calamares, its
+# not install. Most implement Kubuntu's own installer (Calamares, its
 # settings packages, and the session installer prompt), which Rowyn
-# replaces with its own bootc installer. The reference manifest stays
-# byte-identical to the official file; the substitution lives here so
-# parity verification can enforce both directions — everything else
-# installed, these absent.
+# replaces with its own bootc installer. plasma-welcome is excluded for
+# a different reason: it is the KDE Welcome first-login popup, which
+# Rowyn suppresses on the installed desktop as well (the payload image
+# purges it); on the live media its fresh liveuser session would get
+# the popup on every boot. It is only a Recommends of kubuntu-desktop
+# and kubuntu-settings-desktop, and the install runs with
+# --no-install-recommends, so nothing pulls it back in. The reference
+# manifest stays byte-identical to the official file; the substitution
+# lives here so parity verification can enforce both directions —
+# everything else installed, these absent.
 SUBSTITUTED_DEBS = frozenset({
     "calamares",
     "calamares-data",
@@ -30,6 +36,7 @@ SUBSTITUTED_DEBS = frozenset({
     "kubuntu-installer-prompt",
     "libcalamares3.3",
     "libcalamaresui3.3",
+    "plasma-welcome",
 })
 
 
