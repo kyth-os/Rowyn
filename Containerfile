@@ -39,6 +39,36 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /usr/bin/python3 /ctx/shared/bootc-sigpolicy-patch.py /home/build/bootc && \
     PATH=/opt/rust/bin:$PATH /ctx/shared/build.sh /home/build/bootc
 
+# --- hub builder: compile Rowyn Hub from the pinned, ported Kyth source -----
+# The ported tree is produced outside the build (CI runs
+# build/ubuntu-hub-source.py against the pinned Kyth commit into hub-source/;
+# see .github/workflows/build.yml) so this stage only compiles. Unlike the
+# offline bootc stage it needs network for npm/cargo registries, mirroring
+# upstream Kyth's own hub-web-builder stage.
+# Layout mirrors that upstream stage on purpose: kyth-hub-web and
+# kyth-shared-rs sit one level shallower than in the Kyth repo, so the shared
+# crate's repo-relative include of build_files/exe-handler-apps.json lands at
+# /build_files and the glib patch path lands at /third_party. Copy those two
+# inputs to match rather than editing the pinned crate.
+FROM base AS hub-builder
+RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
+    apt update -y && \
+    apt install -y --no-install-recommends \
+        build-essential cargo rustc nodejs npm pkg-config \
+        libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+        libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev \
+        libssl-dev libxdo-dev && \
+    rm -rf /var/lib/apt/lists/*
+COPY hub-source/src/kyth-hub-web /build/kyth-hub-web
+COPY hub-source/src/kyth-shared-rs /build/kyth-shared-rs
+COPY hub-source/build_files/exe-handler-apps.json /build_files/exe-handler-apps.json
+COPY hub-source/third_party/gtk-glib-0.18.5 /third_party/gtk-glib-0.18.5
+WORKDIR /build/kyth-hub-web
+RUN npm ci && npm run build
+WORKDIR /build/kyth-hub-web/src-tauri
+RUN cargo build --release --locked && \
+    cp target/release/rowyn-hub-shell /rowyn-hub-shell
+
 # --- system: assemble the bootable image ------------------------------------
 FROM base AS system
 COPY --from=builder /output /
@@ -58,7 +88,8 @@ RUN apt-get update && \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 \
-        fonts-noto-core && \
+        fonts-noto-core \
+        libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -98,6 +129,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/kde-dark-defaults.sh --root / && \
     /ctx/shared/kde-wallpaper-defaults.sh --root /
+
+# --- Rowyn Hub ---------------------------------------------------------------
+# System hub (Dashboard, Apps, Updates) compiled by the hub-builder stage
+# from the pinned, ported Kyth source. Runtime libraries for the Tauri shell
+# are in the KDE package layer above.
+COPY --from=hub-builder /rowyn-hub-shell /usr/bin/rowyn-hub-shell
+COPY shared/com.rowyn.hub.desktop /usr/share/applications/com.rowyn.hub.desktop
+COPY docs/assets/rowyn-logo.png /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
 
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release

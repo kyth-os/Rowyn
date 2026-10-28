@@ -10,6 +10,7 @@ on:
       - shared/**
       - keys/**
       - build/fetch-assets.sh
+      - build/ubuntu-hub-source.py
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
@@ -63,7 +64,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
     needs: validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -100,6 +101,18 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         run: ./build/fetch-assets.sh
 
+      - name: Fetch and port pinned Kyth System Hub source
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          KYTH_HUB_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/kyth-hub"
+          git -C "${RUNNER_TEMP}/kyth-hub" fetch --depth 1 origin "${KYTH_HUB_COMMIT}"
+          git -C "${RUNNER_TEMP}/kyth-hub" checkout --detach "${KYTH_HUB_COMMIT}"
+          test "$(git -C "${RUNNER_TEMP}/kyth-hub" rev-parse HEAD)" = "${KYTH_HUB_COMMIT}"
+          python3 build/ubuntu-hub-source.py "${RUNNER_TEMP}/kyth-hub" hub-source
+
       - name: Build image (offline Containerfile)
         shell: bash --noprofile --norc -euo pipefail {0}
         run: sudo podman build -t rowyn:ci .
@@ -121,6 +134,13 @@ jobs:
             printf "%s\n" "$guidance" | grep -Fq Discover
             ! command -v plasma-welcome
             test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so
+            test -x /usr/bin/rowyn-hub-shell
+            if ldd /usr/bin/rowyn-hub-shell | grep -Fq "not found"; then
+              echo "rowyn-hub-shell has unresolved runtime libraries" >&2
+              exit 1
+            fi
+            test -s /usr/share/applications/com.rowyn.hub.desktop
+            test -s /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
             test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
             for theme in org.kde.breeze.desktop org.kde.breezedark.desktop; do
               defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults

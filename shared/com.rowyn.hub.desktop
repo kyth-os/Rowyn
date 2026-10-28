@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Name=Rowyn Hub
+GenericName=System Hub
+Comment=Rowyn system dashboard, apps, and updates
+Exec=/usr/bin/rowyn-hub-shell
+Icon=com.rowyn.hub
+Terminal=false
+Type=Application
+Categories=System;
+StartupNotify=true
+StartupWMClass=com.rowyn.hub

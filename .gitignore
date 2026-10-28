@@ -1,6 +1,9 @@
 # Host-fetched build inputs (see build/fetch-assets.sh) — large, never committed
 build-assets/
 
+# Pinned Kyth Hub source, ported by build/ubuntu-hub-source.py in CI — never committed
+hub-source/
+
 # Build logs
 build/*.log
 
