@@ -108,7 +108,7 @@ def apply(source: Path) -> None:
         "    };\n\n"
         "    let mut pinned = spec_imgref.clone();\n"
         "    pinned.image = crate::utils::digested_pullspec(&pinned.image, &manifest_digest);\n"
-        "    Ok(pinned)\n"
+        "    pinned.canonicalize()\n"
         "}\n\n",
     )
     _replace_once(

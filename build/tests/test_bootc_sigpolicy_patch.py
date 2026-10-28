@@ -163,6 +163,14 @@ class BootcSigpolicyPatchTests(unittest.TestCase):
             self.assertIn("let pinned_imgref = imgref.clone();", repo)
             self.assertNotIn("install_spec.to_image_proxy_ref()?", repo)
 
+    def test_verified_pull_reference_canonicalizes_tag_and_digest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = copy_fixture(Path(temp))
+            load_patch_module().apply(source)
+            repo = (source / "crates/lib/src/bootc_composefs/repo.rs").read_text()
+            self.assertIn("pinned.canonicalize()", repo)
+            self.assertNotIn("    Ok(pinned)\n", repo)
+
     def test_patch_is_idempotent(self):
         module = load_patch_module()
         with tempfile.TemporaryDirectory(prefix="rowyn-bootc-policy-idempotent-") as temp:
