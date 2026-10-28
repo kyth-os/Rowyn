@@ -108,15 +108,27 @@ class BootcSigpolicyPatchTests(unittest.TestCase):
                 composefs_install,
             )
             self.assertIn(
-                "let mut source_spec = ImageReference::from(state.target_imgref.clone());",
-                composefs_install,
+                "fn composefs_source_spec(",
+                install,
             )
             self.assertIn(
-                "source_spec.image = fetch_ref.name.clone();",
-                composefs_install,
+                "ImageReference::from(ostree_container::OstreeImageReference {",
+                install,
             )
             self.assertIn(
-                "source_spec.transport = fetch_ref.transport.to_string();",
+                "sigverify: target_imgref.sigverify.clone(),",
+                install,
+            )
+            self.assertIn(
+                "imgref: fetch_ref.clone(),",
+                install,
+            )
+            self.assertIn(
+                "let source_spec = composefs_source_spec(&state.target_imgref, &fetch_ref);",
+                composefs_install,
+            )
+            self.assertNotIn(
+                "source_spec.transport = fetch_ref.transport.to_string()",
                 composefs_install,
             )
             self.assertIn(
