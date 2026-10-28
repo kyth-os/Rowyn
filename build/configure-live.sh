@@ -83,6 +83,7 @@ systemctl enable systemd-resolved.service
 if getent passwd ubuntu >/dev/null; then userdel ubuntu; fi
 useradd --uid 1000 --create-home --shell /bin/bash --groups audio,video,render liveuser
 /rowyn/kde-dark-defaults.sh --root / --user liveuser --home /home/liveuser
+/rowyn/kde-wallpaper-defaults.sh --root /
 # The live installer session must not lock itself while unattended. Keep this
 # in the selected live user's home, not the shared payload defaults: the
 # installed Rowyn session retains KDE's normal locking behavior.

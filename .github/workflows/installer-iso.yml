@@ -24,6 +24,8 @@ on:
       - .github/actions/**
       - build/custom-installer-iso.sh
       - shared/kde-dark-defaults.sh
+      - shared/kde-wallpaper-defaults.sh
+      - shared/wallpaper/**
       - shared/installed-desktop-defaults.sh
       - build/ubuntu-*
       - build/configure-live.sh

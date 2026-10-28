@@ -61,7 +61,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
-    apt-get purge -y plasma-discover-backend-snap snapd && \
+    apt-get purge -y plasma-discover-backend-snap snapd plasma-welcome && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
 
 RUN systemctl enable systemd-resolved ssh && \
@@ -87,7 +87,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # The rootfs normalizer deletes /var. Keep KDE defaults in /etc so they
 # survive stateless first boot.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/shared/kde-dark-defaults.sh --root /
+    /ctx/shared/kde-dark-defaults.sh --root / && \
+    /ctx/shared/kde-wallpaper-defaults.sh --root /
 
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release

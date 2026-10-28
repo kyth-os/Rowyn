@@ -661,6 +661,18 @@ class DarkDefaultsTests(unittest.TestCase):
 
 
 class InstalledPayloadDesktopTests(unittest.TestCase):
+    def test_payload_excludes_the_first_login_welcome_launcher(self):
+        # Plasma 6.7 launches Welcome from a KDED plugin, not XDG autostart.
+        # Exclude the optional package instead of writing an ineffective Hidden=true file.
+        payload = (ROOT / "Containerfile").read_text()
+        purge = re.search(r"apt-get purge -y ([^\n]+)", payload)
+        assert purge is not None
+        self.assertIn("plasma-welcome", purge.group(1).split())
+        self.assertLess(purge.start(), payload.index("/ctx/shared/bootc-rootfs.sh"))
+        workflow = (ROOT / ".github/workflows/build.yml").read_text()
+        self.assertIn("! command -v plasma-welcome", workflow)
+        self.assertIn("test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so", workflow)
+
     def test_payload_netplan_selects_the_enabled_desktop_network_manager(self):
         # Without renderer, Netplan denies Ethernet to NM although networkd is masked.
         payload = (ROOT / "Containerfile").read_text()

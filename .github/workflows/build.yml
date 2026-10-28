@@ -113,6 +113,13 @@ jobs:
             grep -Fqx "ID=rowyn" /usr/lib/os-release
             grep -Fqx "ID_LIKE=\"ubuntu debian\"" /usr/lib/os-release
             id rowyn
+            ! command -v plasma-welcome
+            test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so
+            test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
+            for theme in org.kde.breeze.desktop org.kde.breezedark.desktop; do
+              defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults
+              test "$(kreadconfig6 --file "$defaults" --group Wallpaper --key Image)" = RowynBlack
+            done
             test -s /etc/sudoers.d/90-rowyn-spike
             test -s /usr/lib/tmpfiles.d/rowyn-spike.conf
             test -s /etc/NetworkManager/system-connections/rowyn-wired.nmconnection
