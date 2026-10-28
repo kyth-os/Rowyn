@@ -1,162 +1,72 @@
+<div align="center">
+
+<img src="docs/assets/rowyn-logo.png" alt="Rowyn" width="150">
+
 # Rowyn
 
-Rowyn is an Ubuntu 26.10 bootc image with KDE Plasma.
+**An Ubuntu desktop with KDE Plasma and image-based system updates.**
 
-## Local image build
+[Try Rowyn](#try-rowyn) · [Installer builds](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml) · [Report a bug](https://github.com/kyth-os/Rowyn/issues)
 
-Fetch the pinned offline build inputs, then build the image with Podman:
+[![Build](https://github.com/kyth-os/Rowyn/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/kyth-os/Rowyn/actions/workflows/build.yml)
+[![Installer ISO](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml/badge.svg?branch=main)](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml)
 
-```bash
-./build/fetch-assets.sh
-sudo podman build -t rowyn:spike .
-```
+</div>
 
-## Custom installer ISO
+## A familiar desktop, a different approach to the system
 
-The live system, compiler toolchains, and ISO assembly environment are all
-Ubuntu 26.10; the installed system is the separately published Ubuntu bootc
-payload. `build/ubuntu-live.Containerfile` starts its compiler and live stages
-from the digest-pinned official Ubuntu image in `installer-iso.yml`. Apt supplies
-Rust, Cargo, Node, GTK/WebKit, Plasma, Casper, initramfs-tools, GRUB, xorriso and
-SquashFS tools. Neither an upstream OS Containerfile nor an upstream ISO wrapper
-is executed. There is no Fedora live base, RPM package transaction, or Titanoboa
-assembly step.
+Rowyn pairs Ubuntu 26.10 with KDE Plasma. You get a familiar desktop with a panel, application launcher, file manager, and settings you can make your own.
 
-The Apache-2.0 Kyth installer Rust daemon, typed execution helper, Tauri
-shell and web frontend, required shared crate and vendored glib dependency are
-exported from commit
-`2baf8496b5aa904c0784f4290df743ee17edae48`. Only that allowlisted source is
-exported with `git archive`; the input checkout is not modified. Licenses and a
-modification notice are shipped in `/usr/share/doc/rowyn-installer`. The live
-system installs the Tauri shell (with the web frontend embedded, launched by
-the upstream session launcher exactly as Kyth launches it), the daemon and the
-typed helper; the crate's native Slint UI binary is not built or installed.
+The difference is underneath. Rowyn delivers the operating system as a complete image through **bootc**, rather than asking you to maintain the host with individual package upgrades. The installed system and the live installer are built from Ubuntu.
 
-`build/ubuntu-installer-source.py` ports account groups (`sudo`, not `wheel`),
-Ubuntu tool paths, locale/keyboard configuration, kernel/image selection, and
-removes the Kyth-only installed-system account-repair call. A kernel selector
-can never rewrite the immutable image digest. The live initramfs is built by
-Casper/initramfs-tools; installed Rowyn keeps its original matching kernel and
-bootc/dracut initramfs. `shared/initramfs.sh` is unchanged. The Ubuntu-built
-`bootc` binary and its small `/usr/lib/bootc` helper directory come from the
-exact signed payload, with Ubuntu apt libraries and helpers checked in the
-live stage before ISO assembly. Bootc is explicitly instructed to use
-`--bootloader=systemd`, matching the payload's systemd-boot EFI files.
+## Apps stay separate from the OS
 
-### Scope and safety
+Use **Discover** to find and install Flatpak apps from Flathub. App updates are separate from system updates, and installing an app does not change the base operating system.
 
-This port is **not boot/installation-qualified yet**. Its enabled candidate
-path is x86-64 UEFI, Secure Boot **disabled**, whole-disk Btrfs, **unencrypted**.
-BIOS/CSM, Secure Boot/MOK enrollment, manual partitioning, Windows/NTFS resize,
-partition replacement, free-space and TPM encryption are deliberately disabled,
-not silently treated as working. The native UI marks these modes unavailable;
-the daemon also rejects them, including the separate manual-disk mutation API
-which otherwise bypasses the job's Prepare phase. A real UEFI VM boot, session
-launch, installation to a disposable virtual disk and reboot of that disk are
-required before claiming bootability or installation acceptance.
+For development tools and command-line packages, **Distrobox** provides Ubuntu containers backed by rootless Podman. You can use Ubuntu's package manager inside those containers without changing the host.
 
-The workflow verifies the fixed `build.yml@refs/heads/main` payload signer
-before privileged storage setup. The live daemon unconditionally verifies the
-exact compiled-in Rowyn source/target and Cosign signer in **Prepare, before any
-storage mutation**, and repeats verification in Image. Anonymous registry
-access and network connectivity are required during installation; payload
-layers are not embedded. Casper `/cdrom` and `/isodevice` mounts are protected,
-including loop ISO backing files resolved to physical media. An unresolved
-backing device fails closed. Runtime binary/library/CLI checks also fail before
-storage changes. The privileged daemon retains its sandbox and authenticated
-liveuser socket; only the argument-free session launcher is passwordless.
+The base system stays focused on the desktop. Your apps, development environments, and personal files live outside the read-only OS image.
 
-The assembler uses Ubuntu's `mksquashfs` and UEFI `grub-mkrescue`/xorriso inside
-a container with no host devices or privileged flag. It emits the ISO, source
-metadata, El Torito/system-area report and SquashFS report. CI signs and verifies
-the portable ISO checksum manifest, then uploads the artifact and signature
-bundle. Apt packages are resolved from current Ubuntu repositories, so the
-package manifest is recorded but the build is not bit-for-bit reproducible.
+## System updates
 
-### Local execution and validation
+Rowyn uses bootc to manage complete system images. This gives OS changes their own update path, separate from the apps you install through Discover.
 
-Requirements: Podman, Git, Python 3 with PyYAML, network access, ample disk space,
-and a local Kyth repository containing the pinned commit. No host package
-installation or host chroot is performed. Set `TMPDIR` to a writable scratch
-filesystem (not a RAM-backed directory); all exported source/build scratch is
-placed beneath it. For example, using the exact signed payload above:
+Bootc also provides upgrade and rollback mechanisms. Cross-version upgrade and rollback testing is still in progress; those recovery paths are not yet qualified for daily-driver use.
+
+## Try Rowyn
+
+> [!IMPORTANT]
+> Rowyn is a development preview. Installation and reboot persistence have passed UEFI virtual-machine testing, but hardware coverage is still limited. Start with a virtual machine and a disposable disk.
+
+The current installer supports **x86-64 UEFI with Secure Boot disabled**, using an **unencrypted, whole-disk Btrfs installation**. It needs an internet connection to download the signed system image.
+
+**Installation erases the selected disk.** Dual boot, manual partitioning, disk encryption, BIOS/CSM boot, and Secure Boot are not supported by the current installer.
+
+1. Open a successful run in [Installer builds](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml).
+2. Download and extract its `rowyn-custom-installer-iso-…` artifact. GitHub may require you to sign in; artifacts expire after seven days.
+3. [Verify the signature and checksum](docs/building.md#verify-an-iso) before booting the ISO.
+4. Attach the ISO to a UEFI virtual machine with a spare virtual disk, then follow the installer.
+5. Let the live system shut down completely before detaching the ISO. Boot from the installed disk afterward.
+
+## Project status and help
+
+VM checks cover installation, networking, the read-only OS, Flatpak apps, rootless Ubuntu containers, and persistence across reboot. That is a starting point, not a claim that every PC or workflow has been tested.
+
+Report problems in [GitHub Issues](https://github.com/kyth-os/Rowyn/issues). Include the ISO build or image digest, whether you are using a VM or physical hardware, and the steps needed to reproduce the problem. Remove passwords and other private information from logs before sharing them.
+
+Rowyn takes inspiration from [KythOS](https://github.com/kyth-os/kyth) and uses an Ubuntu port of its custom installer. Rowyn is licensed under [Apache 2.0](LICENSE); upstream components retain their own licenses. It is an independent project, not an official Ubuntu or KDE edition.
+
+<details>
+<summary><strong>Technical documentation and contributor resources</strong></summary>
+
+The front page covers using Rowyn. Build instructions, installer internals, signature verification, and CI release details live in the [build and installer guide](docs/building.md).
 
 ```bash
-export TMPDIR="$HOME/.hermes/cache/scratch"
-export IMAGE_REF=ghcr.io/kyth-os/rowyn:009880f4e4a4e83ba490d879756911b47233e483
-export IMAGE_DIGEST=sha256:e24caab597cd24970714f776538cb3eaa9578d7c4b58e0784faa843ab32a2d45
-export SOURCE_TAG=009880f4e4a4e83ba490d879756911b47233e483
-export KYTH_SOURCE_DIR=/path/to/kyth
-export KYTH_INSTALLER_COMMIT=2baf8496b5aa904c0784f4290df743ee17edae48
-export UBUNTU_LIVE_IMAGE=docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
-ROWYN_CUSTOM_INSTALLER_PREFLIGHT=1 ./build/custom-installer-iso.sh
-./build/custom-installer-iso.sh
+./build/fetch-assets.sh   # fetch pinned image-build inputs
+./build/validate.sh       # run source and CI contract checks
+sudo podman build -t rowyn:local .
 ```
 
-`./build/validate.sh` checks executable Ubuntu-only build guards, shell/YAML,
-workflow trust and safe regression tests. Set `ROWYN_TEST_KYTH_REPO` to enable
-real pinned-source export/adapter tests. The Ubuntu compiler additionally runs
-Rust tests extracted from the actual adapted shared image-source functions,
-checking digest preservation for every kernel-selector input. These tests and
-structure reports do **not** substitute for VM acceptance.
+The guide also documents optional Ubuntu runtime checks and pinned-source installer tests. Source validation does not replace a real installation and reboot test.
 
-References: Ubuntu's `casper(7)` manual and the Ubuntu Community Help
-`LiveCDCustomization` / `LiveCDCustomizationFromScratch` guides describe the
-Casper initramfs, `/casper` SquashFS/kernel layout and `.disk/info` requirement.
-This port uses that layout rather than treating the bootc payload as a live
-filesystem.
-
-The uploaded checksum bundle can be verified with Cosign, then the checksum can
-be checked against the ISO:
-
-```bash
-cosign verify-blob \
-  --bundle rowyn-custom-installer-<commit>.iso.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/kyth-os/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  rowyn-custom-installer-<commit>.iso.sha256
-sha256sum -c rowyn-custom-installer-<commit>.iso.sha256
-```
-
-## Independent CI releases
-
-`build.yml` (Rowyn CI) validates, builds, smoke-tests, publishes and signs the
-payload on trusted main pushes affecting payload inputs, or manual main dispatch.
-Its signing identity remains
-`https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main`.
-Pull requests validate only and cannot publish images or request ISO releases.
-
-`installer-iso.yml` automatically runs after a successful trusted main image
-release. It checks the upstream run through the GitHub API and reads only that
-run's exact image metadata artifact (never its code), checks its SHA/run binding,
-and verifies the fixed image signer before privileged work. It always executes
-installer code checked out from trusted main, not from the triggering run.
-The canonical installer source is `ghcr.io/kyth-os/rowyn@sha256:...`; tags are
-used only as payload provenance labels, never to resolve the install source.
-The ISO checksum signer is the separate `installer-iso.yml@refs/heads/main`
-identity shown above; the payload signer does not change.
-
-ISO-only main pushes validate the installer but do **not** rebuild the payload
-or automatically select a mutable/latest image. Use a manual ISO-only retry with
-an exact existing digest and its original source commit, for example:
-
-```bash
-gh workflow run installer-iso.yml --ref main \
-  -f image_digest=sha256:e24caab597cd24970714f776538cb3eaa9578d7c4b58e0784faa843ab32a2d45 \
-  -f source_sha=009880f4e4a4e83ba490d879756911b47233e483
-```
-
-This verifies the existing digest's original payload signature and builds only
-the live installer/ISO, not the Rowyn payload. Automatic runs require the image
-metadata artifact to remain available (currently seven days); manual retries do
-not depend on that artifact. On GitHub-hosted runners the narrow Podman wrapper
-uses rootful Podman in the host cgroup namespace; local builds use rootless
-Podman. All OS compilation and filesystem/ISO tooling runs in Ubuntu containers.
-Assembly receives writable output/scratch directories, not host block devices.
-
-## Attribution
-
-The installer UI is upstream Kyth's Tauri shell and web frontend. Upstream
-installer source is Apache-2.0; Tauri is MIT/Apache-2.0; the vendored glib
-Rust backport declares MIT. Dependency license texts are included in the live
-installer documentation.
+</details>
