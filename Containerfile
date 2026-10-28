@@ -133,6 +133,11 @@ RUN echo 'rowyn:rowyn' | chpasswd && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service && \
     netplan generate --root-dir /
 
+# Keep host package guidance out of the Ubuntu live installer and install it
+# only after all image-build APT transactions and stateless normalization.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/host-package-guidance.sh --root /
+
 LABEL containers.bootc 1
 
 RUN bootc container lint

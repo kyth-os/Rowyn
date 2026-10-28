@@ -113,6 +113,12 @@ jobs:
             grep -Fqx "ID=rowyn" /usr/lib/os-release
             grep -Fqx "ID_LIKE=\"ubuntu debian\"" /usr/lib/os-release
             id rowyn
+            if guidance=$(/usr/sbin/apt-get install rowyn-test-package 2>&1); then
+              echo "host apt-get unexpectedly succeeded" >&2
+              exit 1
+            fi
+            printf "%s\n" "$guidance" | grep -Fq Distrobox
+            printf "%s\n" "$guidance" | grep -Fq Discover
             ! command -v plasma-welcome
             test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so
             test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
