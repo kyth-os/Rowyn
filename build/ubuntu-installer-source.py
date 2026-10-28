@@ -99,9 +99,12 @@ def port_source(root, digest):
     executor = crate / "src/installer_job_executor.rs"
     text = executor.read_text()
     source = "ghcr.io/kyth-os/rowyn@" + digest
+    target = "ghcr.io/kyth-os/rowyn:stable"
     anchor = 'const FILESYSTEM_STAGING_MOUNTPOINT: &str = "/run/kyth-installer/alongside-target";\n'
-    text = replace_once(text, anchor, anchor + f'const ROWYN_RELEASE_SOURCE: &str = "{source}";\n')
-    # All transports, source and future target are bound to this ISO's release.
+    text = replace_once(text, anchor, anchor + f'const ROWYN_RELEASE_SOURCE: &str = "{source}";\n'
+                        f'const ROWYN_UPDATE_TARGET: &str = "{target}";\n')
+    # All transports and source are bound to this ISO's exact release; the
+    # mutable stable channel is only the fixed bootc update target.
     # Upstream's non-docker fast path must never bypass the signature check.
     anchor = '        let digest = match source.rfind(\'@\') {'
     text = replace_once(text, anchor, '''        if source != format!("docker://{ROWYN_RELEASE_SOURCE}") {
@@ -125,10 +128,10 @@ def port_source(root, digest):
     anchor = '            Phase::Prepare => {\n'
     text = replace_once(text, anchor, anchor + '''                // Rowyn Ubuntu port: fail before any partition/format/resize.
                 if self.source_imgref != format!("docker://{ROWYN_RELEASE_SOURCE}")
-                    || self.target_imgref != ROWYN_RELEASE_SOURCE
+                    || self.target_imgref != ROWYN_UPDATE_TARGET
                 {
                     return Err(NativePhaseError::Execution { phase,
-                        message: "source and target must be this signed Rowyn release".into() });
+                        message: "source must be this signed Rowyn release and target must be stable".into() });
                 }
                 self.verify_install_source(phase)?;
                 if self.storage_plan.mode != "wipe" || !matches!(self.bootc_request.encryption.as_str(), "" | "none") {
@@ -494,10 +497,17 @@ pub(crate) fn run_output_timeout_capture(
     text = images.read_text()
     start = text.index('pub fn install_images(')
     end = text.index('\n}\n', start) + 2
-    text = text[:start] + '''pub fn install_images(_kernel: &str, source_image: &str, target_image: &str) -> (String, String) {
-    // Rowyn has one Ubuntu kernel. Never append a variant suffix to a digest.
-    (source_image_ref(source_image, source_image), target_image.to_string())
-}''' + text[end:]
+    text = text[:start] + f'''pub const ROWYN_RELEASE_SOURCE: &str = "{source}";
+pub const ROWYN_UPDATE_TARGET: &str = "{target}";
+
+pub fn install_images(_kernel: &str, source_image: &str, _target_image: &str) -> (String, String) {{
+    // The executor rejects any source other than ROWYN_RELEASE_SOURCE. Keep
+    // transport normalization here so a valid docker:// source is not doubled.
+    (source_image_ref(
+        source_image,
+        &format!("docker://{{ROWYN_RELEASE_SOURCE}}"),
+    ), ROWYN_UPDATE_TARGET.to_string())
+}}''' + text[end:]
     images.write_text('// Rowyn: immutable Ubuntu source for every frontend.\n' + text)
     bootc = crate / "src/installer_bootc.rs"
     text = bootc.read_text()
@@ -616,7 +626,7 @@ pub(crate) fn run_output_timeout_capture(
         'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'
         'Upstream OS/image/ISO assembly scripts are not included or invoked.\n')
 
-    composefs.adapt(root)
+    composefs.adapt(root, digest)
     composefs.record(root, digest)
 
 

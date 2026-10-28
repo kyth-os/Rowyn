@@ -16,18 +16,22 @@ def probes(root):
         start = source.index('pub fn ' + name + '(')
         end = source.index('\n}', start) + 2
         functions.append(source[start:end])
+    constants = '\n'.join(
+        line for line in source.splitlines()
+        if line.startswith('pub const ROWYN_')
+    )
     assurance = (root / 'src/kyth-installer-web/src-tauri/src/installer_assurance.rs').read_text()
     start = assurance.index('fn kernel_detail(')
     end = assurance.index('\n}', start) + 2
     functions.append(assurance[start:end])
-    return 'use std::{fs, path::Path};\n' + '\n'.join(functions) + '''
+    return 'use std::{fs, path::Path};\n' + constants + '\n' + '\n'.join(functions) + '''
 #[test]
 fn every_selector_preserves_the_release_digest() {
     let reference = format!("ghcr.io/kyth-os/rowyn@sha256:{}", "a".repeat(64));
     for selector in ["ubuntu", "fedora", "cachyos", "", "untrusted"] {
         let (source, target) = install_images(selector, &reference, &reference);
         assert_eq!(source, format!("docker://{reference}"));
-        assert_eq!(target, reference);
+        assert_eq!(target, "ghcr.io/kyth-os/rowyn:stable");
     }
 }
 #[test]
@@ -50,7 +54,20 @@ fn kernel_requires_nonempty_matching_initramfs_in_same_version() {
 fn transport_is_not_duplicated() {
     let reference = format!("ghcr.io/kyth-os/rowyn@sha256:{}", "b".repeat(64));
     let transported = format!("docker://{reference}");
-    assert_eq!(install_images("ubuntu", &transported, &reference), (transported, reference));
+    assert_eq!(install_images("ubuntu", &transported, &reference),
+        (transported, "ghcr.io/kyth-os/rowyn:stable".to_string()));
+}
+#[test]
+fn caller_target_cannot_replace_the_fixed_update_channel() {
+    let reference = format!("ghcr.io/kyth-os/rowyn@sha256:{}", "c".repeat(64));
+    let (_, target) = install_images("ubuntu", &reference, "ghcr.io/kyth-os/rowyn:old");
+    assert_eq!(target, "ghcr.io/kyth-os/rowyn:stable");
+}
+#[test]
+fn empty_source_still_selects_the_exact_docker_release() {
+    let (source, target) = install_images("ubuntu", "", "ghcr.io/kyth-os/rowyn:old");
+    assert_eq!(source, format!("docker://{ROWYN_RELEASE_SOURCE}"));
+    assert_eq!(target, "ghcr.io/kyth-os/rowyn:stable");
 }
 '''
 

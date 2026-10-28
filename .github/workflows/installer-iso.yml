@@ -25,8 +25,10 @@ on:
       - build/custom-installer-iso.sh
       - shared/kde-dark-defaults.sh
       - shared/kde-wallpaper-defaults.sh
+      - shared/update-policy.sh
       - shared/wallpaper/**
       - shared/installed-desktop-defaults.sh
+      - keys/update.pub
       - build/ubuntu-*
       - build/configure-live.sh
       - build/assemble-iso.sh

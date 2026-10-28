@@ -1,0 +1,784 @@
+use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
+use cap_std_ext::cap_std::fs::Dir;
+use composefs::erofs::format::FormatVersion;
+use composefs::fsverity::{FsVerityHashValue, Sha512HashValue};
+use composefs_boot::BootOps;
+use composefs_ctl::composefs;
+use composefs_ctl::composefs_boot;
+use composefs_ctl::composefs_oci;
+use composefs_oci::image::create_filesystem;
+use etc_merge::print_unmergable_paths;
+use fn_error_context::context;
+use ocidir::cap_std::ambient_authority;
+use ostree_ext::container::ManifestDiff;
+
+use crate::bootc_composefs::finalize::get_etc_diff;
+use crate::bootc_composefs::gc::GCOpts;
+use crate::delta::Delta;
+use crate::install::UkiAddonOpts;
+use crate::spec::BootloaderKind;
+use crate::{
+    bootc_composefs::{
+        aboot,
+        boot::{
+            BootSetupType, BootType, prepare_composefs_aboot_artifacts,
+            print_uki_dumpfile_diff_on_mismatch, setup_composefs_bls_boot,
+            setup_composefs_uki_boot,
+        },
+        gc::composefs_gc,
+        repo::pull_composefs_repo,
+        service::start_finalize_stated_svc,
+        soft_reboot::prepare_soft_reboot_composefs,
+        state::{write_composefs_state, write_staged_deployment},
+        status::{
+            ImgConfigManifest, StagedDeployment, get_bootloader, get_composefs_status,
+            get_container_manifest_and_config, get_imginfo, list_bootloader_entries,
+        },
+        uki_addon::global_addons_pending_removal,
+    },
+    cli::{SoftRebootMode, UpgradeOpts},
+    composefs_consts::{
+        COMPOSEFS_STAGED_DEPLOYMENT_FNAME, COMPOSEFS_TRANSIENT_STATE_DIR, STATE_DIR_RELATIVE,
+        TYPE1_ENT_PATH_STAGED, USER_CFG_STAGED,
+    },
+    progress_jsonl::ProgressWriter,
+    spec::{Host, ImageReference},
+    store::{BootedComposefs, ComposefsRepository, Storage},
+};
+
+/// Checks if a container image has been pulled to the local composefs repository.
+///
+/// This function verifies whether the specified container image exists in the local
+/// composefs repository by checking if the image's configuration digest stream is
+/// available. It retrieves the image manifest and configuration from the container
+/// registry and uses the configuration digest to perform the local availability check.
+///
+/// # Arguments
+///
+/// * `repo` - The composefs repository
+/// * `imgref` - Reference to the container image to check
+///
+/// # Returns
+///
+/// Returns a tuple containing:
+/// * `Some<Sha512HashValue>` if the image is pulled/available locally, `None` otherwise
+/// * The container image manifest
+/// * The container image configuration
+/// * The digest of the manifest, as the registry reported it
+#[context("Checking if image {} is pulled", imgref.image)]
+pub(crate) async fn is_image_pulled(
+    repo: &ComposefsRepository,
+    imgref: &ImageReference,
+) -> Result<(Option<Sha512HashValue>, ImgConfigManifest, String)> {
+    let imgref_repr = imgref.to_image_proxy_ref()?;
+    let (img_config_manifest, manifest_digest) =
+        get_container_manifest_and_config(&imgref_repr).await?;
+
+    let container_pulled =
+        lookup_config_splitstream(repo, img_config_manifest.manifest.config().digest())?;
+
+    Ok((container_pulled, img_config_manifest, manifest_digest))
+}
+
+/// Look up the config splitstream for an image config digest, which is present
+/// exactly when that image has been imported into `repo`.
+pub(crate) fn lookup_config_splitstream(
+    repo: &ComposefsRepository,
+    config_digest: &composefs_oci::OciDigest,
+) -> Result<Option<Sha512HashValue>> {
+    let img_digest = config_digest.digest();
+
+    // TODO: export config_identifier function from composefs-oci/src/lib.rs and use it here
+    let img_id = format!("oci-config-sha256:{img_digest}");
+
+    // NB: add deep checking?
+    repo.has_stream(&img_id).context("Checking stream")
+}
+
+/// A delta only carries the layers that changed; the rest have to come from the
+/// image it was built against, which must therefore already be in `repo`.
+///
+/// composefs would notice this eventually, but only once it starts importing, which is
+/// pretty late for a nice experience.
+pub(crate) fn ensure_delta_source_present(repo: &ComposefsRepository, delta: &Delta) -> Result<()> {
+    let source = delta.source_config_digest();
+    anyhow::ensure!(
+        lookup_config_splitstream(repo, source)?.is_some(),
+        "Delta {} was built against the image with config {source}, which is not present in \
+         this system's composefs repository.",
+        delta.path,
+    );
+    Ok(())
+}
+
+fn rm_staged_type1_ent(boot_dir: &Dir) -> Result<()> {
+    if boot_dir.exists(TYPE1_ENT_PATH_STAGED) {
+        boot_dir
+            .remove_dir_all(TYPE1_ENT_PATH_STAGED)
+            .context("Removing staged bootloader entry")?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) enum UpdateAction {
+    /// Skip the update. We probably have the update in our deployments
+    Skip,
+    /// Proceed with the update
+    Proceed,
+}
+
+/// Determines what action should be taken for the update
+///
+/// Cases:
+///
+/// - The verity is the same as that of the currently booted deployment
+///
+///    Nothing to do here as we're currently booted
+///
+/// - The verity is the same as that of the staged deployment
+///
+///    Nothing to do, as we only get a "staged" deployment if we have
+///    /run/composefs/staged-deployment which is the last thing we create while upgrading
+///
+/// - The verity is the same as that of the rollback deployment
+///
+///    Nothing to do since this is a rollback deployment which means this was unstaged at some
+///    point
+///
+/// - The verity is not found
+///
+///    The update/switch might've been canceled before /run/composefs/staged-deployment
+///    was created, or at any other point in time, or it's a new one.
+///    Any which way, we can overwrite everything
+///
+/// # Arguments
+///
+/// * `storage`       - The global storage object
+/// * `booted_cfs`    - Reference to the booted composefs deployment
+/// * `host`          - Object returned by `get_composefs_status`
+/// * `img_digest`    - The SHA256 sum of the target image
+/// * `config_verity` - The verity of the Image config splitstream
+/// * `is_switch`     - Whether this is an update operation or a switch operation
+///
+/// # Returns
+/// * UpdateAction::Skip    - Skip the update/switch as we have it as a deployment
+/// * UpdateAction::Proceed - Proceed with the update
+pub(crate) fn validate_update(
+    storage: &Storage,
+    booted_cfs: &BootedComposefs,
+    host: &Host,
+    img_digest: &str,
+    config_verity: &Sha512HashValue,
+    is_switch: bool,
+) -> Result<UpdateAction> {
+    let repo = &*booted_cfs.repo;
+
+    let oci_digest: composefs_oci::OciDigest = img_digest
+        .parse()
+        .with_context(|| format!("Parsing config digest {img_digest}"))?;
+    let mut fs = create_filesystem(
+        repo,
+        &oci_digest,
+        Some(config_verity),
+        &composefs_oci::OciTransformOptions::default(),
+    )?;
+    fs.transform_for_boot(&repo)?;
+
+    let image_ids = [
+        fs.compute_image_id(FormatVersion::V1),
+        fs.compute_image_id(FormatVersion::V2),
+    ];
+
+    let all_deployments = host.all_composefs_deployments()?;
+
+    let found_depl = all_deployments.iter().find(|d| {
+        image_ids
+            .iter()
+            .any(|id| d.deployment.verity == id.to_hex())
+    });
+
+    if let Some(collision) = found_depl {
+        if is_switch {
+            // For `bootc switch`, any digest collision is an error: two images
+            // from different sources can produce identical composefs roots and we
+            // cannot safely reuse an existing state directory seeded from a
+            // different image.
+            anyhow::bail!(
+                "Target image has the same fs-verity digest as the existing {:?} deployment.",
+                collision.ty,
+            );
+        }
+        // For `bootc upgrade`, matching the booted deployment means nothing to
+        // do; matching a non-booted deployment (staged/rollback) means skip.
+        return Ok(UpdateAction::Skip);
+    }
+
+    let booted = host.require_composefs_booted()?;
+    if booted.boot_type == BootType::Aboot {
+        ensure_no_aboot_attempt(storage)?;
+    } else {
+        // Remove staged bootloader entries, if any
+        // GC should take care of the UKI PEs and other binaries
+        let boot_dir = storage.require_boot_dir()?;
+        match get_bootloader()?.kind()? {
+            BootloaderKind::GRUBClassic => match booted.boot_type {
+                BootType::Bls => rm_staged_type1_ent(boot_dir)?,
+                BootType::Uki => {
+                    let grub = boot_dir.open_dir("grub2").context("Opening grub dir")?;
+                    if grub.exists(USER_CFG_STAGED) {
+                        grub.remove_file(USER_CFG_STAGED)
+                            .context("Removing staged grub user config")?;
+                    }
+                }
+                BootType::Aboot => unreachable!(),
+            },
+            BootloaderKind::BLSCompatible => rm_staged_type1_ent(boot_dir)?,
+        }
+    }
+
+    // Remove state directories for either serialisation of the same rootfs.
+    let state_dir = storage
+        .physical_root
+        .open_dir(STATE_DIR_RELATIVE)
+        .context("Opening state dir")?;
+
+    for image_id in image_ids {
+        let image_id = image_id.to_hex();
+        if state_dir.exists(&image_id) {
+            state_dir
+                .remove_dir_all(&image_id)
+                .context("Removing state")?;
+        }
+    }
+
+    Ok(UpdateAction::Proceed)
+}
+
+fn ensure_no_aboot_attempt(storage: &Storage) -> Result<()> {
+    let state = aboot::AbootState::open(&storage.physical_root)?;
+    anyhow::ensure!(
+        state.read_attempted()?.is_none(),
+        "An attempted aboot update has not been reconciled"
+    );
+    anyhow::ensure!(
+        state.queued_rollback()?.is_none(),
+        "An aboot rollback is queued"
+    );
+    Ok(())
+}
+
+/// This is just an intersection of SwitchOpts and UpgradeOpts
+pub(crate) struct DoUpgradeOpts<'a> {
+    pub(crate) apply: bool,
+    pub(crate) soft_reboot: Option<SoftRebootMode>,
+    pub(crate) download_only: bool,
+    /// Whether to use unified storage (containers-storage + composefs).
+    pub(crate) use_unified: bool,
+    /// Suppress interactive progress output.
+    pub(crate) quiet: bool,
+    /// Structured (JSON-Lines) progress sink; see `--progress-fd`.
+    pub(crate) prog: ProgressWriter,
+    /// Take the image content from this local delta rather than the network.
+    pub(crate) delta: Option<&'a Delta>,
+    /// The UKI Addons to install from the new image (if any)
+    pub(crate) uki_addon_opts: UkiAddonOpts,
+}
+
+async fn apply_upgrade(
+    storage: &Storage,
+    booted_cfs: &BootedComposefs,
+    depl_id: &String,
+    opts: &DoUpgradeOpts<'_>,
+) -> Result<()> {
+    if let Some(soft_reboot_mode) = opts.soft_reboot {
+        return prepare_soft_reboot_composefs(
+            storage,
+            booted_cfs,
+            Some(depl_id),
+            soft_reboot_mode,
+            opts.apply,
+        )
+        .await;
+    };
+
+    if opts.apply {
+        return crate::reboot::reboot();
+    }
+
+    Ok(())
+}
+
+/// Performs the Update or Switch operation
+#[context("Performing Upgrade Operation")]
+pub(crate) async fn do_upgrade(
+    storage: &Storage,
+    booted_cfs: &BootedComposefs,
+    host: &Host,
+    imgref: &ImageReference,
+    opts: &DoUpgradeOpts<'_>,
+    manifest: &ostree_ext::oci_spec::image::ImageManifest,
+) -> Result<()> {
+    // Unpulled images bypass validate_update(), so check aboot state here too.
+    if host.require_composefs_booted()?.boot_type == BootType::Aboot {
+        ensure_no_aboot_attempt(storage)?;
+    }
+
+    // Pre-flight disk space check before pulling.
+    crate::deploy::check_disk_space_composefs(&*booted_cfs.repo, manifest, imgref)?;
+
+    start_finalize_stated_svc()?;
+
+    let crate::bootc_composefs::repo::PullRepoResult {
+        repo,
+        entries,
+        id,
+        boot_ids,
+        manifest_digest,
+        fs: oci_fs,
+    } = pull_composefs_repo(
+        imgref,
+        opts.delta,
+        booted_cfs.cmdline.allow_missing_fsverity,
+        opts.use_unified,
+        opts.quiet,
+        opts.prog.clone(),
+    )
+    .await?;
+
+    // We validated the delta by reading the file ourselves; composefs read it
+    // independently. Validate they are the same.
+    if let Some(delta) = opts.delta {
+        let expected = delta.target_manifest_digest().to_string();
+        anyhow::ensure!(
+            manifest_digest == expected,
+            "Delta {} imported manifest {manifest_digest}, but it records {expected} as its target",
+            delta.path,
+        );
+    }
+
+    // If the target image produces the same fs-verity digest as any existing
+    // deployment (booted, staged, rollback, or pinned), error out.  Two images
+    // from different sources can have identical content; we cannot silently reuse
+    // an existing state directory whose /etc was seeded from a different image.
+    let all_deployments = host.all_composefs_deployments()?;
+    if let Some(collision) = all_deployments
+        .iter()
+        .find(|d| d.deployment.verity == id.to_hex())
+    {
+        anyhow::bail!(
+            "Target image has the same fs-verity digest as the existing {:?} deployment.",
+            collision.ty,
+        );
+    }
+
+    let entry = super::boot::primary_boot_entry(&entries)?;
+    let boot_type = BootType::from(entry);
+    let booted_type = host.require_composefs_booted()?.boot_type;
+    if boot_type == BootType::Aboot || booted_type == BootType::Aboot {
+        anyhow::ensure!(
+            boot_type == booted_type,
+            "Cannot switch between aboot and non-aboot boot layouts"
+        );
+    }
+
+    let mounted_fs = Dir::reopen_dir(
+        &repo
+            .mount(&id.to_hex())
+            .context("Failed to mount composefs image")?,
+    )?;
+
+    // Check if three way etc merge is possible without conflicts
+    let new_etc = mounted_fs
+        .open_dir("etc")
+        .context("Opening deployment's etc")?;
+
+    let diff = get_etc_diff(storage, booted_cfs, Some(&new_etc)).await?;
+
+    if !diff.unmergable_paths.is_empty() {
+        print_unmergable_paths(&diff, &mut std::io::stderr());
+        anyhow::bail!("Merge conflicts found in etc");
+    }
+
+    let (provisional_deploy_id, provisional_format) = (id.clone(), repo.erofs_version());
+    let mut aboot_artifacts = None;
+
+    let (boot_digest, deploy_id) = match boot_type {
+        BootType::Bls => (
+            setup_composefs_bls_boot(
+                BootSetupType::Upgrade((storage, booted_cfs, &host, None)),
+                &repo,
+                &provisional_deploy_id,
+                provisional_format,
+                entry,
+                &mounted_fs,
+            )?,
+            provisional_deploy_id,
+        ),
+
+        BootType::Uki => print_uki_dumpfile_diff_on_mismatch(
+            setup_composefs_uki_boot(
+                BootSetupType::Upgrade((storage, booted_cfs, &host, Some(&opts.uki_addon_opts))),
+                &repo,
+                &provisional_deploy_id,
+                &boot_ids,
+                entries,
+            ),
+            &repo,
+            &oci_fs,
+        )?,
+        BootType::Aboot => {
+            let prepared = prepare_composefs_aboot_artifacts(
+                &repo,
+                &id,
+                &boot_ids,
+                entry,
+                booted_cfs.cmdline.allow_missing_fsverity,
+            )?;
+            let boot_digest = prepared.boot_digest.clone();
+            aboot_artifacts = Some(prepared);
+            (boot_digest, provisional_deploy_id)
+        }
+    };
+
+    // `repo` holds its own flock(LOCK_SH) on /sysroot/composefs, taken out by
+    // pull_composefs_repo() on a *different* open-file-description than the
+    // one `booted_cfs.repo` uses. Below, composefs_gc() will ask `booted_cfs.repo`
+    // to take flock(LOCK_EX) on the same underlying file. Since two independent
+    // opens of the same file by one process don't share flock() state, that
+    // exclusive lock would block forever on the shared lock we're still holding
+    // here unless we drop `repo` first. `mounted_fs` is a mount of `repo`'s
+    // content, so it's dropped alongside it for the same reason. (`entries` is
+    // already consumed by this point in the BootType::Uki arm above, so there's
+    // nothing left to drop there.)
+    // See https://github.com/bootc-dev/bootc/issues/2364.
+    drop(mounted_fs);
+    drop(repo);
+
+    let staged_state = StagedDeployment {
+        depl_id: deploy_id.to_hex(),
+        finalization_locked: opts.download_only,
+    };
+
+    write_composefs_state(
+        &Utf8PathBuf::from("/sysroot"),
+        &deploy_id,
+        imgref,
+        false,
+        boot_type,
+        boot_digest,
+        &manifest_digest,
+        booted_cfs.cmdline.allow_missing_fsverity,
+    )
+    .await?;
+
+    if let Some(artifacts) = aboot_artifacts {
+        let mut state = aboot::AbootState::open(&storage.physical_root)?;
+        let pending = state.stage_artifacts(
+            &staged_state.depl_id,
+            staged_state.finalization_locked,
+            &artifacts.payload,
+            artifacts.vbmeta.as_deref(),
+        )?;
+        state.write_pending(&pending)?;
+    }
+    write_staged_deployment(&staged_state)?;
+
+    // We take into account the staged bootloader entries so this won't remove
+    // the currently staged entry
+    //
+    // Note: this takes an exclusive flock via `booted_cfs.repo`; no other
+    // `Repository` handle on the same underlying file may still be alive here
+    // (see the `drop(repo)` above for why).
+    composefs_gc(
+        storage,
+        booted_cfs,
+        GCOpts {
+            dry_run: false,
+            prune_repo: true,
+        },
+    )
+    .await?;
+
+    // Warn about global UKI addons that the newly staged image no longer provides.
+    // They survive this GC (still referenced by the booted deployment) but will be
+    // garbage collected on the next update/switch once that deployment rolls off.
+    if boot_type == BootType::Uki {
+        let pinned_verities: Vec<String> = host
+            .all_composefs_deployments()?
+            .into_iter()
+            .filter(|d| d.pinned)
+            .map(|d| d.deployment.verity.clone())
+            .collect();
+
+        let bootloader_entries = list_bootloader_entries(storage)?;
+
+        let pending = global_addons_pending_removal(
+            storage,
+            booted_cfs,
+            &deploy_id.to_hex(),
+            &pinned_verities,
+            &bootloader_entries,
+        )?;
+
+        if !pending.is_empty() {
+            println!(
+                "notice: these global UKI addons are not provided by the new image and will be \
+                 removed on a future update/switch unless re-added with \
+                 `bootc uki-addon add <name> global`:"
+            );
+            for addon in &pending {
+                println!("  - {addon}");
+            }
+        }
+    }
+
+    apply_upgrade(storage, booted_cfs, &deploy_id.to_hex(), opts).await
+}
+
+#[context("Applying downloaded upgrade")]
+pub(crate) async fn apply_upgrade_from_downloaded(
+    storage: &Storage,
+    composefs: &BootedComposefs,
+    host: &Host,
+    do_upgrade_opts: &DoUpgradeOpts<'_>,
+) -> Result<()> {
+    let staged = host
+        .status
+        .staged
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No staged deployment found"))?;
+
+    // Staged deployment exists, but it will be finalized
+    if !staged.download_only {
+        println!("Staged deployment is present and not in download only mode.");
+        println!("Use `bootc update --apply` to apply the update.");
+        return Ok(());
+    }
+
+    let staged_id = &staged.require_composefs()?.verity;
+    if host.require_composefs_booted()?.boot_type == BootType::Aboot {
+        let mut state = aboot::AbootState::open(&storage.physical_root)?;
+        let pending = state.unlock_pending(staged_id)?;
+        write_staged_deployment(&pending.staged())?;
+    } else {
+        let staged_depl_dir =
+            Dir::open_ambient_dir(COMPOSEFS_TRANSIENT_STATE_DIR, ambient_authority())
+                .context("Opening transient state directory")?;
+        let current = staged_depl_dir
+            .read_to_string(COMPOSEFS_STAGED_DEPLOYMENT_FNAME)
+            .context("Reading staged file")?;
+        let mut new_staged: StagedDeployment =
+            serde_json::from_str(&current).context("Deserializing staged file")?;
+        new_staged.finalization_locked = false;
+        write_staged_deployment(&new_staged)?;
+    }
+
+    start_finalize_stated_svc()?;
+
+    return apply_upgrade(storage, composefs, staged_id, &do_upgrade_opts).await;
+}
+
+#[context("Upgrading composefs")]
+pub(crate) async fn upgrade_composefs(
+    opts: UpgradeOpts,
+    storage: &Storage,
+    composefs: &BootedComposefs,
+) -> Result<()> {
+    const COMPOSEFS_UPGRADE_JOURNAL_ID: &str = "9c8d7f6e5a4b3c2d1e0f9a8b7c6d5e4f3";
+
+    tracing::info!(
+        message_id = COMPOSEFS_UPGRADE_JOURNAL_ID,
+        bootc.operation = "upgrade",
+        bootc.apply_mode = opts.apply,
+        bootc.download_only = opts.download_opts.download_only,
+        bootc.from_downloaded = opts.download_opts.from_downloaded,
+        "Starting composefs upgrade operation"
+    );
+
+    let host = get_composefs_status(storage, composefs)
+        .await
+        .context("Getting composefs deployment status")?;
+
+    let current_image = host.spec.image.as_ref();
+
+    // Handle --tag: derive target from current image + new tag
+    let derived_image = if let Some(ref tag) = opts.tag {
+        let image = current_image.ok_or_else(|| {
+            anyhow::anyhow!("--tag requires a booted image with a specified source")
+        })?;
+        Some(image.with_tag(tag)?)
+    } else {
+        None
+    };
+
+    let delta = crate::delta::open_opt(opts.from_delta.as_deref()).await?;
+
+    let prog: ProgressWriter = opts.progress.try_into()?;
+
+    let mut do_upgrade_opts = DoUpgradeOpts {
+        soft_reboot: opts.soft_reboot,
+        apply: opts.apply,
+        download_only: opts.download_opts.download_only,
+        use_unified: false,
+        quiet: opts.quiet,
+        prog,
+        delta: delta.as_ref(),
+        uki_addon_opts: opts.uki_addon_opts,
+    };
+
+    if opts.download_opts.from_downloaded {
+        return apply_upgrade_from_downloaded(storage, composefs, &host, &do_upgrade_opts).await;
+    }
+
+    let imgref = derived_image.as_ref().or(current_image);
+    let mut booted_imgref = imgref.ok_or_else(|| anyhow::anyhow!("No image source specified"))?;
+    if let Some(delta) = delta.as_ref() {
+        delta.validate_image_reference(booted_imgref)?;
+    }
+
+    // Auto-detect unified storage: use the unified path if the target image is
+    // already in bootc-owned containers-storage, OR if the booted image is —
+    // the latter means the user has opted into unified storage and all
+    // subsequent operations should use it.
+    let current_unified = if let Some(current) = current_image {
+        crate::deploy::image_exists_in_unified_storage(storage, current).await?
+    } else {
+        false
+    };
+    do_upgrade_opts.use_unified = current_unified
+        || crate::deploy::image_exists_in_unified_storage(storage, booted_imgref).await?;
+
+    let repo = &*composefs.repo;
+
+    // With a delta the target is whatever the delta says it is, and we can look
+    // it up locally; without one we have to ask the registry.
+    let (img_pulled, mut manifest, manifest_digest) = match &delta {
+        Some(delta) => {
+            crate::delta::reject_unified_storage(delta, do_upgrade_opts.use_unified)?;
+            ensure_delta_source_present(repo, delta)?;
+            (
+                lookup_config_splitstream(repo, delta.target_manifest().config().digest())?,
+                delta.target_manifest().clone(),
+                delta.target_manifest_digest().to_string(),
+            )
+        }
+        None => is_image_pulled(&repo, booted_imgref)
+            .await
+            .map(|(pulled, img, digest)| (pulled, img.manifest, digest))?,
+    };
+
+    // Check if we already have this update staged
+    // Or if we have another staged deployment with a different image
+    let staged_image = host.status.staged.as_ref().and_then(|i| i.image.as_ref());
+
+    // When applying deltas, only handle the staged image if it matches the delta,
+    // because with deltas we always want the specific version, and don't want to do
+    // any network resolve here.
+    let staged_image =
+        staged_image.filter(|staged| delta.is_none() || staged.image_digest == manifest_digest);
+
+    if let Some(staged_image) = staged_image {
+        // We have a staged image and it has the same digest as the currently booted image's latest
+        // digest
+        if staged_image.image_digest == manifest_digest {
+            if opts.apply {
+                return crate::reboot::reboot();
+            }
+
+            println!("Update already staged. To apply update run `bootc update --apply`");
+
+            return Ok(());
+        }
+
+        // We have a staged image but it's not the update image.
+        // Maybe it's something we got by `bootc switch`
+        // Switch takes precedence over update, so we change the imgref
+        booted_imgref = &staged_image.image;
+
+        let (img_pulled, staged_img_config, _) = is_image_pulled(&repo, booted_imgref).await?;
+        manifest = staged_img_config.manifest;
+
+        if let Some(cfg_verity) = img_pulled {
+            let action = validate_update(
+                storage,
+                composefs,
+                &host,
+                manifest.config().digest().as_ref(),
+                &cfg_verity,
+                false,
+            )?;
+
+            match action {
+                UpdateAction::Skip => {
+                    println!("No changes in staged image: {booted_imgref:#}");
+                    return Ok(());
+                }
+
+                UpdateAction::Proceed => {
+                    return do_upgrade(
+                        storage,
+                        composefs,
+                        &host,
+                        booted_imgref,
+                        &do_upgrade_opts,
+                        &manifest,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    // We already have this container config
+    if let Some(cfg_verity) = img_pulled {
+        let action = validate_update(
+            storage,
+            composefs,
+            &host,
+            manifest.config().digest().as_ref(),
+            &cfg_verity,
+            false,
+        )?;
+
+        match action {
+            UpdateAction::Skip => {
+                println!("No changes in: {booted_imgref:#}");
+                return Ok(());
+            }
+
+            UpdateAction::Proceed => {
+                return do_upgrade(
+                    storage,
+                    composefs,
+                    &host,
+                    booted_imgref,
+                    &do_upgrade_opts,
+                    &manifest,
+                )
+                .await;
+            }
+        }
+    }
+
+    if opts.check {
+        let (current_manifest, _) = get_imginfo(storage, &*composefs.cmdline.digest)?;
+        let diff = ManifestDiff::new(&current_manifest.manifest, &manifest);
+        diff.print();
+        return Ok(());
+    }
+
+    do_upgrade(
+        storage,
+        composefs,
+        &host,
+        booted_imgref,
+        &do_upgrade_opts,
+        &manifest,
+    )
+    .await?;
+
+    Ok(())
+}

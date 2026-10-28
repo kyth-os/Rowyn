@@ -28,7 +28,7 @@ FROM base AS builder
 ARG RUST_VERSION
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,dst=/boot \
     apt update -y && \
-    apt install -y git curl make build-essential go-md2man libzstd-dev pkgconf libostree-dev ostree xz-utils libclang-dev
+    apt install -y python3 git curl make build-essential go-md2man libzstd-dev pkgconf libostree-dev ostree xz-utils libclang-dev
 
 WORKDIR /home/build
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
@@ -36,6 +36,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     tar -xJf "/ctx/assets/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz" -C /tmp/rust-dist --strip-components=1 && \
     /tmp/rust-dist/install.sh --prefix=/opt/rust --without=rust-docs && \
     cp -a /ctx/assets/bootc /home/build/bootc && \
+    /usr/bin/python3 /ctx/shared/bootc-sigpolicy-patch.py /home/build/bootc && \
     PATH=/opt/rust/bin:$PATH /ctx/shared/build.sh /home/build/bootc
 
 # --- system: assemble the bootable image ------------------------------------
@@ -76,6 +77,14 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     echo "HOME=/var/home" | tee -a "/etc/default/useradd" && \
     /ctx/shared/bootc-rootfs.sh
+
+# Keep the update verifier and its public key in the immutable payload. The
+# policy is generated after stateless normalization so it never depends on
+# /var and is available to bootc update fetches from first boot onward.
+COPY keys/update.pub /usr/share/rowyn/update.pub
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/update-policy.sh /usr/libexec/rowyn-update-policy && \
+    /usr/libexec/rowyn-update-policy --root /
 
 # First-boot policy must be generated after stateless normalization. It keeps
 # mutable SDDM/resolver overrides in /etc and masks only the unused Budgie

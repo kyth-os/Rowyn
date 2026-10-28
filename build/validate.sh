@@ -74,8 +74,12 @@ PY
 echo "[validate] KDE package ordering passed"
 grep -Fq 'CARGO_NET_OFFLINE=true' shared/build.sh \
     || fail "bootc source build is not explicitly offline"
-grep -Fq 'git clone --depth 1' build/fetch-assets.sh \
-    || fail "bootc asset fetch is missing shallow clone"
+grep -Fq 'BOOTC_COMMIT="6d7893f2dbdd289a4a04a5727e4df29433d43024"' build/fetch-assets.sh \
+    || fail "bootc asset fetch is missing the reviewed source commit pin"
+grep -Fq 'fetch --no-tags --depth 1 origin' build/fetch-assets.sh \
+    || fail "bootc asset fetch does not fetch the pinned commit"
+grep -Fq 'rev-parse --verify HEAD' build/fetch-assets.sh \
+    || fail "bootc asset fetch does not verify the checked-out HEAD"
 
 grep -Fq 'NAME="Rowyn"' os-release || fail "os-release identity is not Rowyn"
 grep -Fxq 'ID=rowyn' os-release || fail "os-release ID is not rowyn"

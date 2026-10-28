@@ -405,11 +405,13 @@ def adapt_configuration_tests(text):
     return prefix + '#[cfg(test)]\nmod tests {' + tests
 
 
-def adapt(root):
+def adapt(root, release_digest=None):
+    fixture_digest = (release_digest or 'sha256:' + 'b' * 64).removeprefix('sha256:')
     crate = root / 'src/kyth-installer-web/src-tauri/src'
     bootc = crate / 'installer_bootc.rs'
     text = bootc.read_text()
     text = replace(text, '    if subcommand == "to-filesystem" {',
+                   '    argv.push("--enforce-container-sigpolicy".to_string());\n'
                    '    if subcommand == "to-disk" {\n        argv.push("--composefs-backend".to_string());\n    }\n    if subcommand == "to-filesystem" {')
     head, closing = text.rsplit('\n}', 1)
     text = head + r'''
@@ -462,6 +464,27 @@ def adapt(root):
     text = text.replace('write.path.ends_with("/locale.conf")', 'write.path.ends_with("/default/locale")')
     text = text.replace('write.path.ends_with("/vconsole.conf")', 'write.path.ends_with("/default/keyboard")')
     text = text.replace('content.strip_prefix("KEYMAP=")', 'content.strip_prefix("XKBLAYOUT=")')
+    # The pinned upstream executor tests use Kyth's old mutable image and a
+    # synthetic digest. Keep those tests meaningful after the Rowyn source
+    # guard by moving only their fixture references to this exact release and
+    # the fixed stable update channel.
+    text = text.replace('docker://ghcr.io/kyth-os/kyth@{digest}', 'docker://ghcr.io/kyth-os/rowyn@{digest}')
+    text = text.replace('docker://ghcr.io/kyth-os/kyth@sha256:{digest_hex}', 'docker://ghcr.io/kyth-os/rowyn@sha256:{digest_hex}')
+    text = text.replace(
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        fixture_digest,
+    )
+    text = text.replace(
+        'target_imgref: std::env::var("KYTH_TARGET_IMAGE")\n'
+        '                        .unwrap_or_else(|_| "ghcr.io/kyth-os/rowyn@sha256:'
+        + fixture_digest + '".to_string()),',
+        'target_imgref: std::env::var("KYTH_TARGET_IMAGE")\n'
+        '                        .unwrap_or_else(|_| "ghcr.io/kyth-os/rowyn:stable".to_string()),',
+    )
+    text = text.replace(
+        '"target_image": "ghcr.io/kyth-os/rowyn@sha256:' + fixture_digest + '"',
+        '"target_image": "ghcr.io/kyth-os/rowyn:stable"',
+    )
     executor.write_text(text)
 
     accounts = crate / 'installer_accounts.rs'

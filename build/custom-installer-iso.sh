@@ -17,7 +17,9 @@ cd "$repo_root"
 [[ "$UBUNTU_LIVE_IMAGE" =~ ^docker\.io/library/ubuntu@sha256:[0-9a-f]{64}$ ]] || { echo 'Live and compiler base must be digest-pinned official Ubuntu' >&2; exit 1; }
 [[ -z "${KYTH_INSTALLER_BASE_IMAGE:-}" ]] || { echo 'Legacy live-base override is forbidden' >&2; exit 1; }
 source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"
+target_image="ghcr.io/kyth-os/rowyn:stable"
 export INSTALL_SOURCE_IMAGE="$source_image"
+export INSTALL_TARGET_IMAGE="$target_image"
 python3 -B build/ubuntu-only-check.py
 # Respect the caller's scratch filesystem, never a hard-coded /tmp host path.
 : "${TMPDIR:?TMPDIR must name a scratch directory}"
@@ -25,7 +27,7 @@ work="$(mktemp -d "${TMPDIR%/}/rowyn-ubuntu-iso.XXXXXX")"
 python3 build/ubuntu-installer-source.py "$KYTH_SOURCE_DIR" "$work/source" "$IMAGE_DIGEST"
 mkdir -p "$work/source/rowyn" "$work/assembly"
 cp build/{configure-live.sh,assemble-iso.sh,ubuntu-live-preflight.py,ubuntu-live-network.py,ubuntu-live-packages.py,ubuntu-source-probes.py,kubuntu-desktop-live-26.10-amd64.manifest} "$work/source/rowyn/"
-cp shared/kde-dark-defaults.sh shared/kde-wallpaper-defaults.sh "$work/source/rowyn/"
+cp shared/kde-dark-defaults.sh shared/kde-wallpaper-defaults.sh shared/update-policy.sh keys/update.pub "$work/source/rowyn/"
 cp -a shared/wallpaper "$work/source/rowyn/"
 if [[ "${ROWYN_CUSTOM_INSTALLER_PREFLIGHT:-0}" == 1 ]]; then
     printf 'Ubuntu installer source preflight passed: %s\n' "$work/source"
@@ -63,7 +65,8 @@ with iso.open('rb') as stream:
 iso.with_suffix('.json').write_text(json.dumps(dict(
     schema_version=2, artifact=iso.name, sha256='sha256:' + hash_.hexdigest(),
     bytes=iso.stat().st_size, source_image=os.environ['INSTALL_SOURCE_IMAGE'],
-    source_digest=os.environ['IMAGE_DIGEST'], kyth_installer_commit=os.environ['KYTH_INSTALLER_COMMIT'],
+    target_image=os.environ['INSTALL_TARGET_IMAGE'], source_digest=os.environ['IMAGE_DIGEST'],
+    kyth_installer_commit=os.environ['KYTH_INSTALLER_COMMIT'],
     ubuntu_live_image=os.environ['UBUNTU_LIVE_IMAGE'], live_os='ubuntu', build_os='ubuntu',
     firmware='x86_64 UEFI; Secure Boot disabled', supported_modes=['wipe-plaintext'],
     signing_identity='https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main',

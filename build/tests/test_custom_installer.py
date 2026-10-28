@@ -318,6 +318,23 @@ class UbuntuGuardTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("official Ubuntu", result.stderr)
 
+    def test_installer_declares_distinct_immutable_source_and_stable_target(self):
+        adapter = (ROOT / "build/custom-installer-iso.sh").read_text()
+        live = (ROOT / "build/configure-live.sh").read_text()
+        self.assertIn('source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"', adapter)
+        self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', adapter)
+        self.assertIn('INSTALL_TARGET_IMAGE', adapter)
+        self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', live)
+        self.assertIn('KYTH_TARGET_IMAGE=', live)
+        self.assertNotIn('target_image:$source', live)
+
+    def test_iso_metadata_records_source_digest_and_stable_target_separately(self):
+        adapter = (ROOT / "build/custom-installer-iso.sh").read_text()
+        metadata = adapter.split("iso.with_suffix('.json').write_text", 1)[1]
+        self.assertIn("source_image=os.environ['INSTALL_SOURCE_IMAGE']", metadata)
+        self.assertIn("target_image=os.environ['INSTALL_TARGET_IMAGE']", metadata)
+        self.assertIn("source_digest=os.environ['IMAGE_DIGEST']", metadata)
+
 
 class LiveBootcConfigurationTests(unittest.TestCase):
     def test_live_stage_installs_the_regular_ubuntu_desktop_package_set(self):

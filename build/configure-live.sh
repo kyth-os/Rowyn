@@ -7,6 +7,8 @@ set -euo pipefail
 : "${INSTALL_SOURCE_IMAGE:?}"
 [[ "$INSTALL_SOURCE_IMAGE" =~ ^ghcr\.io/kyth-os/rowyn@sha256:[0-9a-f]{64}$ ]] || exit 1
 digest="${INSTALL_SOURCE_IMAGE##*@}"
+target_image="ghcr.io/kyth-os/rowyn:stable"
+export INSTALL_TARGET_IMAGE="$target_image"
 install -Dm755 /rowyn/ubuntu-live-preflight.py /usr/libexec/rowyn-live-preflight
 # Retain the exact v2 verifier used by the publisher; verify download integrity.
 curl --fail --location --retry 3 \
@@ -24,12 +26,19 @@ jq -cs --arg digest "$digest" '{digest:$digest, signatures:.}' /var/tmp/rowyn-si
     > /usr/share/kyth/image.sig.bundle.json
 bundle_hash="$(sha256sum /usr/share/kyth/image.sig.bundle.json)"
 jq -n --arg digest "$digest" --arg source "$INSTALL_SOURCE_IMAGE" \
+    --arg target "$target_image" \
     --arg bundle "sha256:${bundle_hash%% *}" \
-    '{schema_version:1,release_digest:$digest,digest:$digest,source_image:$source,target_image:$source,signature:"verified",signature_digest:$bundle}' \
+    '{schema_version:1,release_digest:$digest,digest:$digest,source_image:$source,target_image:$target,signature:"verified",signature_digest:$bundle}' \
     > /usr/share/kyth/image-source.json
 printf 'KYTH_SOURCE_IMAGE=%s\nKYTH_TARGET_IMAGE=%s\nKYTH_SOURCE_DIGEST=%s\n' \
-    "$INSTALL_SOURCE_IMAGE" "$INSTALL_SOURCE_IMAGE" "$digest" > /etc/kyth-installer.env
+    "$INSTALL_SOURCE_IMAGE" "$target_image" "$digest" > /etc/kyth-installer.env
 chmod 644 /etc/kyth-installer.env
+
+# bootc install runs later from this live system. Install the same immutable
+# image policy and verification key before the installer can invoke bootc.
+install -Dm644 /rowyn/update.pub /usr/share/rowyn/update.pub
+install -Dm755 /rowyn/update-policy.sh /usr/libexec/rowyn-update-policy
+/usr/libexec/rowyn-update-policy --root /
 
 # Match the official Kubuntu 26.10 desktop live package set, not only the
 # small installer bootstrap set. Seed its Snap applications for first boot.

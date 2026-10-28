@@ -201,6 +201,7 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
     def test_backend_and_account_flow_use_fixed_mounted_view(self):
         bootc = (self.crate / 'installer_bootc.rs').read_text()
         self.assertIn('argv.push("--composefs-backend".to_string())', bootc)
+        self.assertIn('argv.push("--enforce-container-sigpolicy".to_string())', bootc)
         self.assertNotIn('pub composefs_backend:', bootc)
         executor = (self.crate / 'installer_job_executor.rs').read_text()
         method = executor.split('fn mount_wipe_deployment(', 1)[1].split('fn execute_configuration(', 1)[0]
@@ -216,6 +217,16 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         self.assertIn('selected_disk_esp(&input.target_disk)', assurance)
         self.assertIn('validate_esp_match', assurance)
         self.assertIn('verify_esp_bootloaders(&discovered)', assurance)
+
+    def test_generated_source_uses_exact_release_source_and_stable_update_target(self):
+        images = (self.root / 'src/kyth-shared-rs/src/system/installer_source.rs').read_text()
+        self.assertIn('ROWYN_RELEASE_SOURCE', images)
+        self.assertIn('ghcr.io/kyth-os/rowyn@sha256:' + 'b' * 64, images)
+        self.assertIn('ROWYN_UPDATE_TARGET', images)
+        self.assertIn('ghcr.io/kyth-os/rowyn:stable', images)
+        executor = (self.crate / 'installer_job_executor.rs').read_text()
+        self.assertIn('self.source_imgref != format!("docker://{ROWYN_RELEASE_SOURCE}")', executor)
+        self.assertIn('self.target_imgref != ROWYN_UPDATE_TARGET', executor)
 
     def test_repeated_port_verifies_digest_and_all_source_instead_of_skipping_trust(self):
         before = {p.relative_to(self.root): p.read_bytes() for p in self.crate.glob('*.rs')}
