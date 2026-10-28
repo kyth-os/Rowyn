@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Export the pinned Kyth System Hub source, then port it to Rowyn on Ubuntu.
 
-The port is deliberately scoped: only the Home/Dashboard, Apps, and Updates
-destinations survive. Play, This PC, Move In, VPN, and the shell-only Dev
-Tools route are cut from navigation, routing, search, and the sidebar; their
-page files stay in the tree (unreferenced) so the cut stays a small,
+The port is deliberately scoped: only the Home/Dashboard, Apps, Updates,
+and VPN destinations survive. Play, This PC, Move In, and the shell-only
+Dev Tools route are cut from navigation, routing, search, and the sidebar;
+their page files stay in the tree (unreferenced) so the cut stays a small,
 anchor-checked diff instead of a fork. The Updates channel is repointed at
 Rowyn's own releases and GHCR repository; branch switching stays registered
 in Rust but its helper (/usr/bin/kyth-bootc-guard) is not shipped by Rowyn,
 so the command fails cleanly through require_binary if ever invoked.
+
+The VPN destination is Kyth's openconnect client (GlobalProtect "gp"
+profile, SAML redirect/cookie/reconnect flow); it ports unchanged apart
+from its on-disk paths, which take the Rowyn name. The payload image
+provides its runtime stack — openconnect, vpnc-scripts, ksshaskpass (the
+askpass the backend fails closed without), and firewalld (the lockdown
+feature's one firewall-cmd call) — see the Containerfile.
 
 Never executes upstream build scripts. The input checkout is read-only; git
 archive exports exactly the pinned objects.
@@ -24,7 +31,7 @@ PIN = "2baf8496b5aa904c0784f4290df743ee17edae48"
 PATHS = ("src/kyth-hub-web", "src/kyth-shared-rs",
          "third_party/gtk-glib-0.18.5", "build_files/exe-handler-apps.json",
          "LICENSE")
-KEPT_DESTINATIONS = ("Apps", "Updates")
+KEPT_DESTINATIONS = ("Apps", "Updates", "VPN")
 EXPECTED_DESTINATIONS = {"Play", "Apps", "This PC", "Move In", "VPN", "Updates"}
 
 
@@ -141,14 +148,22 @@ def port_source(root):
         return matches[0]
 
     for page, route in (("Play", "/play"), ("DevTools", "/dev-tools"),
-                        ("ThisPc", "/this-pc"), ("MoveIn", "/move-in"), ("Vpn", "/vpn")):
+                        ("ThisPc", "/this-pc"), ("MoveIn", "/move-in")):
         text = replace_once(text, only_line(text, f"const {page} = lazy("), "")
         text = replace_once(text, only_line(text, f'<Route path="{route}"'), "")
     for route, label in (("/play", "Play"), ("/dev-tools", "Dev Tools"),
-                         ("/this-pc", "This PC"), ("/move-in", "Move In"), ("/vpn", "VPN")):
+                         ("/this-pc", "This PC"), ("/move-in", "Move In")):
         text = replace_once(text, f'  "{route}": "{label}",\n', "")
+    # VPN is a kept destination: its lazy import, route, and crumb entry
+    # must survive untouched. Fail closed if upstream renames any of them,
+    # so the restore can never silently degrade to a missing page.
+    for anchor in ('const Vpn = lazy(() => import("./pages/Vpn")',
+                   '<Route path="/vpn" element={<Vpn />} />',
+                   '  "/vpn": "VPN",\n'):
+        if text.count(anchor) != 1:
+            raise ValueError(f"expected exactly one kept VPN anchor in App.tsx: {anchor[:80]!r}")
     app.write_text(text)
-    changes.append("App.tsx: cut /play, /dev-tools, /this-pc, /move-in, /vpn routes")
+    changes.append("App.tsx: cut /play, /dev-tools, /this-pc, /move-in routes; /vpn kept")
 
     # --- Sidebar: branding, presentation map, Dev Tools splice ------------
     sidebar = web / "src/components/Sidebar.tsx"
@@ -156,7 +171,7 @@ def port_source(root):
     text = replace_once(
         text,
         'import { IconHome, IconPlay, IconGrid, IconLock, IconMonitor, IconRefresh, IconShield, IconTerminal, IconTransfer } from "./icons";',
-        'import { IconHome, IconGrid, IconRefresh, IconShield } from "./icons";')
+        'import { IconHome, IconGrid, IconLock, IconRefresh, IconShield } from "./icons";')
     text = replace_once(
         text,
         "// in the rail automatically. Home and Dev Tools are shell-only routes\n"
@@ -169,9 +184,13 @@ def port_source(root):
         '  Play: { hint: "Games, boost, controllers", Icon: IconPlay },\n',
         '  "This PC": { hint: "Health, hardware, repair", Icon: IconMonitor },\n',
         '  "Move In": { hint: "Files, saves, workflows", Icon: IconTransfer },\n',
-        '  VPN: { hint: "Secure work connections", Icon: IconLock },\n',
     ):
         text = replace_once(text, entry, "")
+    # The VPN presentation entry is kept with its destination; fail closed
+    # if upstream renames it (the sidebar would fall back to a wrong icon).
+    vpn_entry = '  VPN: { hint: "Secure work connections", Icon: IconLock },\n'
+    if text.count(vpn_entry) != 1:
+        raise ValueError("expected exactly one kept VPN presentation entry in Sidebar.tsx")
     text = replace_once(
         text,
         '  ...workspaceDestinations.slice(0, 2),\n'
@@ -186,7 +205,7 @@ def port_source(root):
     text = replace_once(text, '<div className="sidebar-status-row">Kyth Hub</div>',
                         '<div className="sidebar-status-row">Rowyn Hub</div>')
     sidebar.write_text(text)
-    changes.append("Sidebar.tsx: Rowyn Hub branding, cut presentation entries + Dev Tools splice")
+    changes.append("Sidebar.tsx: Rowyn Hub branding, cut presentation entries + Dev Tools splice; VPN entry kept")
 
     # --- Topbar breadcrumb branding ---------------------------------------
     topbar = web / "src/components/Topbar.tsx"
@@ -308,11 +327,48 @@ def port_source(root):
     main_rs.write_text(text)
     changes.append("main.rs: feedback issue URL -> kyth-os/Rowyn")
 
+    # --- VPN: on-disk paths take the Rowyn name ---------------------------
+    # The backend logic (openconnect argv, SAML flow, askpass gate, the one
+    # firewall-cmd lockdown call) ports unchanged; only the paths a user or
+    # admin could meet are renamed. Each replace_once asserts exactly one
+    # anchor per file, so the saved-profile path is renamed in exactly the
+    # two places it is constructed (vpn.rs writer, main.rs reader).
+    vpn_rs = crate / "src/commands/vpn.rs"
+    text = vpn_rs.read_text()
+    text = replace_once(text, ".config/kyth-vpn-connect", ".config/rowyn-vpn-connect")
+    text = replace_once(text, "/etc/kyth/network.toml", "/etc/rowyn/network.toml")
+    vpn_rs.write_text(text)
+    text = main_rs.read_text()
+    text = replace_once(text, ".config/kyth-vpn-connect", ".config/rowyn-vpn-connect")
+    main_rs.write_text(text)
+    preset = root / "src/kyth-shared-rs/src/system/network_preset.rs"
+    text = preset.read_text()
+    text = replace_once(text, "/etc/kyth/network.toml", "/etc/rowyn/network.toml")
+    preset.write_text(text)
+    changes.append(
+        "vpn.rs + main.rs: saved profile -> ~/.config/rowyn-vpn-connect (2 anchors); "
+        "network_preset.rs + vpn.rs comment: preset -> /etc/rowyn/network.toml")
+
+    # --- VPN surfaces: user-visible branding -------------------------------
+    vpn_page = web / "src/pages/Vpn.tsx"
+    text = vpn_page.read_text()
+    text = replace_once(text, "complete sign-in securely inside Kyth Hub.",
+                        "complete sign-in securely inside Rowyn Hub.")
+    vpn_page.write_text(text)
+    vpn_section = web / "src/components/VpnSection.tsx"
+    text = vpn_section.read_text()
+    text = replace_once(text, "available from the installed Kyth Hub.",
+                        "available from the installed Rowyn Hub.")
+    vpn_section.write_text(text)
+    changes.append("Vpn.tsx + VpnSection.tsx: Kyth Hub -> Rowyn Hub (2 strings)")
+
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
-        "Dashboard/Apps/Updates, updates channel repointed to kyth-os/Rowyn releases\n"
-        "and ghcr.io/kyth-os/rowyn images, feedback issues filed against kyth-os/Rowyn.\n"
+        "Dashboard/Apps/Updates/VPN, updates channel repointed to kyth-os/Rowyn releases\n"
+        "and ghcr.io/kyth-os/rowyn images, feedback issues filed against kyth-os/Rowyn,\n"
+        "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"
+        "preset path to /etc/rowyn/network.toml.\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")
     return changes
 

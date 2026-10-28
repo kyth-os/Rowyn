@@ -38,6 +38,12 @@ class HubPortContractTests(unittest.TestCase):
              "build_files/exe-handler-apps.json", "LICENSE"},
         )
 
+    def test_kept_destinations_include_vpn(self):
+        self.assertEqual(set(hub.KEPT_DESTINATIONS), {"Apps", "Updates", "VPN"})
+        self.assertEqual(
+            hub.EXPECTED_DESTINATIONS,
+            {"Play", "Apps", "This PC", "Move In", "VPN", "Updates"})
+
     def test_replace_helpers_fail_closed(self):
         with self.assertRaises(ValueError):
             hub.replace_once("anchor anchor", "anchor", "replacement")
@@ -72,6 +78,19 @@ class HubPortContractTests(unittest.TestCase):
         self.assertIn("libwebkit2gtk-4.1-0", containerfile)
         self.assertTrue((ROOT / "docs/assets/rowyn-logo.png").is_file())
 
+    def test_containerfile_ships_vpn_stack(self):
+        containerfile = (ROOT / "Containerfile").read_text()
+        system = containerfile.split("FROM base AS system", 1)[1]
+        # The Hub VPN backend is an openconnect client: it spawns
+        # /usr/bin/openconnect with /etc/vpnc/vpnc-script, gates sudo on
+        # /usr/bin/ksshaskpass, and its lockdown feature shells out to
+        # firewall-cmd — all four ship in the payload layer, and the
+        # firewalld service is enabled with the other desktop services.
+        for package in ("openconnect", "vpnc-scripts", "ksshaskpass", "firewalld"):
+            self.assertIn(package, system)
+        self.assertIn("systemctl enable sddm.service NetworkManager.service firewalld.service",
+                      system)
+
     def test_desktop_entry_identity(self):
         entry = (ROOT / "shared/com.rowyn.hub.desktop").read_text()
         for line in ("Name=Rowyn Hub", "Exec=/usr/bin/rowyn-hub-shell",
@@ -90,6 +109,9 @@ class HubPortContractTests(unittest.TestCase):
         self.assertIn('rev-parse HEAD', workflow)
         self.assertIn("python3 build/ubuntu-hub-source.py", workflow)
         self.assertIn("test -x /usr/bin/rowyn-hub-shell", workflow)
+        for smoke in ("test -x /usr/bin/openconnect", "test -s /etc/vpnc/vpnc-script",
+                      "test -x /usr/bin/ksshaskpass", "test -x /usr/bin/firewall-cmd"):
+            self.assertIn(smoke, workflow)
         import yaml
         parsed = yaml.safe_load(workflow)
         paths = parsed[True]["push"]["paths"]
@@ -138,16 +160,20 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("kyth-hub-shell", (crate / "Cargo.lock").read_text())
 
                 manifest = json.loads((web / "src/data/hubRoutes.json").read_text())
-                self.assertEqual([d["key"] for d in manifest["destinations"]], ["Apps", "Updates"])
+                self.assertEqual([d["key"] for d in manifest["destinations"]],
+                                 ["Apps", "VPN", "Updates"])
 
                 app = (web / "src/App.tsx").read_text()
-                for route in ("/play", "/dev-tools", "/this-pc", "/move-in", "/vpn"):
+                for route in ("/play", "/dev-tools", "/this-pc", "/move-in"):
                     self.assertNotIn(f'path="{route}"', app)
                     self.assertNotIn(f'"{route}":', app)
-                for page in ("Play", "DevTools", "ThisPc", "MoveIn", "Vpn"):
+                for page in ("Play", "DevTools", "ThisPc", "MoveIn"):
                     self.assertNotIn(f"const {page} = lazy(", app)
-                for route in ("/", "/apps", "/updates"):
+                for route in ("/", "/apps", "/updates", "/vpn"):
                     self.assertIn(f'path="{route}"', app)
+                # VPN restored: lazy import, route, and crumb all present.
+                self.assertIn("const Vpn = lazy(", app)
+                self.assertIn('"/vpn": "VPN"', app)
                 # Cut page files are kept in the tree, only unreferenced.
                 for page in ("Play", "DevTools", "ThisPc", "MoveIn", "Vpn"):
                     self.assertTrue((web / f"src/pages/{page}.tsx").is_file())
@@ -158,8 +184,10 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("Kyth Hub", sidebar)
                 self.assertNotIn("/dev-tools", sidebar)
                 self.assertNotIn("IconTerminal", sidebar)
-                for key in ("Play", '"This PC"', '"Move In"', "VPN"):
+                for key in ("Play", '"This PC"', '"Move In"'):
                     self.assertNotIn(f"{key}: {{ hint:", sidebar)
+                self.assertIn('VPN: { hint: "Secure work connections", Icon: IconLock },', sidebar)
+                self.assertIn("IconLock", sidebar)
 
                 search = (web / "src/search.ts").read_text()
                 self.assertNotIn("dest:Dev Tools", search)
@@ -183,6 +211,27 @@ class PinnedHubSourceTests(unittest.TestCase):
                 main = (crate / "src/main.rs").read_text()
                 self.assertIn("commands::updates::bootc_switch_branch", main)
                 self.assertIn('"https://github.com/kyth-os/Rowyn",', main)
+
+                # VPN: the Rust backend was never cut — its commands stay
+                # registered — and its on-disk paths take the Rowyn name.
+                self.assertIn("commands::vpn::vpn_connect", main)
+                vpn = (crate / "src/commands/vpn.rs").read_text()
+                for text in (vpn, main):
+                    self.assertIn(".config/rowyn-vpn-connect", text)
+                    self.assertNotIn("kyth-vpn-connect", text)
+                preset = (root / "src/kyth-shared-rs/src/system/network_preset.rs").read_text()
+                self.assertIn('"/etc/rowyn/network.toml"', preset)
+                self.assertNotIn("/etc/kyth/network.toml", preset)
+                self.assertNotIn("/etc/kyth/network.toml", vpn)
+                # The GlobalProtect argv construction survives the port:
+                # gp gateways are entered directly via --usergroup gateway.
+                saml = (root / "src/kyth-shared-rs/src/system/vpn_saml.rs").read_text()
+                self.assertIn('"--usergroup"', saml)
+                self.assertIn('"gateway"', saml)
+                self.assertIn('"/etc/vpnc/vpnc-script"', saml)
+                # VPN surfaces carry Rowyn branding, not Kyth's.
+                self.assertNotIn("Kyth Hub", (web / "src/pages/Vpn.tsx").read_text())
+                self.assertNotIn("Kyth Hub", (web / "src/components/VpnSection.tsx").read_text())
 
                 overview = (web / "src/components/UpdatesOverview.tsx").read_text()
                 self.assertNotIn("KythOS", overview)

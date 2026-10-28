@@ -89,7 +89,8 @@ RUN apt-get update && \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 \
         fonts-noto-core \
-        libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 && \
+        libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 \
+        openconnect vpnc-scripts ksshaskpass firewalld && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -131,9 +132,10 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/kde-wallpaper-defaults.sh --root /
 
 # --- Rowyn Hub ---------------------------------------------------------------
-# System hub (Dashboard, Apps, Updates) compiled by the hub-builder stage
-# from the pinned, ported Kyth source. Runtime libraries for the Tauri shell
-# are in the KDE package layer above.
+# System hub (Dashboard, Apps, Updates, VPN) compiled by the hub-builder
+# stage from the pinned, ported Kyth source. Runtime libraries for the
+# Tauri shell and the VPN stack (openconnect, vpnc-scripts, ksshaskpass,
+# firewalld) are in the KDE package layer above.
 COPY --from=hub-builder /rowyn-hub-shell /usr/bin/rowyn-hub-shell
 COPY shared/com.rowyn.hub.desktop /usr/share/applications/com.rowyn.hub.desktop
 COPY docs/assets/rowyn-logo.png /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
@@ -167,7 +169,7 @@ RUN echo 'rowyn:rowyn' | chpasswd && \
         > /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
-    systemctl enable sddm.service NetworkManager.service && \
+    systemctl enable sddm.service NetworkManager.service firewalld.service && \
     systemctl set-default graphical.target && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service && \
     netplan generate --root-dir /

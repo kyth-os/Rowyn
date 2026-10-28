@@ -141,6 +141,10 @@ jobs:
             fi
             test -s /usr/share/applications/com.rowyn.hub.desktop
             test -s /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
+            test -x /usr/bin/openconnect
+            test -s /etc/vpnc/vpnc-script
+            test -x /usr/bin/ksshaskpass
+            test -x /usr/bin/firewall-cmd
             test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
             for theme in org.kde.breeze.desktop org.kde.breezedark.desktop; do
               defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults
