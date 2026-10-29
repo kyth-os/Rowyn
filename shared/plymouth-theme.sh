@@ -56,6 +56,26 @@ fi
 install -Dm644 "$theme_source/rowyn.plymouth" "$(root_path "$theme_dir/rowyn.plymouth")"
 install -Dm644 "$theme_source/rowyn.script" "$(root_path "$theme_dir/rowyn.script")"
 
+# Ubuntu's plymouth-populate-initrd (what dracut's plymouth module
+# runs) resolves the theme to fold into the initramfs from the
+# default.plymouth update-alternative, NOT from plymouthd.conf: the
+# alternative wins whenever one is registered, and the plymouth-theme
+# packages in the KDE layer register ubuntu-text. Register Rowyn the
+# same way Ubuntu theme packages do, at a higher priority, or the
+# initramfs silently gets the text theme while the on-disk config
+# still says rowyn. plymouthd.conf below remains the runtime setting
+# and the fallback when no alternative database exists.
+if ! command -v update-alternatives >/dev/null 2>&1; then
+    echo "plymouth-theme: update-alternatives is required to register the default Plymouth theme" >&2
+    exit 1
+fi
+install -d "$(root_path /etc/alternatives)" "$(root_path /var/lib/dpkg/alternatives)"
+update-alternatives \
+    --altdir "$(root_path /etc/alternatives)" \
+    --admindir "$(root_path /var/lib/dpkg/alternatives)" \
+    --install "$(root_path /usr/share/plymouth/themes/default.plymouth)" \
+    default.plymouth "$(root_path "$theme_dir/rowyn.plymouth")" 100
+
 install -d "$(root_path /etc/plymouth)"
 cat > "$(root_path /etc/plymouth/plymouthd.conf)" <<'EOF'
 # Rowyn boot splash: draw the Rowyn theme immediately, with the same

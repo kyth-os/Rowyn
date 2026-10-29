@@ -159,6 +159,7 @@ jobs:
             test -s /usr/share/plymouth/themes/rowyn/rowyn.script
             test -s /usr/share/plymouth/themes/rowyn/rowyn-logo.png
             grep -Fx "Theme=rowyn" /etc/plymouth/plymouthd.conf
+            test "$(readlink -f /usr/share/plymouth/themes/default.plymouth)" = /usr/share/plymouth/themes/rowyn/rowyn.plymouth
             grep -Fq "\"splash\"" /usr/lib/bootc/kargs.d/99-rowyn-splash.toml
             lsinitrd /usr/lib/modules/*/initramfs.img | grep -Fq "usr/share/plymouth/themes/rowyn/rowyn.script"
             lsinitrd /usr/lib/modules/*/initramfs.img | grep -Fq "usr/share/plymouth/themes/rowyn/rowyn-logo.png"

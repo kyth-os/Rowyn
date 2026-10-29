@@ -76,6 +76,19 @@ class PlymouthThemeTests(unittest.TestCase):
             self.assertIn("Theme=rowyn", conf)
             kargs = root / "usr/lib/bootc/kargs.d/99-rowyn-splash.toml"
             self.assertTrue(kargs.is_file())
+            # plymouth-populate-initrd follows the default.plymouth
+            # alternative, so it must resolve to the Rowyn theme.
+            generic = root / "usr/share/plymouth/themes/default.plymouth"
+            self.assertEqual(
+                os.path.realpath(generic),
+                str(theme_dir / "rowyn.plymouth"),
+            )
+
+    def test_installer_script_registers_the_alternative(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("update-alternatives", text)
+        self.assertIn("default.plymouth", text)
+        self.assertIn("/usr/share/plymouth/themes/default.plymouth", text)
 
     def test_containerfile_wires_theme_before_initramfs(self):
         text = CONTAINERFILE.read_text(encoding="utf-8")
@@ -102,6 +115,7 @@ class PlymouthThemeTests(unittest.TestCase):
             "test -s /usr/share/plymouth/themes/rowyn/rowyn.plymouth",
             "test -s /usr/share/plymouth/themes/rowyn/rowyn.script",
             'grep -Fx "Theme=rowyn" /etc/plymouth/plymouthd.conf',
+            'test "$(readlink -f /usr/share/plymouth/themes/default.plymouth)" = /usr/share/plymouth/themes/rowyn/rowyn.plymouth',
             'grep -Fq "\\"splash\\"" /usr/lib/bootc/kargs.d/99-rowyn-splash.toml',
             'lsinitrd /usr/lib/modules/*/initramfs.img | grep -Fq "usr/share/plymouth/themes/rowyn/rowyn.script"',
         ):

@@ -124,8 +124,9 @@ RUN systemctl enable systemd-resolved ssh && \
 
 # Boot splash: the Rowyn Plymouth theme (pulsing berry mark on deep navy)
 # must be installed before the initramfs is generated — dracut's plymouth
-# module folds the daemon-configured theme into the initramfs, and
-# initramfs.sh fails the build if the theme is not inside it.
+# module folds the theme named by the default.plymouth update-alternative
+# into the initramfs, and initramfs.sh fails the build if the theme is
+# not inside it.
 COPY docs/assets/rowyn-logo.png /usr/share/plymouth/themes/rowyn/rowyn-logo.png
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/plymouth-theme.sh --root /
