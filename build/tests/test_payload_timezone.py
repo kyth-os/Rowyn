@@ -8,7 +8,10 @@ Both need the payload to guarantee the pieces they rely on instead of
 inheriting whatever the base image happens to ship:
 
 - tzdata, named explicitly, so the zone files exist (America/Detroit
-  and the US/Michigan alias the installer picker can emit included);
+  included), and tzdata-legacy for the legacy aliases the zone tables
+  still list (US/Michigan, which the installer picker can emit) —
+  without it the installer's /etc/localtime symlink dangles and the
+  clock silently falls back to UTC;
 - polkitd, named explicitly, so the clock KCM's timedated calls are
   authorized (it also arrives transitively via polkit-kde-agent-1);
 - a canonical image timezone state — the absolute /etc/localtime
@@ -41,6 +44,7 @@ class PayloadTimezoneTests(unittest.TestCase):
     def test_timezone_packages_are_explicit(self):
         layer = _kde_layer(CONTAINERFILE.read_text(encoding="utf-8"))
         self.assertIn("tzdata", layer)
+        self.assertIn("tzdata-legacy", layer)
         self.assertIn("polkitd", layer)
 
     def test_image_ships_canonical_utc_state(self):
