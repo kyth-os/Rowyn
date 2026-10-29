@@ -22,10 +22,10 @@ class ActionPinTests(unittest.TestCase):
                 self.assertRegex(ref.split("@")[1], r"^[0-9a-f]{40}$")
         self.assertGreater(count, 0)
 
-    def test_dependabot_covers_github_actions(self):
-        text = (ROOT / ".github/dependabot.yml").read_text()
-        self.assertIn("package-ecosystem: github-actions", text)
-        self.assertIn("weekly", text)
+    def test_no_dependabot_config(self):
+        # The repository takes no pull requests; nothing may open them.
+        self.assertFalse((ROOT / ".github/dependabot.yml").exists())
+        self.assertFalse((ROOT / ".github/dependabot.yaml").exists())
 
 
 if __name__ == "__main__":
