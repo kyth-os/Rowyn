@@ -95,6 +95,7 @@ RUN apt-get update && \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
         network-manager pipewire wireplumber upower udisks2 plymouth \
+        tzdata polkitd \
         fonts-noto-core \
         libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 \
         openconnect vpnc-scripts ksshaskpass firewalld && \
@@ -103,6 +104,18 @@ RUN apt-get update && \
         slirp4netns uidmap fuse-overlayfs && \
     apt-get purge -y plasma-discover-backend-snap snapd plasma-welcome && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
+
+# Canonical timezone state: the image ships exactly what
+# systemd-timedated itself would write for UTC — an absolute
+# /etc/localtime symlink into /usr/share/zoneinfo plus /etc/timezone —
+# so the bootc /etc merge base is never a base-image default the
+# installer's symlink swap or a later KDE/timedated change has to
+# replace sight-unseen. tzdata and polkitd are named explicitly in the
+# layer above: tzdata guarantees the zone files (America/Detroit and
+# the US/Michigan alias included) and polkitd authorizes the KDE
+# clock settings' timedated calls.
+RUN printf 'Etc/UTC\n' > /etc/timezone && \
+    ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
 
 RUN systemctl enable systemd-resolved ssh && \
     mkdir -p /etc/netplan && \

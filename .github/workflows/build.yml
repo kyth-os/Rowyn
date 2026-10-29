@@ -169,6 +169,12 @@ jobs:
             done
             test ! -e /etc/sudoers.d/90-rowyn-spike
             test ! -e /usr/lib/tmpfiles.d/rowyn-spike.conf
+            test -s /usr/share/zoneinfo/America/Detroit
+            test -s /usr/share/zoneinfo/US/Michigan
+            test "$(readlink /etc/localtime)" = /usr/share/zoneinfo/Etc/UTC
+            grep -Fx "Etc/UTC" /etc/timezone
+            test -s /usr/lib/systemd/system/systemd-timedated.service
+            test -x /usr/lib/polkit-1/polkitd
             test -s /etc/NetworkManager/system-connections/rowyn-wired.nmconnection
             test -s /etc/NetworkManager/conf.d/99-rowyn-managed.conf
             test "$(readlink -f /etc/systemd/system/default.target)" = /usr/lib/systemd/system/graphical.target
