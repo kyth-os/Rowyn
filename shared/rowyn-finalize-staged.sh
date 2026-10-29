@@ -15,13 +15,14 @@
 # `remount,bind,rw` works, so it is tried first.
 set -uo pipefail
 
-# Rowyn boots bootc's composefs backend (composefs= on the kernel command
-# line). There, /boot is not an ostree boot mount and staged deployments are
+# Rowyn boots bootc's composefs backend: the kernel command line carries
+# composefs.digest=v1-... (bootc's default EROFS V1 format) or composefs=...
+# (V2). There, /boot is not an ostree boot mount and staged deployments are
 # finalized at shutdown by bootc-finalize-staged.service, so the /boot
 # preparation and `ostree admin finalize-staged` below apply only to ostree
 # boots. ROWYN_PROC_CMDLINE exists for tests.
 composefs_boot() {
-    grep -qE '(^| )composefs=' "${ROWYN_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null
+    grep -qE '(^| )composefs(\.digest)?=' "${ROWYN_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null
 }
 
 prepare_boot() {

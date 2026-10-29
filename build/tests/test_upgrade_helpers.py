@@ -33,8 +33,19 @@ class FinalizeStagedTests(unittest.TestCase):
             return subprocess.run(["bash", str(FINALIZE), *args], env=env,
                                   capture_output=True, text=True, timeout=30)
 
-    COMPOSEFS = ("BOOT_IMAGE=/vmlinuz root=UUID=0000 rw "
-                 "rootflags=noatime,compress=zstd:1 composefs=abc123 quiet splash")
+    # bootc 1.17.3 defaults to EROFS format V1, whose karg is composefs.digest=.
+    COMPOSEFS = ("BOOT_IMAGE=/vmlinuz root=UUID=0000 rw rootflags=noatime,compress=zstd:1 "
+                 "composefs.digest=v1-sha512-12:" + "f" * 128 + " quiet splash")
+    COMPOSEFS_V2 = "root=UUID=0000 rw composefs=abc123 quiet"
+
+    def test_v2_composefs_karg_is_detected_too(self):
+        result = self.run_finalize(self.COMPOSEFS_V2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("bootc finalizes the staged deployment at shutdown", result.stdout)
+
+    def test_similar_kargs_are_not_mistaken_for_composefs(self):
+        text = FINALIZE.read_text(encoding="utf-8")
+        self.assertIn("(^| )composefs(\\.digest)?=", text)
 
     def test_composefs_finalize_defers_to_bootc_at_shutdown(self):
         result = self.run_finalize(self.COMPOSEFS)
@@ -49,7 +60,6 @@ class FinalizeStagedTests(unittest.TestCase):
 
     def test_composefs_must_be_a_whole_argument(self):
         text = FINALIZE.read_text(encoding="utf-8")
-        self.assertIn("(^| )composefs=", text)
         # The ostree path is kept for non-composefs boots.
         self.assertIn("/usr/bin/ostree admin finalize-staged", text)
 
