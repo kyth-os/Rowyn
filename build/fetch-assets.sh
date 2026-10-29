@@ -9,7 +9,11 @@
 #   build-assets/bootc/                                       (bootc source, vendored deps)
 set -euo pipefail
 
-RUST_VERSION="${RUST_VERSION:-1.99.0}"
+# Committed pin: both values are fixed in-tree (not env-overridable) so the
+# toolchain is verified against a reviewed checksum, not one served alongside it.
+# Keep RUST_VERSION in sync with ARG RUST_VERSION in the Containerfile.
+RUST_VERSION="1.99.0"
+RUST_SHA256="891c6366d7100feda0bca4c03ce63f3c9ac827cbebbc283e7433061d42c6a376"
 BOOTC_REPO="https://github.com/containers/bootc.git"
 BOOTC_COMMIT="6d7893f2dbdd289a4a04a5727e4df29433d43024"
 BOOTC_DIR="build-assets/bootc"
@@ -18,12 +22,24 @@ mkdir -p build-assets
 export PATH="$HOME/.cargo/bin:$PATH"
 
 TARBALL="rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.xz"
+verify_rust() {
+    printf '%s  %s\n' "${RUST_SHA256}" "$1" | sha256sum -c -
+}
+if [ -f "build-assets/${TARBALL}" ] && ! verify_rust "build-assets/${TARBALL}"; then
+    echo "cached ${TARBALL} does not match the pinned checksum; removing" >&2
+    rm -f "build-assets/${TARBALL}"
+    exit 1
+fi
 if [ ! -f "build-assets/${TARBALL}" ]; then
-    curl -fsSL -o "build-assets/${TARBALL}" \
-        "https://static.rust-lang.org/dist/${TARBALL}"
-    curl -fsSL -o "build-assets/${TARBALL}.sha256" \
-        "https://static.rust-lang.org/dist/${TARBALL}.sha256"
-    (cd build-assets && sha256sum -c "${TARBALL}.sha256")
+    tmp="build-assets/${TARBALL}.part"
+    rm -f "${tmp}"
+    curl -fsSL -o "${tmp}" "https://static.rust-lang.org/dist/${TARBALL}"
+    if ! verify_rust "${tmp}"; then
+        rm -f "${tmp}"
+        echo "downloaded ${TARBALL} does not match the pinned checksum" >&2
+        exit 1
+    fi
+    mv "${tmp}" "build-assets/${TARBALL}"
 fi
 
 rm -rf "${BOOTC_DIR}"

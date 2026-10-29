@@ -64,9 +64,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: refs/heads/main
+          # workflow_run: build the ISO from the exact commit that built the
+          # image, not whatever main is now. dispatch/push keep main so an ISO
+          # for an existing digest can be rebuilt with current ISO tooling.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'refs/heads/main' }}
           persist-credentials: false
 
       - name: Install validation tools
@@ -103,9 +106,12 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: refs/heads/main
+          # workflow_run: build the ISO from the exact commit that built the
+          # image, not whatever main is now. dispatch/push keep main so an ISO
+          # for an existing digest can be rebuilt with current ISO tooling.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'refs/heads/main' }}
           persist-credentials: false
 
       - name: Resolve exact signed image
@@ -131,7 +137,7 @@ jobs:
             "${SOURCE_IMAGE}"
 
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@36e9a5af4eddb91fc11aec4c6f6f79b3cc0cb523 # main as of 2026-10-29
         with:
           preinstalled-runtimes: true
           android: true
@@ -253,7 +259,7 @@ jobs:
           ls -lh "${iso}" "${checksum}" "${bundle}"
 
       - name: Upload custom installer ISO
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rowyn-custom-installer-iso-${{ steps.source.outputs.source_sha }}-${{ github.run_id }}
           path: |
