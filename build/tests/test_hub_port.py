@@ -90,6 +90,11 @@ class HubPortContractTests(unittest.TestCase):
             self.assertIn(package, system)
         self.assertIn("systemctl enable sddm.service NetworkManager.service firewalld.service",
                       system)
+        # The backend pins /usr/bin/openconnect and /etc/vpnc/vpnc-script;
+        # Ubuntu lays both out differently, so the image bridges them with
+        # symlinks (the build.yml smoke checks assert the pinned paths).
+        self.assertIn("ln -s /usr/sbin/openconnect /usr/bin/openconnect", system)
+        self.assertIn("ln -s /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script", system)
 
     def test_desktop_entry_identity(self):
         entry = (ROOT / "shared/com.rowyn.hub.desktop").read_text()

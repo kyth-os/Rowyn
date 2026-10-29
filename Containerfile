@@ -140,6 +140,15 @@ COPY --from=hub-builder /rowyn-hub-shell /usr/bin/rowyn-hub-shell
 COPY shared/com.rowyn.hub.desktop /usr/share/applications/com.rowyn.hub.desktop
 COPY docs/assets/rowyn-logo.png /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
 
+# The VPN backend pins the Fedora paths /usr/bin/openconnect and
+# --script /etc/vpnc/vpnc-script (its own regression tests assert them);
+# Ubuntu ships the binary in /usr/sbin and the script in
+# /usr/share/vpnc-scripts. Bridge the layout with symlinks instead of
+# forking the pinned argv construction.
+RUN ln -s /usr/sbin/openconnect /usr/bin/openconnect && \
+    mkdir -p /etc/vpnc && \
+    ln -s /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script
+
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
 
