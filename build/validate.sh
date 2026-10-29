@@ -51,7 +51,6 @@ echo "[validate] free-disk-space inputs passed"
 
 test -s Containerfile || fail "Containerfile is missing or empty"
 test -s os-release || fail "os-release is missing or empty"
-test -s keys/spike.pub || fail "spike public key is missing"
 test -x build/custom-installer-iso.sh || fail "custom installer ISO script is missing or not executable"
 test -s .github/actions/setup-compressed-storage/action.yml \
     || fail "compressed Podman storage action is missing or empty"

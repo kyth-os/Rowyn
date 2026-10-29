@@ -2,7 +2,10 @@
 # Boot the Rowyn disk image in QEMU for gate testing.
 # Requires: qemu-system-x86_64 and OVMF UEFI firmware (apt: ovmf).
 # No /dev/kvm on the build VM -> TCG emulation (slow but valid).
-# SSH: ssh -p 2222 -i ~/.ssh/id_ed25519 rowyn@127.0.0.1 (spike user, key-only)
+# The payload ships no login user (the spike account was removed), so this
+# disk image boots to a login screen with no account to enter: use it for
+# boot/serial observation only. Interactive gate tests go through the
+# installer ISO, which creates the system's only account.
 # Serial console is logged to build/serial.log. Kill with: pkill -f bootable.img
 set -euo pipefail
 

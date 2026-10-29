@@ -125,7 +125,13 @@ jobs:
             grep -Fqx "NAME=\"Rowyn\"" /usr/lib/os-release
             grep -Fqx "ID=rowyn" /usr/lib/os-release
             grep -Fqx "ID_LIKE=\"ubuntu debian\"" /usr/lib/os-release
-            id rowyn
+            # No baked-in login users: neither the removed spike account
+            # nor the account from the Ubuntu base image may survive into
+            # the payload — the login screen must offer only the account
+            # the installer creates.
+            ! id rowyn
+            ! id ubuntu
+            ! grep -Eq "^(rowyn|ubuntu):" /etc/passwd
             if guidance=$(/usr/sbin/apt-get install rowyn-test-package 2>&1); then
               echo "host apt-get unexpectedly succeeded" >&2
               exit 1
@@ -154,8 +160,8 @@ jobs:
               defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults
               test "$(kreadconfig6 --file "$defaults" --group Wallpaper --key Image)" = RowynBlack
             done
-            test -s /etc/sudoers.d/90-rowyn-spike
-            test -s /usr/lib/tmpfiles.d/rowyn-spike.conf
+            test ! -e /etc/sudoers.d/90-rowyn-spike
+            test ! -e /usr/lib/tmpfiles.d/rowyn-spike.conf
             test -s /etc/NetworkManager/system-connections/rowyn-wired.nmconnection
             test -s /etc/NetworkManager/conf.d/99-rowyn-managed.conf
             test "$(readlink -f /etc/systemd/system/default.target)" = /usr/lib/systemd/system/graphical.target

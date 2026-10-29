@@ -4,8 +4,9 @@
 # the vendored scripts under shared/). Differences from upstream Bootcrew:
 #   - base is the latest Ubuntu release (26.10), not 25.10 "questing"
 #   - Rowyn identity in /usr/lib/os-release
-#   - a spike user provisioned the stateless way (passwd in /etc, home and
-#     SSH key materialized under /var by tmpfiles at first boot)
+#   - no baked-in login users: the base image's `ubuntu` account is
+#     removed, and the only interactive account on an installed system is
+#     the one the installer creates
 #
 # Build:  build/fetch-assets.sh        (one-time, needs network)
 #         sudo podman build -t rowyn:spike .   (fully offline)
@@ -77,6 +78,12 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,
   apt install -y btrfs-progs bubblewrap dosfstools e2fsprogs fdisk linux-firmware linux-image-generic netplan.io openssh-server systemd-resolved chrony skopeo podman crun sudo systemd systemd-boot* xfsprogs libostree-dev dracut && \
   cp /boot/vmlinuz-* "$(find /usr/lib/modules -maxdepth 1 -type d | tail -n 1)/vmlinuz" && \
   apt clean -y
+
+# The official Ubuntu base image ships an `ubuntu` login user (uid 1000).
+# An installed Rowyn system must offer only the account the installer
+# creates, so the baked-in account (and its home) goes away here, before
+# any layer that could come to depend on it.
+RUN userdel --remove ubuntu
 
 # --- KDE Plasma package layer -------------------------------------------------
 # Install packages that still need the distro's dpkg database before
@@ -167,28 +174,19 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
 
-# --- spike user --------------------------------------------------------------
-# /etc/passwd is committed by ostree; /var starts empty on install, so the
-# home directory and authorized_keys are created by tmpfiles on first boot.
-COPY keys/spike.pub /usr/share/rowyn/spike.pub
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    useradd --home-dir /var/home/rowyn --no-create-home --shell /bin/bash rowyn && \
-    /ctx/shared/kde-dark-defaults.sh --root / --user rowyn && \
-    usermod -aG sudo rowyn && \
-    mkdir -p /etc/sudoers.d && \
-    printf 'rowyn ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-rowyn-spike && \
-    chmod 0440 /etc/sudoers.d/90-rowyn-spike && \
-    printf 'd /var/home/rowyn 0700 rowyn rowyn -\nd /var/home/rowyn/.ssh 0700 rowyn rowyn -\nC /var/home/rowyn/.ssh/authorized_keys 0600 rowyn rowyn - /usr/share/rowyn/spike.pub\n' \
-        > /usr/lib/tmpfiles.d/rowyn-spike.conf
+# No login users are baked into the image. The KDE first-login defaults a
+# new account needs are already system-wide: kde-dark-defaults.sh --root /
+# above installs them into /etc/xdg (applies to every account) and
+# /etc/skel (the installer copies /etc/skel into the account it creates),
+# so the removed spike user's per-user tmpfiles bake has no equivalent
+# here — there is deliberately no per-user seeding for an account that
+# must not exist.
 
 # Desktop enablement:
-# - spike user gets a throwaway password (rowyn) so SDDM/console login works
-#   for local boot tests; SSH stays key-only. SPIKE ONLY — remove for release.
 # - NetworkManager owns networking on the desktop (plasma-nm expects it):
 #   a wildcard wired profile + an explicit "manage everything" drop-in,
 #   and systemd-networkd masked so it cannot race NM for the interface.
-RUN echo 'rowyn:rowyn' | chpasswd && \
-    mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d && \
+RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d && \
     printf '[connection]\nid=rowyn-wired\ntype=ethernet\nautoconnect=true\n\n[ethernet]\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
         > /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \

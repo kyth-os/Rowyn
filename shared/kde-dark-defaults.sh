@@ -149,7 +149,8 @@ if [[ -n "$user" ]]; then
             chown -R "$user:$user" "$config_root"
         fi
     else
-        # Run after rowyn-spike.conf, which creates /var/home/rowyn.
+        # Run after the tmpfiles entry that creates the user's home
+        # (tmpfiles.d ordering: zz- sorts last).
         tmpfiles=$(root_path /usr/lib/tmpfiles.d/zz-rowyn-kde-dark.conf)
         install -d "$(dirname "$tmpfiles")"
         : > "$tmpfiles"
