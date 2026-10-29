@@ -155,6 +155,13 @@ jobs:
             test -x /usr/bin/rowyn-bootc-guard
             test -x /usr/libexec/rowyn-finalize-staged
             test -s /etc/sudoers.d/rowyn-upgrade
+            test -s /usr/share/plymouth/themes/rowyn/rowyn.plymouth
+            test -s /usr/share/plymouth/themes/rowyn/rowyn.script
+            test -s /usr/share/plymouth/themes/rowyn/rowyn-logo.png
+            grep -Fx "Theme=rowyn" /etc/plymouth/plymouthd.conf
+            grep -Fq "\"splash\"" /usr/lib/bootc/kargs.d/99-rowyn-splash.toml
+            lsinitrd /usr/lib/modules/*/initramfs.img | grep -Fq "usr/share/plymouth/themes/rowyn/rowyn.script"
+            lsinitrd /usr/lib/modules/*/initramfs.img | grep -Fq "usr/share/plymouth/themes/rowyn/rowyn-logo.png"
             test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
             for theme in org.kde.breeze.desktop org.kde.breezedark.desktop; do
               defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults

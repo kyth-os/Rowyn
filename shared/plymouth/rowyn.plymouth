@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Rowyn
+Description=Rowyn boot splash — rowan berry mark, breathing glow on deep navy
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/rowyn
+ScriptFile=/usr/share/plymouth/themes/rowyn/rowyn.script

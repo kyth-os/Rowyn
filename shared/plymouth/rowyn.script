@@ -1,0 +1,75 @@
+# Rowyn Plymouth boot splash
+# Deep navy background, rowan berry mark pulsating (breathing glow effect).
+# Animation shape ported from Kyth's kyth.script: fade in, then breathe.
+
+# ── Background ────────────────────────────────────────────────────────────────
+# Deep navy matching the selected Rowyn logo art direction (the berry
+# mark's glow render sits on deep navy; the PNG itself is transparent).
+Window.SetBackgroundTopColor    (0.04, 0.05, 0.15);
+Window.SetBackgroundBottomColor (0.04, 0.05, 0.15);
+
+# ── Logo ──────────────────────────────────────────────────────────────────────
+logo.image = Image ("rowyn-logo.png");
+if (logo.image) {
+    logo.sprite = Sprite (logo.image);
+    logo.sprite.SetOpacity (0.0);
+} else {
+    logo.sprite = Sprite ();
+    logo.sprite.SetOpacity (0.0);
+}
+
+fun center_logo () {
+    if (logo.image) {
+        screen_w = Window.GetWidth ();
+        screen_h = Window.GetHeight ();
+
+        if (screen_w > 0) {
+            logo.sprite.SetX ((screen_w - logo.image.GetWidth ()) / 2);
+        }
+
+        if (screen_h > 0) {
+            logo.sprite.SetY ((screen_h - logo.image.GetHeight ()) / 2);
+        }
+    }
+}
+
+center_logo ();
+
+# ── Animation ─────────────────────────────────────────────────────────────────
+# Phase 1 (frames 0-39): fade in over ~0.8 s
+# Phase 2 (frame 40+):   pulse between 0.55 and 1.0, period ~2.5 s
+frame = 0;
+
+fun refresh_callback () {
+    frame++;
+    center_logo ();
+
+    if (frame < 40) {
+        logo.sprite.SetOpacity (frame * 0.025);
+    } else {
+        pulse = 0.775 + 0.225 * Math.Sin ((frame - 40) * 0.05);
+        logo.sprite.SetOpacity (pulse);
+    }
+}
+
+Plymouth.SetRefreshFunction (refresh_callback);
+
+# ── Message overlay (first-boot notice, etc.) ─────────────────────────────────
+msg_sprite = Sprite ();
+msg_sprite.SetOpacity (0.0);
+
+fun message_callback (text) {
+    if (text != "") {
+        img = Image.Text (text, 0.85, 0.86, 0.95, 1);
+        if (img) {
+            msg_sprite.SetImage (img);
+            msg_sprite.SetX (Window.GetWidth ()  / 2 - img.GetWidth ()  / 2);
+            msg_sprite.SetY (Window.GetHeight () * 0.68);
+        }
+        msg_sprite.SetOpacity (1.0);
+    } else {
+        msg_sprite.SetOpacity (0.0);
+    }
+}
+
+Plymouth.SetMessageFunction (message_callback);

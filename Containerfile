@@ -94,7 +94,7 @@ RUN apt-get update && \
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
-        network-manager pipewire wireplumber upower udisks2 \
+        network-manager pipewire wireplumber upower udisks2 plymouth \
         fonts-noto-core \
         libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 \
         openconnect vpnc-scripts ksshaskpass firewalld && \
@@ -108,6 +108,14 @@ RUN systemctl enable systemd-resolved ssh && \
     mkdir -p /etc/netplan && \
     printf 'network:\n  version: 2\n  renderer: NetworkManager\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml && \
     chmod 0600 /etc/netplan/90-default.yaml
+
+# Boot splash: the Rowyn Plymouth theme (pulsing berry mark on deep navy)
+# must be installed before the initramfs is generated — dracut's plymouth
+# module folds the daemon-configured theme into the initramfs, and
+# initramfs.sh fails the build if the theme is not inside it.
+COPY docs/assets/rowyn-logo.png /usr/share/plymouth/themes/rowyn/rowyn-logo.png
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/plymouth-theme.sh --root /
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
     --mount=type=bind,from=ctx,source=/,target=/ctx \

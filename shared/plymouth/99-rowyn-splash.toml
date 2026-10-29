@@ -1,0 +1,6 @@
+# Boot splash kernel arguments for installed Rowyn systems.
+# bootc merges /usr/lib/bootc/kargs.d/*.toml into every deployment it
+# installs or stages: `quiet` keeps the boot log off the screen and
+# `splash` is what actually lets Plymouth draw — without it the theme
+# below never appears, however complete the initramfs is.
+kargs = ["quiet", "splash"]
