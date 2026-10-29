@@ -21,6 +21,18 @@ provides its runtime stack — openconnect, vpnc-scripts, ksshaskpass (the
 askpass the backend fails closed without), and firewalld (the lockdown
 feature's one firewall-cmd call) — see the Containerfile.
 
+A final branding sweep rewrites every remaining upstream brand string
+in the tree — update status copy, service-layer error prompts, dialog
+text, exe-handler suggestion data, and the focus-session inhibit reason
+(with its matcher in the shared crate kept in step) — and rekeys the
+boot-health OS identity check in updates.rs to Rowyn's os-release ID
+(ID=rowyn; the upstream check keyed to ID=kythos would flag every Rowyn
+system unhealthy). The sweep is mechanical (counted replace-alls per
+file) so a new upstream string fails the port closed in the branding
+regression test instead of shipping under the wrong name. Provenance
+data that legitimately names KythOS (src/data/compat_games.json, whose
+notes record where a compatibility verdict came from) is not rewritten.
+
 Never executes upstream build scripts. The input checkout is read-only; git
 archive exports exactly the pinned objects.
 """
@@ -413,6 +425,146 @@ def port_source(root):
     vpn_section.write_text(text)
     changes.append("Vpn.tsx + VpnSection.tsx: Kyth Hub -> Rowyn Hub (2 strings)")
 
+    # --- Branding sweep: no upstream brand copy survives ------------------
+    # The passes above rebranded the files they touched, and strings in
+    # shared modules, data files, and untouched components slipped
+    # through — Patrick's installed-system screenshot caught the Updates
+    # page rendering "KythOS is up to date. No restart is needed." out of
+    # updateMessages.ts. Sweep the rest mechanically: counted
+    # replace-alls per file, each reported, with the regression test
+    # asserting zero survivors outside the one provenance allowlist
+    # entry (compat_games.json — see the module docstring).
+    sweep_notes = []
+
+    def sweep(relpath, pairs):
+        path = root / relpath
+        text = path.read_text()
+        notes = []
+        for old, new in pairs:
+            text, count = replace_all_counted(text, old, new)
+            notes.append(f"{old} x{count}")
+        path.write_text(text)
+        sweep_notes.append(f"{path.name}: " + ", ".join(notes))
+
+    web_src = "src/kyth-hub-web/src"
+    # Update status/error copy shared by the Updates and Apps pages;
+    # this file carries the exact sentence from the screenshot.
+    sweep(f"{web_src}/components/updateMessages.ts", (("KythOS", "Rowyn"),))
+    # Service-layer copy: the Secure Boot prompt, a comment, and the
+    # not-in-shell error family ("... from the installed Kyth Hub.").
+    sweep(f"{web_src}/services/liveData.ts",
+          (("KythOS", "Rowyn"), ("Kyth Hub", "Rowyn Hub")))
+    # Apps page leftovers the section anchors above did not cover: the
+    # footer heading, the Kali card copy, and the dev-environments copy.
+    # Recipe ids (setup-kyth-dev-box) are backend identifiers, not copy,
+    # and stay untouched.
+    store = web / "src/components/AppStoreSection.tsx"
+    text = store.read_text()
+    text, store_os = replace_all_counted(text, "KythOS", "Rowyn")
+    text, store_hub = replace_all_counted(text, "Kyth Hub", "Rowyn Hub")
+    text = replace_once(text, "Set up optional Kyth development, AI, and Android tooling",
+                        "Set up optional Rowyn development, AI, and Android tooling")
+    text = replace_once(text, 'label="Kyth developer box"', 'label="Rowyn developer box"')
+    store.write_text(text)
+    sweep_notes.append(f"AppStoreSection.tsx: KythOS x{store_os}, Kyth Hub x{store_hub}, dev copy x2")
+    # The exe-handler dialog is mounted by the shell itself (App.tsx
+    # imports it directly), so its copy is a kept surface even though it
+    # is not a page; its suggestion data ships the same branding.
+    sweep(f"{web_src}/components/ExeHandlerDialog.tsx",
+          (("KythOS", "Rowyn"), ("Kyth runs Windows software", "Rowyn runs Windows software")))
+    sweep("build_files/exe-handler-apps.json", (("KythOS", "Rowyn"),))
+    # The fallback note renders on kept sections (VPN among them) when a
+    # live reading has not arrived; it named the upstream probe unit.
+    live_card = web / "src/components/LiveSectionCard.tsx"
+    text = live_card.read_text()
+    text = replace_once(text, "kyth-probe.service fills this in on a real KythOS install.",
+                        "The probe service fills this in on a real Rowyn install.")
+    live_card.write_text(text)
+    sweep_notes.append("LiveSectionCard.tsx: probe fallback note")
+    # Work Setup is a kept Apps section (focus sessions); its copy pairs
+    # with the focus-session inhibit reason rebranded in main.rs below.
+    work_setup = web / "src/components/WorkSetupSection.tsx"
+    text = work_setup.read_text()
+    text = replace_once(text, "The focus timer ended, but Kyth",
+                        "The focus timer ended, but Rowyn")
+    text = replace_once(text, "Kyth keeps the PC awake", "Rowyn keeps the PC awake")
+    work_setup.write_text(text)
+    sweep_notes.append("WorkSetupSection.tsx: focus copy x2")
+    # Cut-surface components stay in the tree unreferenced; their copy
+    # takes the same name so the tree carries exactly one brand.
+    for relpath, pairs in (
+        (f"{web_src}/components/CompatibilitySection.tsx", (("KythOS", "Rowyn"),)),
+        (f"{web_src}/components/DevToolsWizard.tsx", (("KythOS", "Rowyn"),)),
+        (f"{web_src}/components/GamingSection.tsx", (("KythOS", "Rowyn"), ("Kyth", "Rowyn"))),
+        (f"{web_src}/components/MoveInOverview.tsx", (("KythOS", "Rowyn"),)),
+        (f"{web_src}/components/PerformanceSection.tsx", (("KythOS", "Rowyn"),)),
+        (f"{web_src}/components/PlayOverview.tsx", (("KythOS", "Rowyn"),)),
+    ):
+        sweep(relpath, pairs)
+    repair = web / "src/components/RepairSection.tsx"
+    text = repair.read_text()
+    text = replace_once(text, "Kyth does not choose or delete backup data for you.",
+                        "Rowyn does not choose or delete backup data for you.")
+    repair.write_text(text)
+    sweep_notes.append("RepairSection.tsx: backup copy")
+    theme = web / "src/styles/theme.css"
+    text = theme.read_text()
+    text = replace_once(text, "KythOS Hub", "Rowyn Hub")
+    theme.write_text(text)
+    sweep_notes.append("theme.css: header comment")
+
+    # Shell (Rust): the focus-session inhibit reason is user-visible in
+    # systemd-inhibit listings; the exe-handler suggestions and the
+    # config-path error render in the dialog flow. The shared crate's
+    # stale-inhibit reaper matches the reason literally, so it is swept
+    # in the same pass to keep the pair consistent.
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text, main_os = replace_all_counted(text, "KythOS", "Rowyn")
+    text, main_hub = replace_all_counted(text, "Kyth Hub", "Rowyn Hub")
+    text = replace_once(text, '"invalid Kyth configuration path"',
+                        '"invalid Rowyn configuration path"')
+    main_rs.write_text(text)
+    sweep_notes.append(f"main.rs: KythOS x{main_os}, Kyth Hub x{main_hub}, config-path error")
+    process_rs = root / "src/kyth-shared-rs/src/system/process.rs"
+    text = process_rs.read_text()
+    text, reap_count = replace_all_counted(
+        text, "KythOS Focus Session", "Rowyn Focus Session")
+    process_rs.write_text(text)
+    sweep_notes.append(f"process.rs: focus-session matcher x{reap_count} (pairs with main.rs)")
+
+    # The boot-health fallback in updates.rs keyed the OS identity check
+    # to upstream's os-release ID; on Rowyn (ID=rowyn) it appended a
+    # spurious failure and reported the system unhealthy. Rekey it.
+    updates = crate / "src/commands/updates.rs"
+    text = updates.read_text()
+    text = replace_once(
+        text,
+        '== "ID=kythos" || line.trim() == "ID=\\"kythos\\""',
+        '== "ID=rowyn" || line.trim() == "ID=\\"rowyn\\""')
+    text = replace_once(
+        text,
+        '"KythOS identity: /usr/lib/os-release is not ID=kythos"',
+        '"Rowyn identity: /usr/lib/os-release is not ID=rowyn"')
+    updates.write_text(text)
+    sweep_notes.append("updates.rs: boot-health identity rekeyed ID=kythos -> ID=rowyn")
+
+    # Shared-crate display strings the shell surfaces: the boot-health
+    # quarantine summary (boot menu / status) and a desktop-stack check
+    # detail shown in health views.
+    boot_health = root / "src/kyth-shared-rs/src/system/boot_health.rs"
+    text = boot_health.read_text()
+    text = replace_once(text, "KythOS update quarantined after",
+                        "Rowyn update quarantined after")
+    boot_health.write_text(text)
+    desktop_stack = root / "src/kyth-shared-rs/src/system/desktop_stack.rs"
+    text = desktop_stack.read_text()
+    text = replace_once(text, "KythOS ships Plasma Wayland only",
+                        "Rowyn ships Plasma Wayland only")
+    desktop_stack.write_text(text)
+    sweep_notes.append("boot_health.rs + desktop_stack.rs: display strings")
+    changes.append("branding sweep: " + "; ".join(sweep_notes))
+
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
@@ -422,6 +574,10 @@ def port_source(root):
         "filed against kyth-os/Rowyn,\n"
         "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"
         "preset path to /etc/rowyn/network.toml.\n"
+        "A branding sweep rewrites all remaining KythOS/Kyth Hub display copy to Rowyn\n"
+        "(update status/error text, service prompts, dialog copy, exe-handler suggestion\n"
+        "data, the focus-session inhibit reason and its shared-crate matcher) and rekeys\n"
+        "the boot-health OS identity check to ID=rowyn.\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")
     return changes
 

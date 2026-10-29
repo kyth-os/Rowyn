@@ -140,6 +140,25 @@ class HubPortContractTests(unittest.TestCase):
                       "test -s /etc/sudoers.d/rowyn-upgrade"):
             self.assertIn(smoke, workflow)
 
+    def test_port_script_carries_branding_sweep(self):
+        script = (ROOT / "build/ubuntu-hub-source.py").read_text()
+        # The sweep is what keeps upstream brand copy out of the shipped
+        # Hub (an installed-system screenshot caught "KythOS is up to
+        # date" on the Updates page). Its anchors must stay in the port:
+        # the status-copy module, the service layer, the exe-handler
+        # suggestion data, and the focus-session inhibit pair.
+        for anchor in ("components/updateMessages.ts",
+                       "services/liveData.ts",
+                       "build_files/exe-handler-apps.json",
+                       "KythOS Focus Session", "Rowyn Focus Session",
+                       "Rowyn update quarantined after",
+                       "Rowyn ships Plasma Wayland only"):
+            self.assertIn(anchor, script)
+        # The boot-health identity check is rekeyed to Rowyn's os-release
+        # ID; keyed to upstream's, it flags every Rowyn system unhealthy.
+        self.assertIn("ID=rowyn", script)
+        self.assertIn("Rowyn identity: /usr/lib/os-release is not ID=rowyn", script)
+
     def test_desktop_entry_identity(self):
         entry = (ROOT / "shared/com.rowyn.hub.desktop").read_text()
         for line in ("Name=Rowyn Hub", "Exec=/usr/bin/rowyn-hub-shell",
@@ -310,6 +329,64 @@ class PinnedHubSourceTests(unittest.TestCase):
                     hub.export_source(repo, root)
             self.assertEqual(*snapshots)
         self.assertEqual(original, subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]))
+
+    def test_no_upstream_branding_survives_port(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-brand-") as temp:
+            root = Path(temp) / "export"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            web = root / "src/kyth-hub-web"
+            crate = web / "src-tauri"
+
+            # Frontend: no "KythOS" anywhere under src/ except the one
+            # allowlisted provenance file. compat_games.json is data for
+            # the cut Play surfaces whose notes record that a verdict
+            # came from KythOS validation; rewriting it would falsify
+            # the record, so it is the deliberate exception — and the
+            # set equality below fails if any other file joins it or if
+            # the exception itself disappears upstream.
+            allowlist = {"src/data/compat_games.json"}
+            survivors = {
+                str(p.relative_to(web))
+                for p in (web / "src").rglob("*")
+                if p.is_file() and p.suffix in (".ts", ".tsx", ".css", ".json")
+                and "KythOS" in p.read_text(errors="ignore")
+            }
+            self.assertEqual(survivors, allowlist)
+            self.assertIn("KythOS", (web / "src/data/compat_games.json").read_text())
+
+            # The exact sentence from Patrick's screenshot, rebranded.
+            messages = (web / "src/components/updateMessages.ts").read_text()
+            self.assertIn("Rowyn is up to date. No restart is needed.", messages)
+            self.assertNotIn("KythOS", messages)
+            # Service-layer prompts and the not-in-shell error family.
+            live_data = (web / "src/services/liveData.ts").read_text()
+            self.assertNotIn("KythOS", live_data)
+            self.assertNotIn("Kyth Hub", live_data)
+            # Exe-handler suggestion data ships in the shell.
+            self.assertNotIn(
+                "KythOS", (root / "build_files/exe-handler-apps.json").read_text())
+
+            # Rust shell: no upstream brand string survives anywhere in
+            # the crate, the identity check keys on Rowyn's os-release
+            # ID, and the focus-session inhibit reason took the new name.
+            for path in (crate / "src").rglob("*.rs"):
+                self.assertNotIn("KythOS", path.read_text(),
+                                 f"KythOS survived in {path.name}")
+            updates = (crate / "src/commands/updates.rs").read_text()
+            self.assertIn("ID=rowyn", updates)
+            self.assertNotIn("ID=kythos", updates)
+            main = (crate / "src/main.rs").read_text()
+            self.assertIn('"--why=Rowyn Focus Session"', main)
+
+            # Shared-crate modules whose display strings the shell
+            # surfaces (and the inhibit reaper that must match the
+            # reason main.rs sets) are clean and consistent.
+            shared = root / "src/kyth-shared-rs/src/system"
+            for name in ("process.rs", "boot_health.rs", "desktop_stack.rs"):
+                self.assertNotIn("KythOS", (shared / name).read_text(), name)
+            self.assertIn("Rowyn Focus Session", (shared / "process.rs").read_text())
 
 
 if __name__ == "__main__":
