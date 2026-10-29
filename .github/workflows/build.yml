@@ -234,6 +234,34 @@ jobs:
             grep -Fq "KERNEL==\"ntsync\"" /usr/lib/udev/rules.d/70-rowyn-ntsync.rules
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/system.conf.d/90-rowyn-limits.conf
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/user.conf.d/90-rowyn-limits.conf
+            test "$(ls /usr/lib/modules | wc -l)" = 1
+            kver=$(ls /usr/lib/modules)
+            test -s "/usr/lib/modules/${kver}/kernel/nvidia-615-open/nvidia.ko"
+            test -s "/usr/lib/modules/${kver}/kernel/nvidia-615-open/nvidia-drm.ko"
+            test -e "/usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.$(modinfo -k "${kver}" -F version nvidia)"
+            test -x /usr/libexec/rowyn-gpu-select
+            test -s /usr/lib/systemd/system/rowyn-gpu-select.service
+            test -e /etc/systemd/system/sysinit.target.wants/rowyn-gpu-select.service
+            test -s /usr/lib/rowyn/nvidia-open-devids
+            test -s /usr/lib/modprobe.d/rowyn-nvidia.conf
+            grep -Fqx "options nvidia-drm modeset=1 fbdev=1" /usr/lib/modprobe.d/rowyn-nvidia.conf
+            test -s /usr/lib/systemd/system/nvidia-suspend.service.d/10-rowyn-nvidia-only.conf
+            test -x /usr/bin/nvidia-smi
+            test -s /usr/share/vulkan/icd.d/nvidia_icd.json
+            test -s /usr/share/egl/egl_external_platform.d/10_nvidia_wayland.json
+            test -s /usr/lib/x86_64-linux-gnu/nvidia/xorg/nvidia_drv.so
+            ! test -e /usr/sbin/dkms
+            ! ls -d /usr/src/nvidia-*
+            if grep -rEs "^[[:space:]]*(blacklist[[:space:]]+nouveau|alias[[:space:]]+nouveau[[:space:]]+off)" /usr/lib/modprobe.d /etc/modprobe.d; then
+              echo "Static nouveau blacklist found; the GPU driver is chosen at boot" >&2
+              exit 1
+            fi
+            lsinitrd "/usr/lib/modules/${kver}/initramfs.img" > /tmp/rowyn-initrd-listing
+            test -s /tmp/rowyn-initrd-listing
+            if grep -E "(^|[ /])(nouveau|nvidia[A-Za-z0-9_-]*)[.]ko" /tmp/rowyn-initrd-listing; then
+              echo "GPU driver module found in the initramfs" >&2
+              exit 1
+            fi
             test "$(readlink /etc/systemd/system/systemd-networkd.service)" = /dev/null
             podman --version
             crun --version

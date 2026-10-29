@@ -111,7 +111,21 @@ RUN userdel --remove ubuntu
 # plasma-session-x11 keep the X11 session as fallback;
 # power-profiles-daemon, systemd-zram-generator, gamemode and
 # steam-devices (multiverse) are host plumbing for shared/performance-defaults.sh.
-RUN apt-get update && \
+#
+# NVIDIA group (last install): Canonical's prebuilt, signed open kernel
+# modules (linux-modules-nvidia-615-open-generic pulls the module package
+# for exactly the kernel linux-image-generic installed, so no DKMS and
+# nothing compiles on the user's machine) plus the matching userspace. The
+# nvidia-driver-615-open metapackage is deliberately not used: it hard-depends
+# on nvidia-dkms-615-open and dkms. Wayland (libnvidia-egl-wayland1 via
+# libnvidia-gl) and the X11 fallback session (xserver-xorg-video-nvidia) are
+# covered. Whether nvidia or nouveau binds is decided at every boot by
+# shared/gpu-select.sh. The supported-GPU list the decision needs lives under
+# /usr/share/doc, which the base image's dpkg excludes drop, hence the
+# path-include (removed again once the ID list is generated below).
+RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.json\n' \
+        > /etc/dpkg/dpkg.cfg.d/rowyn-nvidia-gpus && \
+    apt-get update && \
     apt-get install -y \
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
@@ -142,8 +156,39 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        linux-modules-nvidia-615-open-generic \
+        nvidia-kernel-common-615 libnvidia-gl-615 libnvidia-compute-615 \
+        libnvidia-extra-615 libnvidia-cfg1-615 libnvidia-decode-615 \
+        libnvidia-encode-615 libnvidia-fbc1-615 nvidia-utils-615 \
+        nvidia-compute-utils-615 xserver-xorg-video-nvidia-615 && \
     apt-get purge -y plasma-discover-backend-snap snapd plasma-welcome && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
+
+# NVIDIA build gate. The image must carry exactly one kernel and the
+# Canonical-signed nvidia modules built for it; a mismatch (the archive
+# publishing a new kernel before its nvidia modules) fails the build here
+# instead of shipping an image whose NVIDIA GPUs silently fall back to
+# nouveau. depmod runs explicitly because the module package's own postinst
+# cannot (no /boot/System.map in a layered build). The supported-device list
+# is flattened from the driver's supported-gpus.json for rowyn-gpu-select.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    set -eu; \
+    test "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1; \
+    kver="$(basename "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d)")"; \
+    for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do \
+        test -s "/usr/lib/modules/${kver}/kernel/nvidia-615-open/${m}.ko"; \
+    done; \
+    depmod -a "${kver}"; \
+    modinfo -k "${kver}" nvidia | grep -E '^(filename|version):'; \
+    test "$(modinfo -k "${kver}" -F version nvidia)" = "$(dpkg-query -W -f='${source:Upstream-Version}' nvidia-kernel-common-615)"; \
+    modinfo -k "${kver}" -F signer nvidia | grep -q .; \
+    python3 -I /ctx/shared/nvidia-open-devids.py \
+        /usr/share/doc/nvidia-kernel-common-615/supported-gpus.json \
+        /usr/lib/rowyn/nvidia-open-devids; \
+    test "$(grep -vc '^#' /usr/lib/rowyn/nvidia-open-devids)" -gt 200; \
+    rm -f /etc/dpkg/dpkg.cfg.d/rowyn-nvidia-gpus
 
 # Canonical timezone state: the image ships exactly what
 # systemd-timedated itself would write for UTC — an absolute
@@ -223,6 +268,21 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # vendor-dir files under /usr/lib, so /etc overrides win.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/performance-defaults.sh --root /
+
+# GPU driver selection. One image serves every machine: the nvidia open
+# modules and nouveau are both installed, neither is in the initramfs, and
+# rowyn-gpu-select (sysinit, before udev coldplug) writes /run/modprobe.d
+# so a supported NVIDIA GPU gets nvidia and an older one gets nouveau.
+# nvidia-defaults.sh ships the static module options, removes the packages'
+# static nouveau blacklist, and gates the NVIDIA sleep units on the driver
+# actually being loaded; the sleep units themselves are enabled by the
+# packages' postinst and re-enabled here so the build does not depend on it.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/nvidia-defaults.sh --root / && \
+    install -Dm755 /ctx/shared/gpu-select.sh /usr/libexec/rowyn-gpu-select && \
+    install -Dm644 /ctx/shared/rowyn-gpu-select.service /usr/lib/systemd/system/rowyn-gpu-select.service && \
+    systemctl enable rowyn-gpu-select.service nvidia-suspend.service \
+        nvidia-resume.service nvidia-hibernate.service
 
 # --- Rowyn Hub ---------------------------------------------------------------
 # System hub (Dashboard, Apps, Updates, VPN) compiled by the hub-builder

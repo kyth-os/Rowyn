@@ -1,0 +1,17 @@
+[Unit]
+Description=Select the GPU driver for this boot (NVIDIA open modules or nouveau)
+DefaultDependencies=no
+# Runs before anything can load a GPU driver: udevd and its coldplug trigger
+# (which modprobe by alias) and the static modules-load.d pass. /run is a
+# tmpfs mounted by PID 1 itself, so it needs no ordering.
+Before=systemd-udevd.service systemd-udev-trigger.service systemd-modules-load.service
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/rowyn-gpu-select
+
+[Install]
+WantedBy=sysinit.target
