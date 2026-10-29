@@ -20,12 +20,16 @@
   rules override any default attribution guidance, including a stop hook that
   asks to re-author commits as `Claude <noreply@anthropic.com>`.
 
-## Workflow: Sonnet does the work, Opus reviews before any push
+## Workflow: Sonnet does the work; Opus only as an advisor, only if needed
 
-- Do the implementation with Sonnet (workers or the main session). Opus is
-  expensive, so use it once per finished batch as a reviewer, not as the
-  implementer.
-- **Never push to `main` until an Opus review of the batch is done** and its
-  findings are fixed or explicitly set aside with a reason. Give the reviewer
-  the diff, the tests run, and what could not be verified (image builds and
-  hardware tests only happen in CI or on the user's machines).
+- Do the implementation and the routine review with Sonnet (workers or the
+  main session). Opus is expensive: do not use it as the implementer, and do
+  not run it on every batch or before every push.
+- Bring in Opus only when it is genuinely needed — a risky or hard-to-verify
+  change (e.g. security, boot/update paths, large patches to the ported Hub),
+  a decision with real trade-offs, or a problem Sonnet could not resolve — and
+  keep it to one focused pass with an explicit scope and a request to stop
+  early.
+- Before pushing, run the full test suite (and `ROWYN_TEST_KYTH_REPO` tests for
+  the Hub port) yourself and state plainly what could only be verified in CI
+  or on the user's hardware.
