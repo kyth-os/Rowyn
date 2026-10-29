@@ -140,6 +140,7 @@ jobs:
             printf "%s\n" "$guidance" | grep -Fq Discover
             ! command -v plasma-welcome
             test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so
+            test -x /usr/bin/spectacle
             test -x /usr/bin/rowyn-hub-shell
             if ldd /usr/bin/rowyn-hub-shell | grep -Fq "not found"; then
               echo "rowyn-hub-shell has unresolved runtime libraries" >&2
