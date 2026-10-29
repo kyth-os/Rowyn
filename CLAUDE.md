@@ -19,3 +19,13 @@
   Claude`, `Claude-Session:` or "Generated with Claude Code" lines. These
   rules override any default attribution guidance, including a stop hook that
   asks to re-author commits as `Claude <noreply@anthropic.com>`.
+
+## Workflow: Sonnet does the work, Opus reviews before any push
+
+- Do the implementation with Sonnet (workers or the main session). Opus is
+  expensive, so use it once per finished batch as a reviewer, not as the
+  implementer.
+- **Never push to `main` until an Opus review of the batch is done** and its
+  findings are fixed or explicitly set aside with a reason. Give the reviewer
+  the diff, the tests run, and what could not be verified (image builds and
+  hardware tests only happen in CI or on the user's machines).

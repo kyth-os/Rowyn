@@ -69,6 +69,23 @@ def replace_all_counted(text, old, new):
     return text.replace(old, new), count
 
 
+def cut_between(text, start, end):
+    """Delete [start, end) — start inclusive, end exclusive — failing closed.
+
+    Both anchors must occur exactly once and in order, so a cut that spans a
+    large JSX/Rust block cannot silently widen or vanish when upstream moves.
+    """
+    if text.count(start) != 1:
+        raise ValueError(f"expected exactly one cut start anchor: {start[:100]!r}")
+    if text.count(end) != 1:
+        raise ValueError(f"expected exactly one cut end anchor: {end[:100]!r}")
+    begin = text.index(start)
+    finish = text.index(end)
+    if finish <= begin:
+        raise ValueError(f"cut end anchor precedes its start: {start[:60]!r} .. {end[:60]!r}")
+    return text[:begin] + text[finish:]
+
+
 def export_source(repo, destination):
     actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", PIN + "^{commit}"], text=True).strip()
     if actual != PIN:
@@ -597,6 +614,605 @@ def port_source(root):
     desktop_stack.write_text(text)
     sweep_notes.append("boot_health.rs + desktop_stack.rs: display strings")
     changes.append("branding sweep: " + "; ".join(sweep_notes))
+
+    # ======================================================================
+    # Audit fixes for the kept pages (Dashboard, Apps, Updates, VPN).
+    # Every patch below is anchored and fails the build if upstream drifts.
+    # ======================================================================
+    audit_notes = []
+
+    # --- B3: no `just` recipe buttons ---------------------------------------
+    # Every RecipeButton runs /usr/bin/just against /usr/share/ublue-os/
+    # justfile; Rowyn ships neither and the recipes are Fedora-only. The
+    # buttons are cut from the kept pages (the Rust run_hub_action command
+    # stays registered but has no caller; RecipeButton stays exported for
+    # the unreferenced cut pages). The Flatpak-based host-tools grid and the
+    # Kali card do not use just and stay.
+    store = web / "src/components/AppStoreSection.tsx"
+    text = store.read_text()
+    text = replace_once(
+        text,
+        'import { ActionStatus, ProgressRing, RecipeButton, useSectionAction } from "./SectionActions";',
+        'import { ActionStatus, ProgressRing, useSectionAction } from "./SectionActions";')
+    text = cut_between(
+        text,
+        '<div className="app-special-card app-dev-card">',
+        "</section>\n    </div> : <SectionFallbackNote")
+    text = cut_between(
+        text,
+        '<p className="app-subsection-copy">More Rowyn applications</p>',
+        "<ActionStatus status={status} /></div>\n  </LiveSectionCard>")
+    store.write_text(text)
+
+    work_setup = web / "src/components/WorkSetupSection.tsx"
+    text = work_setup.read_text()
+    text = replace_once(
+        text,
+        'import { ActionButton, ActionStatus, RecipeButton, useSectionAction } from "./SectionActions";',
+        'import { ActionButton, ActionStatus, useSectionAction } from "./SectionActions";')
+    text = replace_once(
+        text,
+        '          <RecipeButton recipe="install-ms-fonts" label="Install Office fonts" busy={busy} run={run} runCancel={runCancel} />\n'
+        '          <RecipeButton recipe="setup-printer" label="Set up a printer" busy={busy} run={run} runCancel={runCancel} />\n',
+        "")
+    text = replace_once(
+        text, '"Microsoft-compatible fonts support office documents."',
+        '"Metric-compatible fonts (Liberation) keep Office documents laid out correctly."')
+    work_setup.write_text(text)
+
+    vpn_section = web / "src/components/VpnSection.tsx"
+    text = vpn_section.read_text()
+    text = replace_once(
+        text,
+        'import { ActionButton, ActionStatus, ProgressRing, RecipeButton, useSectionAction } from "./SectionActions";',
+        'import { ActionButton, ActionStatus, ProgressRing, useSectionAction } from "./SectionActions";')
+    text = replace_once(
+        text,
+        '          <RecipeButton recipe="setup-tailscale" label="Set up Tailscale" busy={busy} run={run} runCancel={runCancel} />\n',
+        "")
+    vpn_section.write_text(text)
+    audit_notes.append(
+        "B3: cut 12 just RecipeButtons (AppStore dev card x5 + footer x3, Work Setup x2, VPN x1) and their imports")
+
+    # --- D2: no Guardian surface ---------------------------------------------
+    # kyth-guardian is not shipped and ~/.local/state/kyth/guardian.json
+    # never exists, so the tile read "Healthy" from nothing. Cut the
+    # Dashboard tile + history card (with their fetch plumbing; tsc rejects
+    # unused locals) and the Topbar bell, whose only source was Guardian.
+    dashboard = web / "src/pages/Dashboard.tsx"
+    text = dashboard.read_text()
+    text = replace_once(text, 'import type { GuardianEvent } from "../data/dashboardTypes";\n', "")
+    text = replace_once(text, 'import { GuardianHistoryCard } from "../components/GuardianHistoryCard";\n', "")
+    text = replace_once(
+        text,
+        "  fetchGuardianSnapshot,\n  dismissGuardianRecommendation,\n  invokeGuardianExecute,\n", "")
+    text = replace_once(
+        text,
+        "  relativeTime,\n  type BootRuntimeCheck,\n  type GuardianSnapshot,\n",
+        "  type BootRuntimeCheck,\n")
+    text = replace_once(
+        text, "  const [guardian, setGuardian] = useState<GuardianSnapshot | null>(null);\n", "")
+    text = replace_once(
+        text,
+        "const [nextGuardian, nextChannel, nextGpu, nextStorage, nextUser, nextBoot, nextRecovery] = await Promise.all([\n"
+        "        fetchGuardianSnapshot(), fetchUpdateChannel(),",
+        "const [nextChannel, nextGpu, nextStorage, nextUser, nextBoot, nextRecovery] = await Promise.all([\n"
+        "        fetchUpdateChannel(),")
+    text = replace_once(text, "      setGuardian(nextGuardian);\n", "")
+    text = replace_once(
+        text,
+        "const hasInitialReadings = nextGuardian !== null || nextBoot !== null",
+        "const hasInitialReadings = nextBoot !== null")
+    text = replace_once(
+        text,
+        "    // The 60 s refresh re-reads every tile, not just Guardian — the other\n"
+        "    // seven readings used to freeze at their mount-time values for the\n"
+        "    // page's whole life. A failed re-read keeps the last good value: one\n"
+        "    // transient failure must not blank a tile that was reading fine (the\n"
+        "    // Guardian-only version of this poll did exactly that).\n",
+        "    // The 60 s refresh re-reads every tile. A failed re-read keeps the\n"
+        "    // last good value: one transient failure must not blank a tile that\n"
+        "    // was reading fine.\n")
+    text = replace_once(
+        text,
+        "        fetchGuardianSnapshot(), fetchUpdateChannel(), fetchGpuName(), fetchStorageFree(),\n"
+        "        fetchUserName(), fetchBootRuntimeChecks(), fetchRecoveryStatus(),\n"
+        "      ]).then(([nextGuardian, nextChannel,",
+        "        fetchUpdateChannel(), fetchGpuName(), fetchStorageFree(),\n"
+        "        fetchUserName(), fetchBootRuntimeChecks(), fetchRecoveryStatus(),\n"
+        "      ]).then(([nextChannel,")
+    text = replace_once(text, "        setGuardian((prev) => nextGuardian ?? prev);\n", "")
+    text = cut_between(text, "  const recentGuardianHistory = ", "  const hasReadings = ")
+    text = replace_once(
+        text,
+        "const hasReadings = guardian !== null || bootChecks !== null",
+        "const hasReadings = bootChecks !== null")
+    text = replace_once(
+        text,
+        "  const guardianGood = guardian === null ? null : guardian.pendingCount === 0;\n", "")
+    text = cut_between(text, "  const guardianLabel = ", "  const dashboardLabel = ")
+    text = replace_once(text, '{guardianGood === false || healthGood === false ? "Needs attention" : dashboardLabel}',
+                        '{healthGood === false ? "Needs attention" : dashboardLabel}')
+    text = replace_once(
+        text,
+        '          <HomeCard icon="✓" label="Guardian" value={guardianLabel} detail={guardianDetail} good={guardianGood} pendingLabel="PENDING" />\n',
+        "")
+    text = cut_between(text, '      <div className="home-content-heading">', "    </div>\n  );\n}\n")
+    dashboard.write_text(text)
+
+    topbar = web / "src/components/Topbar.tsx"
+    text = topbar.read_text()
+    text = replace_once(text, 'import { IconSearch, IconBell } from "./icons";',
+                        'import { IconSearch } from "./icons";')
+    text = replace_once(text, 'import { fetchGuardianSnapshot } from "../services/liveData";\n', "")
+    text = cut_between(text, "  // The bell shipped with a permanently-lit unread dot and no source",
+                       "  const results: SearchResult[] = open")
+    text = cut_between(text, "  // Refetch on an interval: a one-shot fetch at shell mount would show",
+                       "  useEffect(() => {\n    const onPointerDown")
+    text = cut_between(text, '        <button\n          className="glass icon-button"',
+                       "      </div>\n    </header>")
+    topbar.write_text(text)
+    audit_notes.append(
+        "D2: Dashboard Guardian tile/history card + fetch plumbing and Topbar Guardian bell cut "
+        "(HeroCard is unreferenced upstream; Sidebar/search have no Guardian entry)")
+
+    # --- D3: no release notes / update history; "stable" channel name -------
+    # The channel is `stable` and kyth-os/Rowyn has no GitHub releases, so the
+    # release-notes block and the Update history card were always empty.
+    # Cut both (state, effects, helpers, imports go with them) and map the
+    # raw channel for display. No network call is added.
+    overview = web / "src/components/UpdatesOverview.tsx"
+    text = overview.read_text()
+    text = replace_once(text, 'import { ExternalLink } from "./ExternalLink";\n', "")
+    text = replace_once(
+        text, "  fetchUpdateReleaseHistory,\n  fetchUpdateReleaseSummary,\n", "")
+    text = replace_once(
+        text, "  type UpdateHistoryEntry,\n  type UpdateReleaseSummary,\n", "")
+    text = cut_between(text, "const RELEASE_SUMMARY_RETRY_DELAY_MS", "function updatePhaseIndex")
+    text = cut_between(
+        text, "  const [releaseSummary, setReleaseSummary]",
+        "  // The update job (if any) that was already in flight when this page")
+    text = cut_between(
+        text, "  const updateDigest = updateStatus?.remote_digest ?? null;\n",
+        '  // "blocked" (e.g. a quarantined update held back for safety) and "busy"\n')
+    text = cut_between(
+        text, "      {(releaseSummary || releaseSummaryLoading || releaseSummaryUnavailable) && (",
+        '      <div className="updates-actions-card updates-primary-actions">')
+    text = cut_between(
+        text, '      <section className="updates-history-card"',
+        '      <details className="updates-details">')
+    overview.write_text(text)
+
+    live_data = web / "src/services/liveData.ts"
+    text = live_data.read_text()
+    text = replace_once(text, '  latest: "Stable (latest)",\n',
+                        '  stable: "Stable",\n  latest: "Stable (latest)",\n')
+    live_data.write_text(text)
+    audit_notes.append(
+        "D3: release-notes block + Update history card cut from UpdatesOverview; "
+        "CHANNEL_DISPLAY maps stable -> Stable")
+
+    # --- B2: system Flatpak update/uninstall without the Kyth daemon ---------
+    # commands::privilege::flatpak_update / flatpak_uninstall talk to
+    # /run/kyth/privileged.sock, a root daemon Rowyn does not ship. The
+    # system phase now runs /usr/bin/flatpak --system as the user and relies
+    # on Flatpak's own polkit-authorised system helper (flatpak 1.18.4 from
+    # Ubuntu stonking ships org.freedesktop.Flatpak.policy + a rules.d file:
+    # app-update is allow_active=yes, and app-uninstall is YES for an active
+    # local member of the sudo group, auth_admin_keep otherwise). Note that
+    # `-y` and `--noninteractive` both disable *interactive* polkit
+    # authorisation, and without a TTY Flatpak cannot ask its yes/no
+    # question, so a non-sudo user's uninstall is denied (not prompted) and
+    # reported as such.
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "            privileged_flatpak_uninstall(&app_id).map(|detail| (true, detail))\n",
+        "            system_flatpak_uninstall(&app_id, &cancel).map(|detail| (true, detail))\n")
+    text = replace_once(
+        text,
+        "fn privileged_flatpak_uninstall(app_id: &str) -> Result<String, String> {\n"
+        "    commands::privilege::flatpak_uninstall(app_id)\n"
+        "}\n",
+        r"""/// Fixed argv for the system-scope Flatpak update. Rowyn ships no root
+/// daemon: `flatpak` runs as the user and the system installation is
+/// changed by Flatpak's own polkit-authorised system helper. `-y` and
+/// `--noninteractive` also turn off interactive polkit authorisation (and
+/// Flatpak could not ask its yes/no question without a TTY anyway), so only
+/// operations polkit allows without a prompt succeed: updates for an active
+/// local session, and removals for an active local member of the sudo group.
+fn system_flatpak_update_args() -> Vec<String> {
+    ["update", "--system", "--noninteractive", "-y"]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect()
+}
+
+/// Fixed argv for removing one system-scope app. The id is validated here
+/// again so this builder is safe on its own, and follows `--` so it can
+/// never be read as an option.
+fn system_flatpak_uninstall_args(app_id: &str) -> Result<Vec<String>, String> {
+    commands::privilege::validate_flatpak_id(app_id)?;
+    Ok(["uninstall", "--system", "--noninteractive", "-y", "--", app_id]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect())
+}
+
+/// Turn a failed system-scope Flatpak run into text the user can act on.
+/// polkit refusing the (non-interactive) request surfaces as a D-Bus
+/// "... not allowed for user" error from the system helper.
+fn system_flatpak_failure(stderr: &str, removing: bool) -> String {
+    let lower = stderr.to_lowercase();
+    if lower.contains("not allowed for user")
+        || lower.contains("not authorized")
+        || lower.contains("authorization")
+        || lower.contains("authentication is required")
+    {
+        return if removing {
+            "Removing a system-wide app needs an administrator. Sign in as an administrator \
+             (a member of the sudo group) or ask one to remove it."
+                .to_string()
+        } else {
+            "System-wide app updates need an administrator. Sign in as an administrator \
+             (a member of the sudo group) or ask one to run the update."
+                .to_string()
+        };
+    }
+    let detail = stderr.trim();
+    if detail.is_empty() {
+        "Flatpak failed without reporting a reason.".to_string()
+    } else {
+        detail.to_string()
+    }
+}
+
+/// Run `flatpak --system ...` as the user: bounded by the Flatpak transfer
+/// tier and killed within one poll tick when the job's cancel flag is set.
+fn run_system_flatpak(args: &[String], removing: bool, cancel: &AtomicBool) -> Result<(), String> {
+    let mut command = Command::new("/usr/bin/flatpak");
+    command.args(args).stdin(std::process::Stdio::null());
+    match kyth_shared::system::process::run_bounded_command_cancel(
+        command,
+        timeout_for(JobTimeoutClass::FlatpakTransfer),
+        cancel,
+    ) {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(system_flatpak_failure(
+            &commands::process::bounded_text(&output.stderr),
+            removing,
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(if removing {
+            "Removing the app took too long and was stopped.".to_string()
+        } else {
+            "Updating system-wide apps took too long and was stopped.".to_string()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+            Err("Cancelled.".to_string())
+        }
+        Err(error) => Err(format!("Could not start Flatpak: {error}")),
+    }
+}
+
+fn system_flatpak_update(cancel: &AtomicBool) -> Result<(), String> {
+    run_system_flatpak(&system_flatpak_update_args(), false, cancel)
+}
+
+fn system_flatpak_uninstall(app_id: &str, cancel: &AtomicBool) -> Result<String, String> {
+    let args = system_flatpak_uninstall_args(app_id)?;
+    run_system_flatpak(&args, true, cancel).map(|()| format!("Uninstalled {app_id}."))
+}
+""")
+    text = replace_once(
+        text,
+        "        // \"running\" job. The user phase runs as the user (not through the\n"
+        "        // privileged socket), so the flatpak transfer tier applies; the\n"
+        "        // system phase keeps the daemon's own 900s OPERATION_TIMEOUT.\n",
+        "        // \"running\" job. Both phases run `flatpak` as the user, so the\n"
+        "        // flatpak transfer tier bounds each of them.\n")
+    text = replace_once(
+        text,
+        "        // (A cancel that lands mid-flight in phase 2 still waits for the\n"
+        "        // daemon's own bounded reply; the socket read cannot be preempted.)\n",
+        "        // (A cancel that lands during phase 2 kills that flatpak child\n"
+        "        // within one poll tick.)\n")
+    text = replace_once(
+        text,
+        "        let system_result = commands::privilege::flatpak_update().map(|_| ());\n",
+        "        let system_result = system_flatpak_update(&cancel);\n")
+    main_rs.write_text(text)
+    privilege = crate / "src/commands/privilege.rs"
+    text = privilege.read_text()
+    text = replace_once(
+        text, "pub(crate) fn flatpak_uninstall(app_id: &str)",
+        "#[allow(dead_code)]\npub(crate) fn flatpak_uninstall(app_id: &str)")
+    text = replace_once(
+        text, "pub(crate) fn flatpak_update()",
+        "#[allow(dead_code)]\npub(crate) fn flatpak_update()")
+    privilege.write_text(text)
+    audit_notes.append(
+        "B2: system Flatpak update/uninstall run /usr/bin/flatpak --system --noninteractive -y as the user "
+        "(Flatpak's own polkit helper) instead of /run/kyth/privileged.sock")
+
+    # --- D5: external links need a web browser -------------------------------
+    # The Hub reported "Opened in browser." after spawning xdg-open even when
+    # Rowyn has no https handler (it ships no browser). Check first.
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "#[tauri::command]\nfn open_m365_app(name: String) -> Result<String, String> {\n"
+        "    let (url, _) = m365_app(&name).ok_or_else(|| \"unknown Microsoft 365 app\".to_string())?;\n",
+        r"""const NO_BROWSER_MESSAGE: &str =
+    "No web browser is installed. Install one from Discover, then try again.";
+
+/// The `.desktop` ids to look for on disk for a handler id: the id itself,
+/// then the Desktop Entry spec's nested form where `-` stands for `/`
+/// (`kde-foo.desktop` may live at `applications/kde/foo.desktop`).
+fn desktop_id_candidates(id: &str) -> Vec<String> {
+    let mut candidates = vec![id.to_string()];
+    let mut nested = id.to_string();
+    while let Some(position) = nested.find('-') {
+        nested.replace_range(position..position + 1, "/");
+        candidates.push(nested.clone());
+    }
+    candidates
+}
+
+/// The first non-empty line of `xdg-mime query default` output, when it
+/// names a plain `.desktop` id (no path components).
+fn parse_default_handler(stdout: &str) -> Option<String> {
+    let id = stdout.lines().map(str::trim).find(|line| !line.is_empty())?;
+    (id.ends_with(".desktop") && !id.starts_with('/') && !id.contains("..")).then(|| id.to_string())
+}
+
+/// XDG data directories that can hold `applications/*.desktop`.
+fn xdg_data_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    match std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
+        Some(home) => dirs.push(PathBuf::from(home)),
+        None => {
+            if let Some(home) = std::env::var_os("HOME") {
+                dirs.push(PathBuf::from(home).join(".local/share"));
+            }
+        }
+    }
+    let system = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    dirs.extend(system.split(':').filter(|dir| !dir.is_empty()).map(PathBuf::from));
+    dirs
+}
+
+fn desktop_entry_exists(id: &str, data_dirs: &[PathBuf]) -> bool {
+    data_dirs.iter().any(|dir| {
+        desktop_id_candidates(id)
+            .iter()
+            .any(|candidate| dir.join("applications").join(candidate).is_file())
+    })
+}
+
+/// Fail before launching when nothing can open an https URL: `xdg-open`
+/// exits quietly (or hands the URL to nothing) on a system without a
+/// browser, and the Hub used to report success regardless.
+fn ensure_https_handler() -> Result<(), String> {
+    let argv = [
+        "/usr/bin/xdg-mime".to_string(),
+        "query".to_string(),
+        "default".to_string(),
+        "x-scheme-handler/https".to_string(),
+    ];
+    let output = kyth_shared::system::process::run_bounded(&argv, std::time::Duration::from_secs(5))
+        .map_err(|error| format!("Could not check for a web browser: {error}"))?;
+    if !output.status.success() {
+        return Err(NO_BROWSER_MESSAGE.to_string());
+    }
+    let handler = parse_default_handler(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| NO_BROWSER_MESSAGE.to_string())?;
+    if desktop_entry_exists(&handler, &xdg_data_dirs()) {
+        Ok(())
+    } else {
+        Err(NO_BROWSER_MESSAGE.to_string())
+    }
+}
+
+#[tauri::command]
+fn open_m365_app(name: String) -> Result<String, String> {
+    let (url, _) = m365_app(&name).ok_or_else(|| "unknown Microsoft 365 app".to_string())?;
+    ensure_https_handler()?;
+""")
+    text = replace_once(
+        text,
+        "        return Err(\"invalid external URL\".to_string());\n    }\n",
+        "        return Err(\"invalid external URL\".to_string());\n    }\n    ensure_https_handler()?;\n")
+    main_rs.write_text(text)
+    audit_notes.append("D5: open_m365_app/open_external_url check for an https handler before xdg-open")
+
+    # --- D1 / D6: shared crate ---------------------------------------------------
+    history = root / "src/kyth-shared-rs/src/system/deployment_history.rs"
+    text = history.read_text()
+    text = replace_once(
+        text,
+        '    let data = crate::system::probe::read_section("bootc-status-data").unwrap_or(Value::Null);\n',
+        '    let data = crate::system::probe::read_section("bootc-status-data")\n'
+        '        .or_else(crate::system::bootc_query::fetch_status_data)\n'
+        '        .unwrap_or(Value::Null);\n')
+    history.write_text(text)
+    audit_notes.append("D1: deployment_history falls back to bootc_query::fetch_status_data")
+
+    fonts = root / "src/kyth-shared-rs/src/system/fonts_ready.rs"
+    text = fonts.read_text()
+    text = replace_once(
+        text, "//! Checks Noto Sans + Arial via fc-list; mirrors Python's 5s timeout each.",
+        "//! Checks Noto Sans + an Arial-metric font via fc-list (5s timeout each).\n"
+        "//! Liberation Sans/Serif/Mono are metric-compatible with Arial, Times New\n"
+        "//! Roman, and Courier New, so Liberation Sans counts as Office-font ready.")
+    text = replace_once(
+        text,
+        '    let has_ms = run_fc(":family=Arial")\n'
+        '        .map(|s| !s.trim().is_empty())\n'
+        '        .unwrap_or(false);\n'
+        '    if has_noto && has_ms {\n'
+        '        (true, "Noto + MS fonts ready".to_string())\n'
+        '    } else if has_noto {\n'
+        '        (\n'
+        '            false,\n'
+        '            "Noto ready, MS via ujust install-ms-fonts".to_string(),\n'
+        '        )\n'
+        '    } else {\n'
+        '        (false, "fonts check pending".to_string())\n'
+        '    }\n'
+        '}\n',
+        '    let has_office_metrics = [":family=Liberation Sans", ":family=Arial"]\n'
+        '        .iter()\n'
+        '        .any(|pattern| {\n'
+        '            run_fc(pattern)\n'
+        '                .map(|s| !s.trim().is_empty())\n'
+        '                .unwrap_or(false)\n'
+        '        });\n'
+        '    fonts_status(has_noto, has_office_metrics)\n'
+        '}\n'
+        '\n'
+        '/// The verdict and user-facing copy for the two font probes.\n'
+        'fn fonts_status(has_noto: bool, has_office_metrics: bool) -> (bool, String) {\n'
+        '    if has_noto && has_office_metrics {\n'
+        '        (\n'
+        '            true,\n'
+        '            "Noto + metric-compatible Office fonts ready (Liberation)".to_string(),\n'
+        '        )\n'
+        '    } else if has_noto {\n'
+        '        (\n'
+        '            false,\n'
+        '            "Noto ready; metric-compatible Office fonts (Liberation Sans) not found"\n'
+        '                .to_string(),\n'
+        '        )\n'
+        '    } else {\n'
+        '        (false, "fonts check pending".to_string())\n'
+        '    }\n'
+        '}\n')
+    text = replace_once(
+        text,
+        "    #[test]\n    fn returns_tuple() {",
+        '    #[test]\n'
+        '    fn liberation_or_arial_counts_as_office_fonts_ready() {\n'
+        '        let (ready, detail) = fonts_status(true, true);\n'
+        '        assert!(ready);\n'
+        '        assert!(detail.contains("Liberation"));\n'
+        '        let (ready, detail) = fonts_status(true, false);\n'
+        '        assert!(!ready);\n'
+        '        assert!(detail.contains("Liberation Sans"));\n'
+        '        assert_eq!(fonts_status(false, true), (false, "fonts check pending".to_string()));\n'
+        '        assert_eq!(fonts_status(false, false), (false, "fonts check pending".to_string()));\n'
+        '    }\n'
+        '\n'
+        '    #[test]\n'
+        '    fn copy_never_mentions_ujust() {\n'
+        '        for (noto, metrics) in [(true, true), (true, false), (false, false)] {\n'
+        '            let (_, detail) = fonts_status(noto, metrics);\n'
+        '            assert!(!detail.contains("ujust") && !detail.contains("MS "), "{detail}");\n'
+        '        }\n'
+        '    }\n'
+        '\n'
+        '    #[test]\n    fn returns_tuple() {')
+    fonts.write_text(text)
+    audit_notes.append("D6: fonts_ready counts Liberation Sans (or Arial) as Office-font ready; no ujust copy")
+
+    # --- Rust unit tests for the shell-side logic added above ----------------------
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        '        .expect("error while running the Rowyn Hub shell");\n}\n',
+        r'''        .expect("error while running the Rowyn Hub shell");
+}
+
+#[cfg(test)]
+mod audit_fix_tests {
+    use super::*;
+
+    #[test]
+    fn system_flatpak_update_runs_directly_as_the_user() {
+        assert_eq!(
+            system_flatpak_update_args(),
+            ["update", "--system", "--noninteractive", "-y"]
+        );
+    }
+
+    #[test]
+    fn system_flatpak_uninstall_validates_the_id_and_follows_a_separator() {
+        assert_eq!(
+            system_flatpak_uninstall_args("org.mozilla.firefox").unwrap(),
+            [
+                "uninstall",
+                "--system",
+                "--noninteractive",
+                "-y",
+                "--",
+                "org.mozilla.firefox"
+            ]
+        );
+        for bad in ["", "-v.x", "--all", "org.mozilla.firefox; rm", "a b.c", "x"] {
+            assert!(system_flatpak_uninstall_args(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn system_flatpak_failures_are_accurate_and_never_blame_a_helper_service() {
+        let denied = "error: Flatpak system operation Uninstall not allowed for user";
+        let removal = system_flatpak_failure(denied, true);
+        assert!(removal.contains("administrator") && removal.contains("remove"));
+        let update = system_flatpak_failure(denied, false);
+        assert!(update.contains("administrator") && update.contains("update"));
+        assert_eq!(
+            system_flatpak_failure("  error: remote not found \n", false),
+            "error: remote not found"
+        );
+        assert_eq!(
+            system_flatpak_failure("", true),
+            "Flatpak failed without reporting a reason."
+        );
+        for text in [removal, update] {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("helper service") && !lower.contains("privileged"));
+        }
+    }
+
+    #[test]
+    fn handler_ids_parse_and_nested_desktop_ids_are_tried() {
+        assert_eq!(
+            parse_default_handler("\n firefox.desktop \n"),
+            Some("firefox.desktop".to_string())
+        );
+        for bad in ["", "\n\n", "firefox", "/usr/share/applications/x.desktop", "../x.desktop"] {
+            assert_eq!(parse_default_handler(bad), None, "{bad:?}");
+        }
+        assert_eq!(
+            desktop_id_candidates("kde-org-foo.desktop"),
+            ["kde-org-foo.desktop", "kde/org-foo.desktop", "kde/org/foo.desktop"]
+        );
+    }
+
+    #[test]
+    fn desktop_entries_are_found_in_data_dirs_only_when_they_exist() {
+        let root = std::env::temp_dir().join(format!("rowyn-hub-desktop-{}", std::process::id()));
+        let applications = root.join("applications");
+        fs::create_dir_all(applications.join("kde")).unwrap();
+        fs::write(applications.join("firefox.desktop"), "[Desktop Entry]\n").unwrap();
+        fs::write(applications.join("kde/browser.desktop"), "[Desktop Entry]\n").unwrap();
+        let dirs = vec![PathBuf::from("/nonexistent-rowyn-dir"), root.clone()];
+        assert!(desktop_entry_exists("firefox.desktop", &dirs));
+        assert!(desktop_entry_exists("kde-browser.desktop", &dirs));
+        assert!(!desktop_entry_exists("chromium.desktop", &dirs));
+        assert!(!desktop_entry_exists("firefox.desktop", &[]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+}
+''')
+    main_rs.write_text(text)
+    audit_notes.append("main.rs: audit_fix_tests (system flatpak argv/failure text, https handler lookup)")
+    changes.append("audit fixes: " + "; ".join(audit_notes))
 
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"

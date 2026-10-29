@@ -160,6 +160,13 @@ jobs:
             test -x /usr/bin/curl
             test -x /usr/bin/htop
             test -x /usr/bin/ping
+            test -x /usr/bin/lspci
+            test -x /usr/bin/fwupdmgr
+            test -s /usr/lib/systemd/system/fwupd.service
+            locale -a | grep -qx en_US.utf8
+            locale -a | grep -qi ^c.utf
+            test -s /etc/locale.gen
+            grep -qx LANG=en_US.UTF-8 /etc/default/locale
             test "$(readlink /etc/systemd/system/ufw.service)" = /dev/null
             test -x /usr/bin/rowyn-hub-shell
             if ldd /usr/bin/rowyn-hub-shell | grep -Fq "not found"; then

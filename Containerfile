@@ -148,6 +148,7 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         fonts-liberation fonts-dejavu-core fonts-dejavu-mono \
         orca \
         ubuntu-minimal ubuntu-standard \
+        locales pciutils fwupd \
         curl wget nano vim-tiny htop file lshw bind9-dnsutils iputils-ping \
         iputils-tracepath mtr-tiny netcat-openbsd lsof strace tcpdump hdparm \
         rfkill plocate manpages bash-completion command-not-found pastebinit \
@@ -195,6 +196,22 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
         /usr/lib/rowyn/nvidia-open-devids; \
     test "$(grep -vc '^#' /usr/lib/rowyn/nvidia-open-devids)" -gt 200; \
     rm -f /etc/dpkg/dpkg.cfg.d/rowyn-nvidia-gpus
+
+# Locales. The installer offers whatever `localectl list-locales` reports
+# on the live system (the live image generates only en_US.UTF-8, so the
+# offered set is C.UTF-8 + en_US.UTF-8) and writes the choice to
+# /etc/default/locale; a locale that was never generated silently falls
+# back to C. `locales` (already a ubuntu-minimal dependency, named in the
+# KDE layer) is generated for exactly that set: the archive lands in
+# /usr/lib/locale, so it is part of the immutable image and survives the
+# /var removal in bootc-rootfs.sh. locales-all (~236 MB) is deliberately not
+# used. C.UTF-8 is built into libc-bin (/usr/lib/locale/C.utf8).
+RUN printf 'en_US.UTF-8 UTF-8\n' > /etc/locale.gen && \
+    locale-gen && \
+    printf 'LANG=en_US.UTF-8\n' > /etc/default/locale && \
+    locale -a | grep -qx en_US.utf8 && \
+    locale -a | grep -qi ^c.utf && \
+    test -e /usr/lib/locale/locale-archive -o -d /usr/lib/locale/en_US.utf8
 
 # Canonical timezone state: the image ships exactly what
 # systemd-timedated itself would write for UTC — an absolute

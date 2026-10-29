@@ -54,6 +54,13 @@ class HubPortContractTests(unittest.TestCase):
         text, count = hub.replace_all_counted("a a", "a", "b")
         self.assertEqual((text, count), ("b b", 2))
 
+    def test_cut_between_fails_closed(self):
+        self.assertEqual(hub.cut_between("a[x]b", "[", "b"), "ab")
+        for text, start, end in (("a a b", "a", "b"), ("a b", "z", "b"),
+                                 ("a b", "a", "z"), ("b a", "a", "b")):
+            with self.assertRaises(ValueError):
+                hub.cut_between(text, start, end)
+
     def test_containerfile_builds_and_installs_hub(self):
         containerfile = (ROOT / "Containerfile").read_text()
         self.assertIn("FROM base AS hub-builder", containerfile)
@@ -343,6 +350,91 @@ class PinnedHubSourceTests(unittest.TestCase):
             self.assertIn('lower.contains("no changes in:")', body)
             self.assertIn("fn update_check_state_accepts_composefs_manifest_diff_output", query)
             self.assertIn("/usr/bin/rowyn-bootc-guard", query)
+
+    def test_audit_fixes_on_kept_pages(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-audit-") as temp:
+            root = Path(temp) / "src"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            web = root / "src/kyth-hub-web"
+            crate = web / "src-tauri"
+            shared = root / "src/kyth-shared-rs/src/system"
+            comps = web / "src/components"
+
+            # B3: no just recipe button on any kept page.
+            for rel in ("AppStoreSection.tsx", "WorkSetupSection.tsx", "VpnSection.tsx",
+                        "UpdatesOverview.tsx", "Topbar.tsx", "Sidebar.tsx"):
+                self.assertNotIn("RecipeButton", (comps / rel).read_text(), rel)
+            self.assertNotIn("RecipeButton", (web / "src/pages/Dashboard.tsx").read_text())
+            store = (comps / "AppStoreSection.tsx").read_text()
+            for recipe in ("setup-kyth-dev-box", "ai-dev-status", "ai-dev-setup", "setup-waydroid",
+                           "remove-waydroid-confirmed", "install-vscode", "install-boxbuddy",
+                           "install-jetbrains-toolbox"):
+                self.assertNotIn(recipe, store)
+            self.assertIn("<HostToolsGrid", store)
+            self.assertIn("<KaliCard", store)
+            self.assertIn("<ActionStatus status={status} />", store)
+            work = (comps / "WorkSetupSection.tsx").read_text()
+            self.assertNotIn("install-ms-fonts", work)
+            self.assertNotIn("setup-printer", work)
+            self.assertIn("Find network printers", work)
+            self.assertNotIn("setup-tailscale", (comps / "VpnSection.tsx").read_text())
+            self.assertIn("Open full VPN connection", (comps / "VpnSection.tsx").read_text())
+
+            # D2: no Guardian surface on kept pages.
+            dashboard = (web / "src/pages/Dashboard.tsx").read_text()
+            self.assertNotIn("Guardian", dashboard)
+            self.assertNotIn("guardian", dashboard)
+            self.assertIn('label="Boot health"', dashboard)
+            topbar = (comps / "Topbar.tsx").read_text()
+            self.assertNotIn("Guardian", topbar)
+            self.assertNotIn("IconBell", topbar)
+
+            # D3: no release notes / update history; channel display.
+            overview = (comps / "UpdatesOverview.tsx").read_text()
+            for gone in ("release notes", "Update history", "updates-history-card",
+                         "updates-release-card", "fetchUpdateReleaseHistory",
+                         "fetchUpdateReleaseSummary", "ExternalLink"):
+                self.assertNotIn(gone, overview)
+            self.assertIn("Download and stage", overview)
+            live_data = (web / "src/services/liveData.ts").read_text()
+            self.assertIn('  stable: "Stable",\n', live_data)
+
+            # B2: system Flatpak work runs directly, never via the Kyth socket.
+            main = (crate / "src/main.rs").read_text()
+            self.assertNotIn("privilege::flatpak_update()", main)
+            self.assertNotIn("privileged_flatpak_uninstall", main)
+            self.assertIn("let system_result = system_flatpak_update(&cancel);", main)
+            self.assertIn("system_flatpak_uninstall(&app_id, &cancel)", main)
+            self.assertIn('["update", "--system", "--noninteractive", "-y"]', main)
+            self.assertIn('["uninstall", "--system", "--noninteractive", "-y", "--", app_id]', main)
+            self.assertIn('Command::new("/usr/bin/flatpak")', main)
+            self.assertIn("fn system_flatpak_failure_", main.replace("fn system_flatpak_failures_", "fn system_flatpak_failure_"))
+            self.assertIn("mod audit_fix_tests", main)
+
+            # D5: https handler is checked before either xdg-open launch.
+            for name in ("open_m365_app", "open_external_url"):
+                body = main.split(f"fn {name}(", 1)[1].split("\n}\n", 1)[0]
+                self.assertIn("ensure_https_handler()?;", body)
+                self.assertLess(body.index("ensure_https_handler()?;"), body.index("xdg-open"))
+            self.assertIn("x-scheme-handler/https", main)
+            self.assertIn("Install one from Discover", main)
+
+            # D1: Recovery tile reads bootc directly when the probe is absent.
+            history = (shared / "deployment_history.rs").read_text()
+            self.assertIn(
+                'read_section("bootc-status-data")\n        .or_else(crate::system::bootc_query::fetch_status_data)',
+                history)
+
+            # D6: Liberation Sans is ready; no ujust copy.
+            fonts = (shared / "fonts_ready.rs").read_text()
+            self.assertIn(":family=Liberation Sans", fonts)
+            self.assertIn("fn fonts_status(", fonts)
+            self.assertIn("fn liberation_or_arial_counts_as_office_fonts_ready", fonts)
+            production = fonts.split("#[cfg(test)]", 1)[0]
+            self.assertNotIn("ujust", production)
+            self.assertNotIn("MS fonts", production)
 
     def test_no_upstream_branding_survives_port(self):
         repo = _pinned_repo()
