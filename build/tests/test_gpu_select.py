@@ -377,6 +377,10 @@ class WiringTests(unittest.TestCase):
             "/usr/lib/rowyn/nvidia-open-devids",
         ):
             self.assertIn(needle, gate)
+        # The module package's stray empty /lib/modules/kernel tree must be
+        # removed before the single-kernel count runs.
+        self.assertLess(gate.index("find /usr/lib/modules/kernel -depth -type d -empty -delete"),
+                        gate.index('wc -l)" = 1'))
         self.assertGreater(gate_start, self.text.index("apt-get purge -y plasma-discover-backend-snap"))
 
     def test_initramfs_is_built_after_the_nvidia_packages_and_gate(self):

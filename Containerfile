@@ -173,8 +173,14 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
 # nouveau. depmod runs explicitly because the module package's own postinst
 # cannot (no /boot/System.map in a layered build). The supported-device list
 # is flattened from the driver's supported-gpus.json for rowyn-gpu-select.
+# linux-modules-nvidia-* also ships an empty /lib/modules/kernel/nvidia-*
+# tree; the gate drops it (only if empty) so exactly one kernel dir remains.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    set -eu; \
+    set -eux; \
+    if [ -d /usr/lib/modules/kernel ]; then \
+        find /usr/lib/modules/kernel -depth -type d -empty -delete; \
+        test ! -e /usr/lib/modules/kernel; \
+    fi; \
     test "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1; \
     kver="$(basename "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d)")"; \
     for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do \

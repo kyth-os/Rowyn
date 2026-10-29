@@ -243,6 +243,7 @@ jobs:
             test -s /usr/lib/systemd/system/rowyn-gpu-select.service
             test -e /etc/systemd/system/sysinit.target.wants/rowyn-gpu-select.service
             test -s /usr/lib/rowyn/nvidia-open-devids
+            test ! -e /usr/lib/modules/kernel
             test -s /usr/lib/modprobe.d/rowyn-nvidia.conf
             grep -Fqx "options nvidia-drm modeset=1 fbdev=1" /usr/lib/modprobe.d/rowyn-nvidia.conf
             test -s /usr/lib/systemd/system/nvidia-suspend.service.d/10-rowyn-nvidia-only.conf
