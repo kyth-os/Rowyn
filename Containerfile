@@ -178,6 +178,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm755 /ctx/shared/update-policy.sh /usr/libexec/rowyn-update-policy && \
     /usr/libexec/rowyn-update-policy --root /
 
+# Per-user counterpart to the strict system policy above: seed a
+# permissive containers policy through /etc/skel so new accounts get a
+# ~/.config/containers/policy.json that lets rootless podman/distrobox
+# pull from any registry. Root (and therefore bootc) never reads skel,
+# so update verification keeps using the fail-closed system policy.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/containers-user-policy.sh --root /
+
 # First-boot policy must be generated after stateless normalization. It keeps
 # mutable SDDM/resolver overrides in /etc and masks only the unused Budgie
 # background cache activation paths.

@@ -176,6 +176,12 @@ jobs:
             test -x /usr/bin/rowyn-bootc-guard
             test -x /usr/libexec/rowyn-finalize-staged
             test -s /etc/sudoers.d/rowyn-upgrade
+            # New accounts are seeded a permissive per-user containers
+            # policy (rootless podman/distrobox pulls from any registry);
+            # the strict system policy in /etc/containers stays untouched
+            # for root and bootc.
+            test -s /etc/skel/.config/containers/policy.json
+            python3 -m json.tool /etc/skel/.config/containers/policy.json > /dev/null
             test -s /usr/share/plymouth/themes/rowyn/rowyn.plymouth
             test -s /usr/share/plymouth/themes/rowyn/rowyn.script
             test -s /usr/share/plymouth/themes/rowyn/rowyn-logo.png
