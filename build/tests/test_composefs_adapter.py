@@ -202,6 +202,10 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         bootc = (self.crate / 'installer_bootc.rs').read_text()
         self.assertIn('argv.push("--composefs-backend".to_string())', bootc)
         self.assertIn('argv.push("--enforce-container-sigpolicy".to_string())', bootc)
+        # Whole-disk (composefs) installs get btrfs mount options; bootc writes no other rootflags.
+        disk_branch = bootc.split('if subcommand == "to-disk" {', 1)[1].split('if subcommand == "to-filesystem" {', 1)[0]
+        self.assertIn('argv.push("--karg=rootflags=noatime,compress=zstd:1".to_string())', disk_branch)
+        self.assertNotIn('subvol=@', disk_branch)
         self.assertNotIn('pub composefs_backend:', bootc)
         executor = (self.crate / 'installer_job_executor.rs').read_text()
         method = executor.split('fn mount_wipe_deployment(', 1)[1].split('fn execute_configuration(', 1)[0]

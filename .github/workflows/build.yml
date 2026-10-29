@@ -215,6 +215,25 @@ jobs:
             test "$(readlink -f /etc/systemd/system/default.target)" = /usr/lib/systemd/system/graphical.target
             test -e /etc/systemd/system/display-manager.service
             test -e /etc/systemd/system/multi-user.target.wants/NetworkManager.service
+            test -s /usr/share/wayland-sessions/plasma.desktop
+            test -s /usr/share/xsessions/plasmax11.desktop
+            test -x /usr/bin/kwin_wayland
+            test -e /etc/systemd/system/graphical.target.wants/power-profiles-daemon.service
+            test -s /usr/lib/systemd/zram-generator.conf
+            grep -Fqx "zram-size = min(ram / 2, 8192)" /usr/lib/systemd/zram-generator.conf
+            test -x /usr/lib/systemd/system-generators/zram-generator
+            grep -Fqx "vm.swappiness = 180" /usr/lib/sysctl.d/90-rowyn-performance.conf
+            grep -Fqx "vm.max_map_count = 2147483642" /usr/lib/sysctl.d/90-rowyn-performance.conf
+            grep -Fqx "fs.inotify.max_user_watches = 524288" /usr/lib/sysctl.d/90-rowyn-performance.conf
+            grep -Fqx "net.ipv4.tcp_congestion_control = bbr" /usr/lib/sysctl.d/90-rowyn-performance.conf
+            grep -Fqx "tcp_bbr" /usr/lib/modules-load.d/rowyn-bbr.conf
+            grep -Fq "lru_gen/enabled" /usr/lib/tmpfiles.d/rowyn-performance.conf
+            test -x /usr/games/gamemoderun
+            test -s /usr/lib/udev/rules.d/60-steam-input.rules
+            grep -Fqx "ntsync" /usr/lib/modules-load.d/rowyn-ntsync.conf
+            grep -Fq "KERNEL==\"ntsync\"" /usr/lib/udev/rules.d/70-rowyn-ntsync.rules
+            grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/system.conf.d/90-rowyn-limits.conf
+            grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/user.conf.d/90-rowyn-limits.conf
             test "$(readlink /etc/systemd/system/systemd-networkd.service)" = /dev/null
             podman --version
             crun --version

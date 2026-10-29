@@ -104,6 +104,13 @@ RUN userdel --remove ubuntu
 # tools ubuntu-standard does not pull (curl, vim-tiny, htop,
 # iputils-ping, netcat-openbsd, rfkill, plocate, pastebinit),
 # named explicitly so they cannot quietly drop out of the set.
+#
+# Performance group (end of the first list): kwin-wayland +
+# plasma-workspace carry the Plasma Wayland session (SDDM lists Wayland
+# sessions first, so it is the preselected default) while xserver-xorg +
+# plasma-session-x11 keep the X11 session as fallback;
+# power-profiles-daemon, systemd-zram-generator, gamemode and
+# steam-devices (multiverse) are host plumbing for shared/performance-defaults.sh.
 RUN apt-get update && \
     apt-get install -y \
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
@@ -129,7 +136,9 @@ RUN apt-get update && \
         ubuntu-minimal ubuntu-standard \
         curl wget nano vim-tiny htop file lshw bind9-dnsutils iputils-ping \
         iputils-tracepath mtr-tiny netcat-openbsd lsof strace tcpdump hdparm \
-        rfkill plocate manpages bash-completion command-not-found pastebinit && \
+        rfkill plocate manpages bash-completion command-not-found pastebinit \
+        kwin-wayland plasma-workspace plasma-session-x11 \
+        power-profiles-daemon systemd-zram-generator gamemode steam-devices && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -210,6 +219,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/kde-dark-defaults.sh --root / && \
     /ctx/shared/kde-wallpaper-defaults.sh --root /
 
+# Performance defaults (zram, sysctl, MGLRU/THP, ntsync, gaming limits) are
+# vendor-dir files under /usr/lib, so /etc overrides win.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/performance-defaults.sh --root /
+
 # --- Rowyn Hub ---------------------------------------------------------------
 # System hub (Dashboard, Apps, Updates, VPN) compiled by the hub-builder
 # stage from the pinned, ported Kyth source. Runtime libraries for the
@@ -281,7 +295,7 @@ RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d &
     chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
     systemctl enable sddm.service NetworkManager.service firewalld.service \
-        cups.service cups.socket cups-browsed.service && \
+        cups.service cups.socket cups-browsed.service power-profiles-daemon.service && \
     systemctl set-default graphical.target && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service ufw.service && \
     netplan generate --root-dir /

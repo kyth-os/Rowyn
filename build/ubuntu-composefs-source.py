@@ -412,7 +412,10 @@ def adapt(root, release_digest=None):
     text = bootc.read_text()
     text = replace(text, '    if subcommand == "to-filesystem" {',
                    '    argv.push("--enforce-container-sigpolicy".to_string());\n'
-                   '    if subcommand == "to-disk" {\n        argv.push("--composefs-backend".to_string());\n    }\n    if subcommand == "to-filesystem" {')
+                   '    if subcommand == "to-disk" {\n        argv.push("--composefs-backend".to_string());\n'
+                   '        // Rowyn: bootc mkfs.btrfs has no subvolumes and writes root=UUID=.. rw only;\n'
+                   '        // systemd-fstab-generator concatenates every rootflags=, so this composes with kargs.d.\n'
+                   '        argv.push("--karg=rootflags=noatime,compress=zstd:1".to_string());\n    }\n    if subcommand == "to-filesystem" {')
     head, closing = text.rsplit('\n}', 1)
     text = head + r'''
     #[test]
@@ -422,11 +425,13 @@ def adapt(root, release_digest=None):
         }).unwrap();
         assert!(plan.argv.iter().any(|a| a == "--composefs-backend"));
         assert!(plan.argv.iter().any(|a| a == "--bootloader=systemd"));
+        assert!(plan.argv.iter().any(|a| a == "--karg=rootflags=noatime,compress=zstd:1"));
         assert!(!plan.argv.iter().any(|a| a == "--skip-fetch-check"));
         let filesystem = build_plan(BootcInstallInput {
             target: "/mnt/target".into(), ..input("to-filesystem")
         }).unwrap();
         assert!(!filesystem.argv.iter().any(|a| a == "--composefs-backend"));
+        assert!(!filesystem.argv.iter().any(|a| a.starts_with("--karg=rootflags=noatime")));
     }
 ''' + '\n}' + closing
     bootc.write_text(text)
