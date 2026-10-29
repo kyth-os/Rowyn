@@ -28,7 +28,6 @@ readonly LOCK_FILE=/run/rowyn-bootc.lock
 readonly BOOTC_TIMEOUT_SECS=3600
 readonly TERM_GRACE_SECS=10
 readonly SYSROOT_FREE_MIN_BYTES=$((2 * 1024 * 1024 * 1024))
-readonly BOOT_FREE_MIN_BYTES=$((500 * 1024 * 1024))
 
 workdir=
 child=
@@ -318,8 +317,10 @@ main() {
 
     workdir=$(mktemp -d)
 
+    # Only the physical root needs headroom here. Rowyn boots composefs with
+    # systemd-boot: /boot is an empty directory on the read-only root (df
+    # reports 0 free), and bootc mounts the ESP itself and reports a short ESP.
     check_free /sysroot "$SYSROOT_FREE_MIN_BYTES" || exit 1
-    check_free /boot "$BOOT_FREE_MIN_BYTES" || exit 1
 
     exec 9>"$LOCK_FILE"
     if ! flock -n 9; then

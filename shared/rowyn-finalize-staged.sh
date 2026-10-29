@@ -15,7 +15,19 @@
 # `remount,bind,rw` works, so it is tried first.
 set -uo pipefail
 
+# Rowyn boots bootc's composefs backend (composefs= on the kernel command
+# line). There, /boot is not an ostree boot mount and staged deployments are
+# finalized at shutdown by bootc-finalize-staged.service, so the /boot
+# preparation and `ostree admin finalize-staged` below apply only to ostree
+# boots. ROWYN_PROC_CMDLINE exists for tests.
+composefs_boot() {
+    grep -qE '(^| )composefs=' "${ROWYN_PROC_CMDLINE:-/proc/cmdline}" 2>/dev/null
+}
+
 prepare_boot() {
+    if composefs_boot; then
+        return 0
+    fi
     if ! mount -o remount,bind,rw /boot 2>/dev/null && ! mount -o remount,rw /boot 2>/dev/null; then
         echo "rowyn-finalize-staged: could not remount /boot read-write" >&2
         return 1
@@ -57,6 +69,11 @@ case "$mode" in
         exit 2
         ;;
 esac
+
+if composefs_boot; then
+    echo "rowyn-finalize-staged: bootc finalizes the staged deployment at shutdown"
+    exit 0
+fi
 
 if ! prepare_boot; then
     echo "rowyn-finalize-staged: trying finalize anyway" >&2
