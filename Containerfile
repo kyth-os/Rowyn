@@ -2,19 +2,19 @@
 #
 # Structure adapted from Bootcrew's ubuntu-bootc (Apache-2.0; see NOTICE and
 # the vendored scripts under shared/). Differences from upstream Bootcrew:
-#   - base is the latest Ubuntu release (26.10), not 25.10 "questing"
+#   - base is the latest Ubuntu release (26.10, digest-pinned), not 25.10 "questing"
 #   - Rowyn identity in /usr/lib/os-release
 #   - no baked-in login users: the base image's `ubuntu` account is
 #     removed, and the only interactive account on an installed system is
 #     the one the installer creates
+#   - SSH is installed but disabled, and an opted-in sshd is key-only
 #
 # Build:  build/fetch-assets.sh        (one-time, needs network)
-#         sudo podman build -t rowyn:spike .   (fully offline)
+#         sudo podman build -t rowyn:local .   (fully offline)
 #
 # All network inputs (pinned Rust toolchain tarball, bootc source with
 # vendored crate deps) are fetched on the host into build-assets/ first —
 # the build itself never touches the network.
-ARG UBUNTU_TAG=26.10
 ARG RUST_VERSION=1.99.0
 
 FROM scratch AS ctx
@@ -22,7 +22,10 @@ COPY shared/ /shared
 COPY keys/ /keys
 COPY build-assets/ /assets
 
-FROM docker.io/library/ubuntu:${UBUNTU_TAG} AS base
+# Digest-pinned; must equal UBUNTU_LIVE_IMAGE in .github/workflows/installer-iso.yml
+# (build/ubuntu-only-check.py enforces this). The guard makes a wrong digest fail fast.
+FROM docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719 AS base
+RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10
 
 # --- builder: compile bootc from source -------------------------------------
 FROM base AS builder
@@ -148,7 +151,15 @@ RUN apt-get update && \
 RUN printf 'Etc/UTC\n' > /etc/timezone && \
     ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
 
-RUN systemctl enable systemd-resolved ssh && \
+# SSH is installed so users can opt in, but release images do not enable it
+# (openssh-server's postinst may enable ssh.socket, so disable both). The
+# drop-in is always installed so an opted-in sshd is key-only and root-less.
+RUN systemctl enable systemd-resolved && \
+    systemctl disable ssh.service ssh.socket && \
+    install -d -m 0755 /etc/ssh/sshd_config.d && \
+    printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' \
+        > /etc/ssh/sshd_config.d/10-rowyn.conf && \
+    chmod 0644 /etc/ssh/sshd_config.d/10-rowyn.conf && \
     mkdir -p /etc/netplan && \
     printf 'network:\n  version: 2\n  renderer: NetworkManager\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml && \
     chmod 0600 /etc/netplan/90-default.yaml
@@ -242,6 +253,19 @@ COPY os-release /usr/lib/os-release
 # so the removed spike user's per-user tmpfiles bake has no equivalent
 # here — there is deliberately no per-user seeding for an account that
 # must not exist.
+
+# Systems installed from earlier images keep the removed spike account
+# (password rowyn, passwordless sudo, SSH key): bootc's 3-way /etc merge
+# preserves locally modified passwd/shadow/group. This one-shot unit locks
+# that account, drops it from sudo and removes its sudoers file and key.
+# It matches the account only by the retired spike SSH key
+# (shared/retired-dev-key.pub), never by name,
+# so a real user named rowyn is left alone.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/retire-spike-account.sh /usr/libexec/rowyn-retire-spike-account && \
+    install -Dm644 /ctx/shared/retired-dev-key.pub /usr/share/rowyn/retired-dev-key.pub && \
+    install -Dm644 /ctx/shared/rowyn-retire-spike-account.service /usr/lib/systemd/system/rowyn-retire-spike-account.service && \
+    systemctl enable rowyn-retire-spike-account.service
 
 # Desktop enablement:
 # - NetworkManager owns networking on the desktop (plasma-nm expects it):

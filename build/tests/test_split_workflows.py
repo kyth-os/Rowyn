@@ -215,7 +215,8 @@ class WorkflowTests(unittest.TestCase):
         steps = iso["jobs"]["iso"]["steps"]
         for job in iso["jobs"].values():
             checkout = job["steps"][0]
-            self.assertEqual(checkout["with"], {"ref": "refs/heads/main", "persist-credentials": False})
+            self.assertEqual(checkout["with"], {"ref": "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'refs/heads/main' }}",
+                              "persist-credentials": False})
         names = [step["name"] for step in steps]
         self.assertLess(names.index("Resolve exact signed image"), names.index("Verify fixed payload signer before privileged build"))
         self.assertLess(names.index("Verify fixed payload signer before privileged build"), names.index("Provision compressed Podman storage"))

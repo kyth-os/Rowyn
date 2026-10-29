@@ -14,8 +14,11 @@ def validate(root):
     for file in ('Containerfile', 'build/ubuntu-live.Containerfile'):
         text = (root / file).read_text()
         for match in re.finditer(r'^FROM\s+(\S+)', text, re.M):
-            allowed = {'scratch', 'base', '${UBUNTU_IMAGE}', '${PAYLOAD_IMAGE}', 'docker.io/library/ubuntu:${UBUNTU_TAG}'}
-            if match[1] not in allowed:
+            allowed = {'scratch', 'base', '${UBUNTU_IMAGE}', '${PAYLOAD_IMAGE}'}
+            if re.fullmatch(r'docker.io/library/ubuntu@sha256:[0-9a-f]{64}', match[1]):
+                if match[1] != base:
+                    raise ValueError('Ubuntu digest in ' + file + ' differs from UBUNTU_LIVE_IMAGE: ' + match[1])
+            elif match[1] not in allowed:
                 raise ValueError('non-Ubuntu build stage in ' + file + ': ' + match[1])
     for job in workflow['jobs'].values():
         if not job['runs-on'].startswith('ubuntu-'):

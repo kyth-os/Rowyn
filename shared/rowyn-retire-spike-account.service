@@ -1,0 +1,13 @@
+[Unit]
+Description=Retire the Rowyn development spike account
+DefaultDependencies=yes
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=ssh.service ssh.socket display-manager.service systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/rowyn-retire-spike-account --root /
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,10 @@ From the repository root, fetch the pinned offline inputs and build with Podman:
 sudo podman build -t rowyn:local .
 ```
 
+### Accounts and SSH
+
+Images contain no login accounts; the installer creates the only one. SSH is installed but disabled, and if you enable it, password and root logins stay off. Systems installed from images that still had the old `rowyn` test account have it locked on their first boot of a newer image by `rowyn-retire-spike-account.service`.
+
 The Containerfile builds bootc from the fetched source with offline Cargo dependencies. KDE Plasma and native OS dependencies are image content. Flatpak apps and rootless Ubuntu development containers are separate from the read-only host.
 
 ## Validate source changes
