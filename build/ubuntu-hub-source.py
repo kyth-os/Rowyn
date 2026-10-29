@@ -374,9 +374,42 @@ def port_source(root):
         text, "ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
     text, query_prose_count = replace_all_counted(
         text, "kyth-safe-upgrade", "rowyn-safe-upgrade")
+    # bootc's composefs backend (Rowyn's) prints different check output than
+    # the ostree backend the classifier was written for: "No changes in: <ref>"
+    # when the image is already pulled, otherwise only ManifestDiff::print()
+    # ("Total new layers:" / "Removed layers:" / "Added layers:") with no
+    # "Update available for:" line. Unknown successful output was rejected, so
+    # a real update surfaced as "Check unavailable". Teach the classifier the
+    # diff block, requiring both its first and last lines (fail closed).
+    text = replace_once(
+        text,
+        """    if lower.contains("update available for:") {
+        Some("available")
+    } else if""",
+        """    if lower.contains("update available for:")
+        || (lower.contains("total new layers:") && lower.contains("added layers:"))
+    {
+        Some("available")
+    } else if""")
+    text = replace_once(
+        text,
+        """    #[test]
+    fn update_check_state_rejects_unknown_success_output() {""",
+        """    #[test]
+    fn update_check_state_accepts_composefs_manifest_diff_output() {
+        let diff = "Total new layers: 30    Size: 3.2 GB\n\
+                    Removed layers:   25    Size: 2.6 GB\n\
+                    Added layers:     27    Size: 3.2 GB";
+        assert_eq!(update_check_state(diff), Some("available"));
+        assert_eq!(update_check_state("Total new layers: 30"), None);
+    }
+
+    #[test]
+    fn update_check_state_rejects_unknown_success_output() {""")
     bootc_query.write_text(text)
     changes.append(
         f"bootc_query.rs: guard -> /usr/bin/rowyn-bootc-guard ({query_guard_count} paths); "
+        f"composefs ManifestDiff check output -> available; "
         f"image-reference fallback -> ghcr.io/kyth-os/rowyn (1 regex + {query_ref_count} literals "
         f"incl. fixtures); prose ({query_prose_count})")
 

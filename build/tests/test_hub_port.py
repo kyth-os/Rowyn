@@ -330,6 +330,20 @@ class PinnedHubSourceTests(unittest.TestCase):
             self.assertEqual(*snapshots)
         self.assertEqual(original, subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]))
 
+    def test_check_classifier_accepts_composefs_manifest_diff(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-") as temp:
+            root = Path(temp) / "src"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            query = (root / "src/kyth-shared-rs/src/system/bootc_query.rs").read_text()
+            body = query.split("pub fn update_check_state(", 1)[1].split("\nfn ", 1)[0]
+            self.assertIn('lower.contains("update available for:")', body)
+            self.assertIn('lower.contains("total new layers:") && lower.contains("added layers:")', body)
+            self.assertIn('lower.contains("no changes in:")', body)
+            self.assertIn("fn update_check_state_accepts_composefs_manifest_diff_output", query)
+            self.assertIn("/usr/bin/rowyn-bootc-guard", query)
+
     def test_no_upstream_branding_survives_port(self):
         repo = _pinned_repo()
         with tempfile.TemporaryDirectory(prefix="rowyn-hub-brand-") as temp:
