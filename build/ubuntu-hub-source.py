@@ -6,9 +6,13 @@ and VPN destinations survive. Play, This PC, Move In, and the shell-only
 Dev Tools route are cut from navigation, routing, search, and the sidebar;
 their page files stay in the tree (unreferenced) so the cut stays a small,
 anchor-checked diff instead of a fork. The Updates channel is repointed at
-Rowyn's own releases and GHCR repository; branch switching stays registered
-in Rust but its helper (/usr/bin/kyth-bootc-guard) is not shipped by Rowyn,
-so the command fails cleanly through require_binary if ever invoked.
+Rowyn's own releases and GHCR repository, and the update helpers the Hub
+shells out to are repointed at the Rowyn implementations the payload
+ships (shared/rowyn-safe-upgrade.sh, shared/rowyn-bootc-guard.sh,
+shared/rowyn-finalize-staged.sh — fixed-operation counterparts of Kyth's
+Rust helpers, with a passwordless sudoers allowlist). Branch switching
+stays registered in Rust; the guard it calls implements only Rowyn's
+single stable channel and refuses Kyth's other channels.
 
 The VPN destination is Kyth's openconnect client (GlobalProtect "gp"
 profile, SAML redirect/cookie/reconnect flow); it ports unchanged apart
@@ -312,10 +316,57 @@ def port_source(root):
     text, image_count = replace_all_counted(text, "ghcr.io/kyth-os/kyth@", "ghcr.io/kyth-os/rowyn@")
     text, release_count = replace_all_counted(
         text, "github.com/kyth-os/kyth/releases", "github.com/kyth-os/Rowyn/releases")
+    # The update actions shell out to fixed helper binaries; Rowyn ships
+    # its own implementations under its own name (see shared/), so every
+    # reference — launch argv, require_binary prechecks, and the prose
+    # that names them — is repointed. Without this the Updates page's
+    # check, stage, and apply actions all fail on missing binaries.
+    text, stage_path_count = replace_all_counted(
+        text, "/usr/bin/kyth-safe-upgrade", "/usr/bin/rowyn-safe-upgrade")
+    text, stage_prose_count = replace_all_counted(
+        text, "kyth-safe-upgrade", "rowyn-safe-upgrade")
+    text, guard_path_count = replace_all_counted(
+        text, "/usr/bin/kyth-bootc-guard", "/usr/bin/rowyn-bootc-guard")
+    text, guard_prose_count = replace_all_counted(
+        text, "kyth-bootc-guard", "rowyn-bootc-guard")
+    text, finalize_count = replace_all_counted(
+        text, "/usr/libexec/kyth-finalize-staged", "/usr/libexec/rowyn-finalize-staged")
+    text = replace_once(
+        text,
+        "The native KythOS update helper is not installed on this system.",
+        "The native Rowyn update helper is not installed on this system.")
+    text = replace_once(
+        text,
+        "The KythOS bootc guard helper is not installed on this system.",
+        "The Rowyn bootc guard helper is not installed on this system.")
     updates.write_text(text)
     changes.append(
         f"updates.rs: releases API -> kyth-os/Rowyn; image refs -> ghcr.io/kyth-os/rowyn@ "
-        f"({image_count} literals incl. fixtures); release URLs -> kyth-os/Rowyn ({release_count})")
+        f"({image_count} literals incl. fixtures); release URLs -> kyth-os/Rowyn ({release_count}); "
+        f"update helpers -> rowyn-safe-upgrade ({stage_path_count} paths + {stage_prose_count} prose), "
+        f"rowyn-bootc-guard ({guard_path_count} paths + {guard_prose_count} prose), "
+        f"rowyn-finalize-staged ({finalize_count} paths)")
+
+    # --- Shared crate: the bootc query layer calls the same guard -------
+    # update_check / status_commands in bootc_query.rs invoke the guard
+    # by absolute path (via `sudo -n` for unprivileged callers) — that is
+    # the Updates page's *check* path, so it is repointed with the rest.
+    # The image-reference fallback also names Kyth's GHCR repository in a
+    # regex, a substring probe, and its test fixtures; all take Rowyn's.
+    bootc_query = root / "src/kyth-shared-rs/src/system/bootc_query.rs"
+    text = bootc_query.read_text()
+    text, query_guard_count = replace_all_counted(
+        text, "/usr/bin/kyth-bootc-guard", "/usr/bin/rowyn-bootc-guard")
+    text = replace_once(text, r"ghcr\.io/kyth-os/kyth", r"ghcr\.io/kyth-os/rowyn")
+    text, query_ref_count = replace_all_counted(
+        text, "ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
+    text, query_prose_count = replace_all_counted(
+        text, "kyth-safe-upgrade", "rowyn-safe-upgrade")
+    bootc_query.write_text(text)
+    changes.append(
+        f"bootc_query.rs: guard -> /usr/bin/rowyn-bootc-guard ({query_guard_count} paths); "
+        f"image-reference fallback -> ghcr.io/kyth-os/rowyn (1 regex + {query_ref_count} literals "
+        f"incl. fixtures); prose ({query_prose_count})")
 
     # --- Feedback issues go to the Rowyn repository ------------------------
     main_rs = crate / "src/main.rs"
@@ -366,7 +417,9 @@ def port_source(root):
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
         "Dashboard/Apps/Updates/VPN, updates channel repointed to kyth-os/Rowyn releases\n"
-        "and ghcr.io/kyth-os/rowyn images, feedback issues filed against kyth-os/Rowyn,\n"
+        "and ghcr.io/kyth-os/rowyn images, update helpers repointed to the Rowyn-shipped\n"
+        "rowyn-safe-upgrade / rowyn-bootc-guard / rowyn-finalize-staged, feedback issues\n"
+        "filed against kyth-os/Rowyn,\n"
         "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"
         "preset path to /etc/rowyn/network.toml.\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")

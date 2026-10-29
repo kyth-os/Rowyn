@@ -1,0 +1,14 @@
+# Rowyn: the Hub's fixed update operations run without a password so a
+# mid-stream sudo prompt can never break the update flow (the Hub launches
+# the stage with `sudo -A` and the check/status reads with `sudo -n`).
+# Every entry is a fixed argv: the guard accepts only its own fixed
+# operation set, the stage helper accepts no arguments at all, and the
+# finalizer only its two fixed modes — no caller-controlled arguments are
+# possible. The 0440 mode is required by sudo's NOPASSWD check.
+%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-safe-upgrade
+%sudo ALL=(root) NOPASSWD: /usr/libexec/rowyn-finalize-staged
+%sudo ALL=(root) NOPASSWD: /usr/libexec/rowyn-finalize-staged reboot
+%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard status
+%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard status-json
+%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard check
+%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard switch-latest

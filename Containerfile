@@ -149,6 +149,21 @@ RUN ln -s /usr/sbin/openconnect /usr/bin/openconnect && \
     mkdir -p /etc/vpnc && \
     ln -s /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script
 
+# --- Hub update helpers -------------------------------------------------------
+# The Hub's Updates actions shell out to fixed helper binaries: the check
+# and status reads go through the bootc guard (`sudo -n`, so the sudoers
+# allowlist below is what lets them run without a password), staging goes
+# through the safe-upgrade helper (`sudo -A`), and applying a staged
+# update reboots through the finalizer. Rowyn's implementations are the
+# shell scripts in shared/ (fixed-operation counterparts of Kyth's Rust
+# helpers); the sudoers file grants exactly their fixed argv to %sudo.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/rowyn-safe-upgrade.sh /usr/bin/rowyn-safe-upgrade && \
+    install -Dm755 /ctx/shared/rowyn-bootc-guard.sh /usr/bin/rowyn-bootc-guard && \
+    install -Dm755 /ctx/shared/rowyn-finalize-staged.sh /usr/libexec/rowyn-finalize-staged && \
+    install -Dm440 /ctx/shared/rowyn-upgrade.sudoers /etc/sudoers.d/rowyn-upgrade && \
+    visudo -cf /etc/sudoers.d/rowyn-upgrade
+
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
 

@@ -96,6 +96,50 @@ class HubPortContractTests(unittest.TestCase):
         self.assertIn("ln -s /usr/sbin/openconnect /usr/bin/openconnect", system)
         self.assertIn("ln -s /usr/share/vpnc-scripts/vpnc-script /etc/vpnc/vpnc-script", system)
 
+    def test_containerfile_ships_update_helpers(self):
+        containerfile = (ROOT / "Containerfile").read_text()
+        system = containerfile.split("FROM base AS system", 1)[1]
+        # The Hub's Updates actions invoke three fixed helpers plus a
+        # passwordless sudoers allowlist for their fixed argv (the check
+        # path runs under `sudo -n`, so without the allowlist it could
+        # never run). All four land in the payload, and the sudoers file
+        # is syntax-checked at image build time.
+        self.assertIn(
+            "install -Dm755 /ctx/shared/rowyn-safe-upgrade.sh /usr/bin/rowyn-safe-upgrade",
+            system)
+        self.assertIn(
+            "install -Dm755 /ctx/shared/rowyn-bootc-guard.sh /usr/bin/rowyn-bootc-guard",
+            system)
+        self.assertIn(
+            "install -Dm755 /ctx/shared/rowyn-finalize-staged.sh /usr/libexec/rowyn-finalize-staged",
+            system)
+        self.assertIn(
+            "install -Dm440 /ctx/shared/rowyn-upgrade.sudoers /etc/sudoers.d/rowyn-upgrade",
+            system)
+        self.assertIn("visudo -cf /etc/sudoers.d/rowyn-upgrade", system)
+        for script in ("rowyn-safe-upgrade.sh", "rowyn-bootc-guard.sh",
+                       "rowyn-finalize-staged.sh"):
+            path = ROOT / "shared" / script
+            self.assertTrue(path.is_file(), script)
+            self.assertTrue(os.access(path, os.X_OK), script)
+        sudoers = (ROOT / "shared/rowyn-upgrade.sudoers").read_text()
+        for entry in (
+            "%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-safe-upgrade",
+            "%sudo ALL=(root) NOPASSWD: /usr/libexec/rowyn-finalize-staged",
+            "%sudo ALL=(root) NOPASSWD: /usr/libexec/rowyn-finalize-staged reboot",
+            "%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard status",
+            "%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard status-json",
+            "%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard check",
+            "%sudo ALL=(root) NOPASSWD: /usr/bin/rowyn-bootc-guard switch-latest",
+        ):
+            self.assertIn(entry, sudoers)
+        workflow = (ROOT / ".github/workflows/build.yml").read_text()
+        for smoke in ("test -x /usr/bin/rowyn-safe-upgrade",
+                      "test -x /usr/bin/rowyn-bootc-guard",
+                      "test -x /usr/libexec/rowyn-finalize-staged",
+                      "test -s /etc/sudoers.d/rowyn-upgrade"):
+            self.assertIn(smoke, workflow)
+
     def test_desktop_entry_identity(self):
         entry = (ROOT / "shared/com.rowyn.hub.desktop").read_text()
         for line in ("Name=Rowyn Hub", "Exec=/usr/bin/rowyn-hub-shell",
@@ -210,9 +254,30 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertIn("ghcr.io/kyth-os/rowyn@", updates)
                 self.assertNotIn("ghcr.io/kyth-os/kyth@", updates)
                 self.assertNotIn("kyth-os/kyth/releases", updates)
-                # Branch switching stays registered; its helper is absent on
-                # Rowyn, so the reference stays and require_binary refuses.
-                self.assertIn("/usr/bin/kyth-bootc-guard", updates)
+                # The update actions shell out to helper binaries; Rowyn
+                # ships its own under its own name, so every reference —
+                # launch argv and require_binary prechecks alike — is
+                # repointed and no Kyth helper name survives.
+                self.assertIn("/usr/bin/rowyn-safe-upgrade", updates)
+                self.assertIn("/usr/bin/rowyn-bootc-guard", updates)
+                self.assertIn("/usr/libexec/rowyn-finalize-staged", updates)
+                self.assertNotIn("kyth-safe-upgrade", updates)
+                self.assertNotIn("kyth-bootc-guard", updates)
+                self.assertNotIn("kyth-finalize-staged", updates)
+                self.assertNotIn("KythOS update helper", updates)
+                self.assertNotIn("KythOS bootc guard helper", updates)
+                # Branch switching stays registered and now reaches the
+                # Rowyn guard, which implements only the stable channel.
+                self.assertIn("commands::updates::bootc_switch_branch",
+                              (crate / "src/main.rs").read_text())
+                # The check path lives in the shared crate: its guard
+                # invocations and GHCR fallback take Rowyn's name too.
+                bootc_query = (root / "src/kyth-shared-rs/src/system/bootc_query.rs").read_text()
+                self.assertIn("/usr/bin/rowyn-bootc-guard", bootc_query)
+                self.assertNotIn("kyth-bootc-guard", bootc_query)
+                self.assertNotIn("ghcr.io/kyth-os/kyth", bootc_query)
+                self.assertNotIn(r"ghcr\.io/kyth-os/kyth", bootc_query)
+                self.assertIn("ghcr.io/kyth-os/rowyn", bootc_query)
                 main = (crate / "src/main.rs").read_text()
                 self.assertIn("commands::updates::bootc_switch_branch", main)
                 self.assertIn('"https://github.com/kyth-os/Rowyn",', main)

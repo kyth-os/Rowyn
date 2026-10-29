@@ -145,6 +145,10 @@ jobs:
             test -s /etc/vpnc/vpnc-script
             test -x /usr/bin/ksshaskpass
             test -x /usr/bin/firewall-cmd
+            test -x /usr/bin/rowyn-safe-upgrade
+            test -x /usr/bin/rowyn-bootc-guard
+            test -x /usr/libexec/rowyn-finalize-staged
+            test -s /etc/sudoers.d/rowyn-upgrade
             test -s /usr/share/wallpapers/RowynBlack/contents/images/3840x2160.png
             for theme in org.kde.breeze.desktop org.kde.breezedark.desktop; do
               defaults=/usr/share/plasma/look-and-feel/$theme/contents/defaults
