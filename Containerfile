@@ -89,6 +89,13 @@ RUN userdel --remove ubuntu
 # Install packages that still need the distro's dpkg database before
 # bootc-rootfs.sh removes /var. Desktop enablement remains below rootfs
 # normalization because it only writes final system configuration.
+#
+# The desktop set is the Kubuntu default applications and integration
+# (the set the live image carries from the Kubuntu manifest), named
+# explicitly rather than pulled via the kubuntu-desktop metapackage so
+# the deliberate exclusions stay excluded: no LibreOffice, no
+# Firefox/Thunderbird (snaps; Rowyn is snap-free), no plasma-welcome
+# (purged below), no legacy Oxygen/Air themes, no *-doc packages.
 RUN apt-get update && \
     apt-get install -y \
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
@@ -98,7 +105,19 @@ RUN apt-get update && \
         tzdata tzdata-legacy polkitd \
         fonts-noto-core \
         libwebkit2gtk-4.1-0 libayatana-appindicator3-1 libxdo3 \
-        openconnect vpnc-scripts ksshaskpass firewalld && \
+        openconnect vpnc-scripts ksshaskpass firewalld \
+        gwenview okular okular-extra-backends ark kate kcalc kcharselect \
+        kdeconnect elisa haruna skanpage unzip zip \
+        cups cups-browsed cups-client cups-daemon cups-filters cups-ipp-utils \
+        cups-pk-helper print-manager system-config-printer-common \
+        system-config-printer-udev bluez-cups colord kde-config-tablet \
+        sane-airscan sane-utils \
+        kio-admin kio-audiocd kde-config-updates kde-config-plymouth \
+        plasma-runners-addons plasma-widgets-addons plasma-wallpapers-addons \
+        plasma-calendar-addons plasma-dataengines-addons kwin-addons \
+        ffmpeg gstreamer1.0-pipewire phonon4qt6-backend-vlc \
+        fonts-liberation fonts-dejavu-core fonts-dejavu-mono \
+        orca && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -216,7 +235,8 @@ RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d &
         > /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
-    systemctl enable sddm.service NetworkManager.service firewalld.service && \
+    systemctl enable sddm.service NetworkManager.service firewalld.service \
+        cups.service cups.socket cups-browsed.service && \
     systemctl set-default graphical.target && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service && \
     netplan generate --root-dir /

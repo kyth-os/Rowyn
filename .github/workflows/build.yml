@@ -141,6 +141,22 @@ jobs:
             ! command -v plasma-welcome
             test ! -e /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kded/kded_plasma_welcome.so
             test -x /usr/bin/spectacle
+            test -x /usr/bin/gwenview
+            test -x /usr/bin/okular
+            test -x /usr/bin/ark
+            test -x /usr/bin/kate
+            test -x /usr/bin/kcalc
+            test -x /usr/bin/kdeconnect-app
+            test -x /usr/bin/elisa
+            test -x /usr/bin/skanpage
+            test -x /usr/sbin/cupsd
+            test -x /usr/bin/plasma-print-queue
+            test -e /etc/systemd/system/multi-user.target.wants/cups.service
+            test -e /etc/systemd/system/sockets.target.wants/cups.socket
+            test -e /etc/systemd/system/multi-user.target.wants/cups-browsed.service
+            test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_plymouth.so
+            test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_printer_manager.so
+            test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kio/admin.so
             test -x /usr/bin/rowyn-hub-shell
             if ldd /usr/bin/rowyn-hub-shell | grep -Fq "not found"; then
               echo "rowyn-hub-shell has unresolved runtime libraries" >&2
