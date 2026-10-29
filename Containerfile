@@ -96,6 +96,11 @@ RUN userdel --remove ubuntu
 # the deliberate exclusions stay excluded: no LibreOffice, no
 # Firefox/Thunderbird (snaps; Rowyn is snap-free), no plasma-welcome
 # (purged below), no legacy Oxygen/Air themes, no *-doc packages.
+# The command-line backbone is the stock Ubuntu one — the
+# ubuntu-minimal + ubuntu-standard metapackages — plus the basic
+# tools ubuntu-standard does not pull (curl, vim-tiny, htop,
+# iputils-ping, netcat-openbsd, rfkill, plocate, pastebinit),
+# named explicitly so they cannot quietly drop out of the set.
 RUN apt-get update && \
     apt-get install -y \
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
@@ -117,7 +122,11 @@ RUN apt-get update && \
         plasma-calendar-addons plasma-dataengines-addons kwin-addons \
         ffmpeg gstreamer1.0-pipewire phonon4qt6-backend-vlc \
         fonts-liberation fonts-dejavu-core fonts-dejavu-mono \
-        orca && \
+        orca \
+        ubuntu-minimal ubuntu-standard \
+        curl wget nano vim-tiny htop file lshw bind9-dnsutils iputils-ping \
+        iputils-tracepath mtr-tiny netcat-openbsd lsof strace tcpdump hdparm \
+        rfkill plocate manpages bash-completion command-not-found pastebinit && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -230,6 +239,10 @@ COPY os-release /usr/lib/os-release
 # - NetworkManager owns networking on the desktop (plasma-nm expects it):
 #   a wildcard wired profile + an explicit "manage everything" drop-in,
 #   and systemd-networkd masked so it cannot race NM for the interface.
+# - firewalld is the only firewall manager: ubuntu-standard recommends
+#   ufw, so ufw.service is masked (the networkd treatment) rather than
+#   letting two nftables managers race — the Hub's VPN lockdown drives
+#   firewall-cmd.
 RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d && \
     printf '[connection]\nid=rowyn-wired\ntype=ethernet\nautoconnect=true\n\n[ethernet]\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
         > /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
@@ -238,7 +251,7 @@ RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d &
     systemctl enable sddm.service NetworkManager.service firewalld.service \
         cups.service cups.socket cups-browsed.service && \
     systemctl set-default graphical.target && \
-    systemctl mask systemd-networkd.service systemd-networkd-wait-online.service && \
+    systemctl mask systemd-networkd.service systemd-networkd-wait-online.service ufw.service && \
     netplan generate --root-dir /
 
 # Keep host package guidance out of the Ubuntu live installer and install it

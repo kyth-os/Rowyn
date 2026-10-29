@@ -48,6 +48,19 @@ ESSENTIALS = [
     "orca",
 ]
 
+# The command-line backbone: the stock Ubuntu metapackages plus the
+# basics ubuntu-standard does not pull (curl is the famous one — it is
+# in neither metapackage's Depends/Recommends). Patrick's report
+# (Oct 29, 2026): curl and friends missing from the installed system.
+TOOLS = [
+    "ubuntu-minimal", "ubuntu-standard",
+    "curl", "wget", "nano", "vim-tiny", "htop", "file", "lshw",
+    "bind9-dnsutils", "iputils-ping", "iputils-tracepath", "mtr-tiny",
+    "netcat-openbsd", "lsof", "strace", "tcpdump", "hdparm", "rfkill",
+    "plocate", "manpages", "bash-completion", "command-not-found",
+    "pastebinit",
+]
+
 # Packages that must never be installed in the payload. Matched against
 # install tokens, not raw text: the Containerfile comments name some of
 # these while explaining why they are excluded.
@@ -97,6 +110,24 @@ class PayloadPackageTests(unittest.TestCase):
         units = desktop[0].replace("\\", " ").split()
         for unit in ("cups.service", "cups.socket", "cups-browsed.service"):
             self.assertIn(unit, units)
+
+    def test_cli_tools_are_installed(self):
+        tokens = installed_tokens(CONTAINERFILE.read_text(encoding="utf-8"))
+        for package in TOOLS:
+            self.assertIn(package, tokens)
+
+    def test_ufw_is_masked_so_firewalld_owns_the_firewall(self):
+        # ubuntu-standard recommends ufw; an enabled ufw would race
+        # firewalld (the Hub's VPN lockdown drives firewall-cmd), so
+        # the payload masks ufw.service like it masks systemd-networkd.
+        text = CONTAINERFILE.read_text(encoding="utf-8")
+        mask = re.search(r"systemctl mask ([^&]+)&&", text)
+        self.assertIsNotNone(mask)
+        self.assertIn("ufw.service", mask.group(1).split())
+        workflow = BUILD_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'test "$(readlink /etc/systemd/system/ufw.service)" = /dev/null',
+            workflow)
 
     def test_image_smoke_checks_cover_the_essentials(self):
         workflow = BUILD_WORKFLOW.read_text(encoding="utf-8")
