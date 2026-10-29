@@ -33,3 +33,14 @@
 - Before pushing, run the full test suite (and `ROWYN_TEST_KYTH_REPO` tests for
   the Hub port) yourself and state plainly what could only be verified in CI
   or on the user's hardware.
+
+## Current stage: move fast
+
+The project is pre-release and the owner is the only daily user. Do not hold
+pushes to wait for an in-flight CI build or ISO, and do not ask before pushing
+routine fixes to `main`: commit as the owner, run the tests, push, and report.
+Know the cost: a push that touches image files cancels the older in-flight
+build, and any push to `main` makes an in-flight build refuse promotion to
+`:stable` (the stale-main guard); if that happens, start a new run with
+`workflow_dispatch` on `build.yml`. Destructive or hard-to-reverse actions
+(force-pushing `main`, deleting images or tags) still need explicit approval.
