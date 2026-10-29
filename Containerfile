@@ -292,6 +292,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/performance-defaults.sh --root /
 
+# Desktop tuning: I/O schedulers, journald caps, Baloo off, and PipeWire
+# low-latency quantum applied only while GameMode is active.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/desktop-tuning.sh --root /
+
 # GPU driver selection. One image serves every machine: the nvidia open
 # modules and nouveau are both installed, neither is in the initramfs, and
 # rowyn-gpu-select (sysinit, before udev coldplug) writes /run/modprobe.d
@@ -380,6 +385,7 @@ RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d &
     systemctl enable sddm.service NetworkManager.service firewalld.service \
         cups.service cups.socket cups-browsed.service power-profiles-daemon.service && \
     systemctl set-default graphical.target && \
+    systemctl disable NetworkManager-wait-online.service && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service ufw.service && \
     netplan generate --root-dir /
 

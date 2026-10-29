@@ -241,6 +241,15 @@ jobs:
             grep -Fq "KERNEL==\"ntsync\"" /usr/lib/udev/rules.d/70-rowyn-ntsync.rules
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/system.conf.d/90-rowyn-limits.conf
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/user.conf.d/90-rowyn-limits.conf
+            grep -Fq "queue/scheduler" /usr/lib/udev/rules.d/60-rowyn-ioschedulers.rules
+            grep -Fqx "SystemMaxUse=1G" /usr/lib/systemd/journald.conf.d/90-rowyn.conf
+            grep -Fqx "Indexing-Enabled=false" /etc/xdg/baloofilerc
+            test ! -e /etc/systemd/system/network-online.target.wants/NetworkManager-wait-online.service
+            test "$(systemctl is-enabled NetworkManager-wait-online.service || true)" != enabled
+            test -x /usr/libexec/rowyn-gamemode-audio
+            grep -Fqx "start=/usr/libexec/rowyn-gamemode-audio start" /etc/gamemode.ini
+            grep -Fqx "end=/usr/libexec/rowyn-gamemode-audio end" /etc/gamemode.ini
+            test -x /usr/bin/pw-metadata
             test "$(ls /usr/lib/modules | wc -l)" = 1
             kver=$(ls /usr/lib/modules)
             test -s "/usr/lib/modules/${kver}/kernel/nvidia-615-open/nvidia.ko"
