@@ -166,6 +166,20 @@ class HubPortContractTests(unittest.TestCase):
         self.assertIn("ID=rowyn", script)
         self.assertIn("Rowyn identity: /usr/lib/os-release is not ID=rowyn", script)
 
+    def test_port_script_carries_slice_15_cuts(self):
+        script = (ROOT / "build/ubuntu-hub-source.py").read_text()
+        # Slice 1.5's anchors: the Kali card and its backend, the
+        # Guardian command family, and the kyth-welcome-launch open-*
+        # commands. If any anchor text leaves the port script, the
+        # removals silently stop happening.
+        for anchor in ("struct GuardianPendingResponse {",
+                       "fn open_cloud_storage_app()", "fn open_move_files_app()",
+                       "\\nfunction KaliCard({",
+                       "commands::security::kali_enter_terminal,",
+                       "export async function createKaliBox(",
+                       "/// Single-flight for Kali box lifecycle operations"):
+            self.assertIn(anchor, script)
+
     def test_desktop_entry_identity(self):
         entry = (ROOT / "shared/com.rowyn.hub.desktop").read_text()
         for line in ("Name=Rowyn Hub", "Exec=/usr/bin/rowyn-hub-shell",
@@ -373,7 +387,8 @@ class PinnedHubSourceTests(unittest.TestCase):
                            "install-jetbrains-toolbox"):
                 self.assertNotIn(recipe, store)
             self.assertIn("<HostToolsGrid", store)
-            self.assertIn("<KaliCard", store)
+            # Slice 1.5 removed the Kali card; see the dedicated test.
+            self.assertNotIn("KaliCard", store)
             self.assertIn("<ActionStatus status={status} />", store)
             work = (comps / "WorkSetupSection.tsx").read_text()
             self.assertNotIn("install-ms-fonts", work)
@@ -435,6 +450,67 @@ class PinnedHubSourceTests(unittest.TestCase):
             production = fonts.split("#[cfg(test)]", 1)[0]
             self.assertNotIn("ujust", production)
             self.assertNotIn("MS fonts", production)
+
+    def test_slice_15_content_cleanup(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-slice15-") as temp:
+            root = Path(temp) / "src"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            web = root / "src/kyth-hub-web"
+            crate = web / "src-tauri"
+            comps = web / "src/components"
+
+            # Apps page: the Kali catalog card is gone — component,
+            # render site, and service functions — while the generic
+            # Flatpak host-tools grid in the same section stays.
+            store = (comps / "AppStoreSection.tsx").read_text()
+            self.assertNotIn("Kali", store)
+            self.assertNotIn("kali", store)
+            self.assertIn("<HostToolsGrid", store)
+            self.assertIn("Specialized tools", store)
+            self.assertIn("fetchSecHostTools", store)
+            live_data = (web / "src/services/liveData.ts").read_text()
+            self.assertNotIn("Kali", live_data)
+            self.assertNotIn("kali", live_data)
+            self.assertIn("fetchSecHostTools", live_data)
+            self.assertIn("installSecHostTool", live_data)
+
+            # The shell cannot invoke helpers Rowyn does not ship: the
+            # Guardian command family and the kyth-welcome-launch open-*
+            # commands are deregistered and deleted, with no reference
+            # to either binary left in the crate.
+            main = (crate / "src/main.rs").read_text()
+            self.assertNotIn("kyth-guardian", main)
+            self.assertNotIn("kyth-welcome-launch", main)
+            self.assertNotIn("guardian", main.lower())
+            for gone in ("guardian_snapshot", "guardian_check", "guardian_control",
+                         "guardian_execute_recipe", "guardian_dismiss",
+                         "open_cloud_storage_app", "open_move_files_app",
+                         "open_network_shares_app", "commands::security::kali_"):
+                self.assertNotIn(gone, main, gone)
+            for kept in ("commands::vpn::vpn_connect", "commands::vpn::open_vpn_app",
+                         "commands::security::sec_host_tools",
+                         "commands::security::security_job_status",
+                         "open_backup_app", "ipp_discover"):
+                self.assertIn(kept, main, kept)
+            security = (crate / "src/commands/security.rs").read_text()
+            self.assertNotIn("kali", security.lower())
+            self.assertIn("sec_host_tool_install", security)
+            self.assertIn("security_job_status", security)
+
+            # Kept frontend files name neither removed helper.
+            hub_page = (web / "src/pages/HubPage.tsx").read_text()
+            self.assertNotIn("kyth-welcome-launch", hub_page)
+            self.assertNotIn("kyth-guardian", hub_page)
+
+            # VPN page: no Tailscale recipe affordance survives (the B3
+            # button cut is re-asserted here at the page level); the
+            # GlobalProtect flow is untouched.
+            vpn_section = (comps / "VpnSection.tsx").read_text()
+            self.assertNotIn("ailscale", vpn_section)
+            self.assertNotIn("ailscale", (web / "src/pages/Vpn.tsx").read_text())
+            self.assertIn("Open full VPN connection", vpn_section)
 
     def test_no_upstream_branding_survives_port(self):
         repo = _pinned_repo()

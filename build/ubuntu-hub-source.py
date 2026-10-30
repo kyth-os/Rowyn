@@ -1214,6 +1214,165 @@ mod audit_fix_tests {
     audit_notes.append("main.rs: audit_fix_tests (system flatpak argv/failure text, https handler lookup)")
     changes.append("audit fixes: " + "; ".join(audit_notes))
 
+    # ======================================================================
+    # Slice 1.5: Kyth-shaped content and dead helpers out of the kept
+    # surfaces. The B3/D2 audit cut the kept pages' buttons and tiles;
+    # this pass removes what they pointed at — the Kali catalog card and
+    # its backend, the Guardian command family (the shell's only
+    # invocations of /usr/bin/kyth-guardian), and the open-* commands
+    # that spawn /usr/bin/kyth-welcome-launch — so nothing in the shipped
+    # Hub can try to run a helper Rowyn does not ship. The cut pages'
+    # frontend plumbing in liveData.ts stays (it keeps those unreferenced
+    # files compiling, the same trade B2 made for privilege.rs); the
+    # Flatpak host-tools grid that shared security.rs with the Kali
+    # lifecycle is generic Apps functionality and stays untouched.
+    # ======================================================================
+    slice15_notes = []
+
+    # --- Kali card + service functions off the Apps page -------------------
+    store = web / "src/components/AppStoreSection.tsx"
+    text = store.read_text()
+    text = replace_once(
+        text,
+        "  fetchKaliStatus, fetchSecHostTools, createKaliBox, exportKaliApps,\n"
+        "  removeKaliBox, enterKaliTerminal, installSecHostTool, uninstallSecHostTool,\n",
+        "  fetchSecHostTools, installSecHostTool, uninstallSecHostTool,\n")
+    text = replace_once(
+        text, "  cancelAppUpdate, cancelInstall, cancelSecurityJob,\n",
+        "  cancelAppUpdate, cancelInstall,\n")
+    text = cut_between(text, "\nfunction KaliCard({", "\nfunction HostToolsGrid({")
+    text = replace_once(text, "<KaliCard busy={busy} run={run} runCancel={runCancel} />", "")
+    store.write_text(text)
+
+    live_data = web / "src/services/liveData.ts"
+    text = live_data.read_text()
+    text = replace_once(
+        text, "; `removeKaliBox` has its own prompt below. */", ". */")
+    text = replace_once(
+        text, '  "nvidia_install",\n  "kali_remove",\n', '  "nvidia_install",\n')
+    text = replace_once(
+        text,
+        "// Security tab: Kali distrobox lifecycle + host-side (Flatpak) tools grid.\n"
+        "// Kali create/export/remove run as background jobs (security_job_status),\n"
+        "// same running/complete/failed shape as installFlatpak/uninstallFlatpak\n"
+        "// above — polled longer since a \"kali-linux-everything\" pull can run many\n"
+        "// minutes. Reported status text, not a live percentage; see\n"
+        "// kyth-shared-rs's security_container module doc for why.\n",
+        "// Security tab: host-side (Flatpak) tools grid. Installs and removals\n"
+        "// run as background jobs (security_job_status), same\n"
+        "// running/complete/failed shape as installFlatpak/uninstallFlatpak\n"
+        "// above. Reported status text, not a live percentage; see\n"
+        "// kyth-shared-rs's security_container module doc for why.\n")
+    text = cut_between(text, "/** Kali box presence.", "export interface SecHostTool {")
+    text = cut_between(
+        text, "export async function createKaliBox(", "export async function installSecHostTool(")
+    live_data.write_text(text)
+    slice15_notes.append(
+        "Kali card + render site cut from AppStoreSection (HostToolsGrid stays); "
+        "Kali service functions and the kali_remove privileged-op entry cut from liveData.ts")
+
+    # --- Kali backend out of commands/security.rs --------------------------
+    security = crate / "src/commands/security.rs"
+    text = security.read_text()
+    text = replace_once(
+        text,
+        "//! Security tab bridge: the Kali distrobox lifecycle (create/enter/export/\n"
+        "//! remove) and the host-side (Flatpak) security-tools grid. Command argv\n"
+        "//! comes entirely from `kyth_shared::system::security_container`'s fixed\n"
+        "//! templates/catalog — nothing here accepts a free-form command or Flatpak\n"
+        "//! id from the webview.\n",
+        "//! Security tab bridge: the host-side (Flatpak) security-tools grid.\n"
+        "//! Command argv comes entirely from\n"
+        "//! `kyth_shared::system::security_container`'s fixed catalog — nothing\n"
+        "//! here accepts a free-form command or Flatpak id from the webview.\n")
+    text = replace_once(
+        text,
+        "use kyth_shared::system::security_container::{\n"
+        "    self, KaliTier, DEFAULT_KALI_BOX, DEFAULT_KALI_IMAGE,\n"
+        "};\n",
+        "use kyth_shared::system::security_container;\n")
+    text = replace_once(text, "use std::sync::atomic::{AtomicBool, Ordering};\n", "")
+    text = cut_between(
+        text, "/// Single-flight for Kali box lifecycle operations",
+        "#[tauri::command]\npub(crate) fn security_job_status")
+    if text.count("#[cfg(test)]\nmod tests {") != 1:
+        raise ValueError("expected exactly one test module in security.rs")
+    text = text[:text.index("#[cfg(test)]\nmod tests {")].rstrip() + "\n"
+    security.write_text(text)
+    slice15_notes.append(
+        "security.rs: Kali lifecycle commands + single-flight slot + their unit test cut; "
+        "host-tools grid and security job plumbing untouched")
+
+    # --- Guardian + welcome-launch commands out of the shell ---------------
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "static GUARDIAN_CHECKS: OnceLock<JobStore> = OnceLock::new();\n"
+        "fn guardian_checks() -> &'static JobStore {\n"
+        "    GUARDIAN_CHECKS.get_or_init(JobStore::default)\n"
+        "}\n\n",
+        "")
+    text = replace_once(
+        text, "static GUARDIAN_OP_RUNNING: AtomicBool = AtomicBool::new(false);\n", "")
+    text = cut_between(
+        text,
+        "#[derive(Serialize)]\nstruct GuardianPendingResponse {",
+        "#[derive(serde::Serialize)]\nstruct MokStatusResponse {")
+    text = replace_once(
+        text,
+        "            guardian_snapshot,\n"
+        "            guardian_check,\n"
+        "            guardian_check_status,\n"
+        "            guardian_check_cancel,\n"
+        "            guardian_control,\n",
+        "")
+    text = replace_once(
+        text, "            guardian_execute_recipe,\n            guardian_dismiss,\n", "")
+    text = replace_once(
+        text, " and every saved share is lost. Same pattern as guardian state.\n",
+        " and every saved share is lost.\n")
+    text = cut_between(
+        text, "#[tauri::command]\nfn open_cloud_storage_app()", "fn m365_app(")
+    text = cut_between(
+        text, "#[tauri::command]\nfn open_move_files_app()",
+        "#[tauri::command]\nfn ipp_discover()")
+    text = replace_once(text, "            open_cloud_storage_app,\n", "")
+    text = replace_once(text, "            open_move_files_app,\n", "")
+    text = replace_once(text, "            open_network_shares_app,\n", "")
+    text = replace_once(
+        text,
+        "            commands::security::kali_status,\n"
+        "            commands::security::kali_create,\n"
+        "            commands::security::kali_export,\n"
+        "            commands::security::kali_remove,\n"
+        "            commands::security::kali_enter_terminal,\n",
+        "")
+    main_rs.write_text(text)
+    slice15_notes.append(
+        "main.rs: Guardian command family (7 commands, job store, op slot) and the three "
+        "kyth-welcome-launch open-* commands deregistered and deleted; kali_* registrations removed")
+
+    # HubPage is the kept pages' shared shell; its comments still named
+    # the removed launcher as the deep-link source.
+    hub_page = web / "src/pages/HubPage.tsx"
+    text = hub_page.read_text()
+    text = replace_once(
+        text,
+        "// Anchor for a stacked workspace so ?section= deep links (search,\n"
+        "// welcome-launch) can scroll straight to it.\n",
+        "// Anchor for a stacked workspace so ?section= deep links (search)\n"
+        "// can scroll straight to it.\n")
+    text = replace_once(
+        text,
+        "// `kyth-welcome-launch --page Guardian` can land on it (deepLink.ts builds\n"
+        "// those URLs).",
+        "// an external launcher can land on it (deepLink.ts builds\n"
+        "// those URLs).")
+    hub_page.write_text(text)
+    slice15_notes.append("HubPage.tsx: comments no longer name kyth-welcome-launch")
+    changes.append("slice 1.5 cleanup: " + "; ".join(slice15_notes))
+
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
@@ -1227,6 +1386,10 @@ mod audit_fix_tests {
         "(update status/error text, service prompts, dialog copy, exe-handler suggestion\n"
         "data, the focus-session inhibit reason and its shared-crate matcher) and rekeys\n"
         "the boot-health OS identity check to ID=rowyn.\n"
+        "A content cleanup removed the Kyth-catalog Kali toolbox card from the Apps\n"
+        "page (with its kali_* backend commands), the Guardian command family and\n"
+        "its /usr/bin/kyth-guardian invocations (Rowyn ships no Guardian), and the\n"
+        "open-* commands that spawned /usr/bin/kyth-welcome-launch.\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")
     return changes
 
