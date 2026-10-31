@@ -72,7 +72,7 @@ main() {
     out=$("$SAFE_UPGRADE" 2>&1)
     rc=$?
     # Drop the Hub progress markers; keep the human-readable tail.
-    out=$(printf '%s\n' "$out" | grep -v '^KYTH_STAGE_PROGRESS' | tail -n 5)
+    out=$(printf '%s\n' "$out" | grep -v '^ROWYN_STAGE_PROGRESS' | tail -n 5)
     if (( rc == 0 )); then
         log "done: ${out//$'\n'/ | }"
     else

@@ -313,7 +313,7 @@ def sync_cargo_lock(crate, absent_packages):
 # Rowyn ships; this pass renames what remains internal -- the shared
 # crate's package name and every `kyth_shared::` path, on-disk data
 # paths (telemetry, probe cache, the exe-handler app database), the
-# KYTH_STAGE_PROGRESS wire token the safe-upgrade helper emits, env
+# stage-progress wire token the safe-upgrade helper emits, env
 # vars, and the injected SAML script's identifiers -- with one uniform
 # map, so both ends of every renamed contract move together. The
 # exported directories already took the Rowyn name at extraction
