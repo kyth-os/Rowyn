@@ -1,0 +1,83 @@
+#!/bin/sh
+# rowyn-wifi-regdom - set the Wi-Fi regulatory domain from the system timezone.
+#
+# The installer/first-boot timezone is the best offline proxy for the country.
+# The zone is looked up in /usr/share/zoneinfo/zone.tab (one country per
+# zone, covers link zones such as Europe/Amsterdam) and then in zone1970.tab
+# (canonical zones only; its country column may list several comma-separated
+# codes for one zone, e.g. "DE,DK,NO,SE,SJ" for Europe/Berlin: the FIRST code
+# is used, which tzdata orders as the zone's principal country). Etc/*, UTC
+# and unknown zones are skipped so the kernel keeps its world default.
+#
+# A static cfg80211 ieee80211_regdom=XX modprobe option cannot follow the
+# user's timezone, so the domain is applied with `iw reg set` at boot instead.
+# The domain survives later driver loads (hot-plugged adapters) until reboot.
+#
+# Administrator override: put a two-letter code in /etc/rowyn/wifi-regdom
+# ("off" disables this service's action).
+#
+# Test/override environment: ROWYN_TIMEZONE_FILE, ROWYN_LOCALTIME_LINK,
+# ROWYN_ZONE_TAB, ROWYN_ZONE1970_TAB, ROWYN_REGDOM_OVERRIDE_FILE,
+# ROWYN_CFG80211_DIR, ROWYN_REGDOM_RETRY_SLEEP, IW.
+#
+# Never fails: every problem ends in exit 0 so boot is not affected.
+
+iw=${IW:-iw}
+tzfile=${ROWYN_TIMEZONE_FILE:-/etc/timezone}
+localtime=${ROWYN_LOCALTIME_LINK:-/etc/localtime}
+zonetab=${ROWYN_ZONE_TAB:-/usr/share/zoneinfo/zone.tab}
+zone1970=${ROWYN_ZONE1970_TAB:-/usr/share/zoneinfo/zone1970.tab}
+override=${ROWYN_REGDOM_OVERRIDE_FILE:-/etc/rowyn/wifi-regdom}
+cfg80211=${ROWYN_CFG80211_DIR:-/sys/module/cfg80211}
+retry_sleep=${ROWYN_REGDOM_RETRY_SLEEP:-1}
+
+command -v "$iw" >/dev/null 2>&1 || exit 0
+
+cc=
+if [ -r "$override" ]; then
+    want=$(sed -n '1{s/[[:space:]]//g;p;q}' "$override" 2>/dev/null | tr 'a-z' 'A-Z')
+    case "$want" in
+        OFF) exit 0 ;;
+        [A-Z][A-Z]) cc=$want ;;
+    esac
+fi
+
+if [ -z "$cc" ]; then
+    zone=
+    if [ -r "$tzfile" ]; then
+        zone=$(sed -n '1{s/[[:space:]]//g;p;q}' "$tzfile" 2>/dev/null)
+    fi
+    if [ -z "$zone" ] && [ -L "$localtime" ]; then
+        zone=$(readlink "$localtime" 2>/dev/null | sed -n 's#.*/zoneinfo/##p')
+    fi
+    case "$zone" in
+        '' | Etc/* | UTC | UCT | GMT | Universal | Zulu | */../* | ../* | /*) exit 0 ;;
+    esac
+    case "$zone" in
+        *[!A-Za-z0-9_+/-]*) exit 0 ;;
+    esac
+    for tab in "$zonetab" "$zone1970"; do
+        [ -r "$tab" ] || continue
+        found=$(awk -F '\t' -v z="$zone" '
+            /^#/ { next }
+            $3 == z { split($1, c, ","); print c[1]; exit }
+        ' "$tab" 2>/dev/null)
+        case "$found" in
+            [A-Z][A-Z]) cc=$found; break ;;
+        esac
+    done
+fi
+[ -n "$cc" ] || exit 0
+
+# cfg80211 appears when the first Wi-Fi driver loads (udev coldplug). Give
+# coldplug a bounded moment to finish; no cfg80211 afterwards means no Wi-Fi.
+if [ ! -d "$cfg80211" ] && command -v udevadm >/dev/null 2>&1; then
+    udevadm settle --timeout=5 >/dev/null 2>&1 || true
+fi
+[ -d "$cfg80211" ] || exit 0
+
+for attempt in 1 2 3; do
+    "$iw" reg set "$cc" >/dev/null 2>&1 && exit 0
+    sleep "$retry_sleep" 2>/dev/null || true
+done
+exit 0

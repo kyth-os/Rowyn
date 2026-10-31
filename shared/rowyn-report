@@ -1,0 +1,363 @@
+#!/usr/bin/python3
+"""rowyn-report: build a scrubbed, local-only diagnostics report.
+
+Gathers a small set of system facts, scrubs identifying details locally, and
+writes a Markdown file. It prints a prefilled GitHub issue link whose body is a
+short summary only. Nothing is uploaded and this tool makes no network calls;
+the person decides whether to attach the file after reading it.
+"""
+import argparse
+import datetime
+import getpass
+import ipaddress
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+from urllib.parse import quote
+
+ISSUE_BASE = "https://github.com/kyth-os/Rowyn/issues/new"
+URL_CAP = 6000
+GPU_MODULES = ("nvidia", "nouveau", "amdgpu", "i915", "xe")
+
+
+# --------------------------------------------------------------------------
+# Scrubber: the final safety boundary. Pure function, idempotent.
+# --------------------------------------------------------------------------
+
+_SECRET_KEYS = r"(?:token|password|passwd|secret|apikey|api_key|psk|passphrase)"
+_RE_CRED_URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/:@<>]+:[^\s/@<>]*@")
+_RE_AUTH = re.compile(r"(?i)\b(authorization\s*[:=]\s*(?!(?:bearer|basic|token)\s+<)(?:(?:bearer|basic|token)\s+)?)(?!<)\S+")
+_RE_BEARER = re.compile(r"(?i)\b(bearer\s+)(?!<)[A-Za-z0-9._~+/=-]{8,}")
+_RE_SECRET_KV = re.compile(
+    r"(?i)(\b[\w.-]*?" + _SECRET_KEYS + r"[\w-]*[\"']?\s*[=:]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s,;]+)")
+_RE_SSID_KV = re.compile(r"(?im)(\bssid[\"']?\s*[=:]\s*)(.+)$")
+_RE_SSID_Q = re.compile(r"(?i)(\bssid\s+)([\"'][^\"'\n]*[\"'])")
+_RE_SERIAL = re.compile(r"(?i)(\b(?:serial(?:[ _]?(?:number|no))?)[\"']?\s*[=:]\s*)([^\s,;]+)")
+_RE_UUID = re.compile(
+    r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b")
+_RE_MAC = re.compile(r"(?<![0-9A-Za-z:-])[0-9A-Fa-f]{2}(?:([:-])[0-9A-Fa-f]{2}){5}(?![0-9A-Za-z:-])")
+_RE_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+_RE_OTHER_HOME = re.compile(r"(?:/var)?/home/([^/\s\"'<>:,;)\]]+)")
+_RE_IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]*\w)")
+_RE_IPV6 = re.compile(r"(?<![0-9A-Za-z:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?:%[\w.-]+)?(?![0-9A-Za-z:])")
+_RE_HEX = re.compile(r"(?<![0-9A-Za-z])[0-9A-Fa-f]{32,}(?![0-9A-Za-z])")
+_RE_BLOB = re.compile(r"(?<![\w/+.=-])[A-Za-z0-9+/_-]{32,}={0,2}(?![\w/+-])")
+
+
+def _repl_ipv4(m):
+    s = m.group(0)
+    try:
+        ip = ipaddress.IPv4Address(s)
+    except ValueError:
+        return s
+    if ip.is_loopback or ip.is_unspecified:
+        return s
+    return "<ipv4>"
+
+
+def _repl_ipv6(m):
+    s = m.group(0)
+    try:
+        ip = ipaddress.IPv6Address(s.split("%")[0])
+    except ValueError:
+        return s
+    if ip.is_loopback or ip.is_unspecified:
+        return s
+    return "<ipv6>"
+
+
+def _repl_hex(m):
+    s = m.group(0)
+    if len(s) >= 40:
+        return s[:12] + "…"
+    return "<hex>"
+
+
+def _repl_blob(m):
+    s = m.group(0)
+    if (re.search(r"\d", s) and re.search(r"[a-z]", s) and re.search(r"[A-Z]", s)):
+        return "<blob>"
+    return s
+
+
+def make_context():
+    """Current user and host names, tolerating any failure."""
+    users, hosts = [], []
+    try:
+        users.append(getpass.getuser())
+    except Exception:
+        pass
+    for key in ("USER", "LOGNAME"):
+        if os.environ.get(key):
+            users.append(os.environ[key])
+    try:
+        hosts.append(socket.gethostname())
+    except Exception:
+        pass
+    try:
+        with open("/etc/hostname") as fh:
+            hosts.append(fh.read().strip())
+    except Exception:
+        pass
+    return {"users": users, "hosts": hosts}
+
+
+def _name_re(name):
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+
+
+def scrub(text, ctx=None):
+    ctx = ctx or {"users": [], "hosts": []}
+    users = sorted({u for u in ctx.get("users", []) if u and len(u) >= 3 and u != "root"},
+                   key=len, reverse=True)
+    hosts = sorted({h for h in ctx.get("hosts", [])
+                    if h and len(h) >= 3 and h not in ("localhost", "localhost.localdomain")},
+                   key=len, reverse=True)
+
+    text = _RE_CRED_URL.sub(r"\1<redacted>@", text)
+    text = _RE_AUTH.sub(r"\1<redacted>", text)
+    text = _RE_BEARER.sub(r"\1<redacted>", text)
+    text = _RE_SECRET_KV.sub(r"\1<redacted>", text)
+    text = _RE_SSID_KV.sub(r"\1<ssid>", text)
+    text = _RE_SSID_Q.sub(r"\1<ssid>", text)
+    text = _RE_SERIAL.sub(r"\1<serial>", text)
+    text = _RE_UUID.sub("<uuid>", text)
+    text = _RE_MAC.sub("<mac>", text)
+    text = _RE_EMAIL.sub("<email>", text)
+
+    for u in users:
+        text = re.sub(r"(?:/var)?/home/" + re.escape(u) + r"(?![A-Za-z0-9_.-])", "~", text)
+
+    def other_home(m):
+        name = m.group(1)
+        if name.startswith("<") or name == "~":
+            return m.group(0)
+        return "/home/<user>"
+    text = _RE_OTHER_HOME.sub(other_home, text)
+
+    for u in users:
+        text = _name_re(u).sub("<user>", text)
+    for h in hosts:
+        text = _name_re(h).sub("<host>", text)
+
+    text = _RE_IPV4.sub(_repl_ipv4, text)
+    text = _RE_IPV6.sub(_repl_ipv6, text)
+    text = _RE_HEX.sub(_repl_hex, text)
+    text = _RE_BLOB.sub(_repl_blob, text)
+    return text
+
+
+# --------------------------------------------------------------------------
+# Gathering
+# --------------------------------------------------------------------------
+
+def run(cmd, timeout=15):
+    """Run a command, bounded. Returns (ok, text); never raises."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL, env=dict(os.environ, LC_ALL="C"))
+    except FileNotFoundError:
+        return False, "%s: not installed" % cmd[0]
+    except subprocess.TimeoutExpired:
+        return False, "%s: timed out after %ss" % (cmd[0], timeout)
+    except Exception as exc:
+        return False, "%s: %s" % (cmd[0], exc)
+    out = (p.stdout or "").strip()
+    if p.returncode != 0:
+        return False, ("%s: exit %d %s" % (cmd[0], p.returncode, (p.stderr or "").strip()[:200])).strip()
+    return True, out
+
+
+def read_file(path, limit=20000):
+    try:
+        with open(path, errors="replace") as fh:
+            return True, fh.read(limit).strip()
+    except Exception as exc:
+        return False, "%s: %s" % (path, exc)
+
+
+def parse_os_release(text):
+    out = {}
+    for line in text.splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"')
+    return out
+
+
+def image_from_bootc(js):
+    """Extract (ref, digest) from `bootc status --json` text."""
+    import json
+    try:
+        data = json.loads(js)
+        img = data["status"]["booted"]["image"]
+        return img["image"]["image"], img.get("imageDigest", "unknown")
+    except Exception:
+        return None, None
+
+
+def gather(use_sudo=True):
+    """Return (sections, facts). sections: list of (title, body)."""
+    sections, facts = [], {}
+
+    ok, txt = read_file("/usr/lib/os-release")
+    rel = parse_os_release(txt) if ok else {}
+    facts["os"] = rel.get("PRETTY_NAME", "unknown")
+    sections.append(("OS", "\n".join(
+        "%s=%s" % (k, rel.get(k, "unknown")) for k in ("PRETTY_NAME", "VERSION", "VARIANT"))
+        if ok else "os-release unavailable: " + txt))
+
+    ok, txt = run(["uname", "-r"])
+    facts["kernel"] = txt if ok else "unknown"
+    sections.append(("Kernel", txt))
+
+    facts["image"] = "unknown"
+    if use_sudo:
+        ok, txt = run(["sudo", "-n", "/usr/bin/rowyn-bootc-guard", "status-json"], timeout=40)
+        ref, digest = image_from_bootc(txt) if ok else (None, None)
+        if ref:
+            facts["image"] = "%s @ %s" % (ref, (digest or "")[:19])
+            sections.append(("Image", "ref=%s\ndigest=%s" % (ref, digest)))
+        else:
+            sections.append(("Image", "bootc status unavailable (not run as an admin)"))
+    else:
+        sections.append(("Image", "bootc status skipped (--no-sudo)"))
+
+    ok, txt = read_file("/proc/cmdline")
+    sections.append(("Kernel command line", txt))
+
+    ok, txt = run(["lspci", "-nn"])
+    gpu = [l for l in txt.splitlines() if re.search(r"\[0(300|302|380)\]", l)] if ok else []
+    mods = []
+    okm, mtxt = read_file("/proc/modules", limit=500000)
+    if okm:
+        names = {l.split()[0] for l in mtxt.splitlines() if l.split()}
+        mods = [m for m in GPU_MODULES if m in names]
+    facts["gpu"] = "; ".join(re.sub(r"^\S+\s+", "", l) for l in gpu) or "unknown"
+    gpu_text = "\n".join(gpu) if gpu else (txt if not ok else "none found")
+    gpu_text += "\nloaded modules: " + (", ".join(mods) or "none of " + "/".join(GPU_MODULES))
+    sections.append(("GPU", gpu_text))
+
+    facts["session"] = "%s / %s" % (os.environ.get("XDG_SESSION_TYPE", "unknown"),
+                                    os.environ.get("XDG_CURRENT_DESKTOP", "unknown"))
+    sections.append(("Session", "XDG_SESSION_TYPE=%s\nXDG_CURRENT_DESKTOP=%s" % (
+        os.environ.get("XDG_SESSION_TYPE", "unset"), os.environ.get("XDG_CURRENT_DESKTOP", "unset"))))
+
+    ok, txt = run(["systemctl", "--failed", "--no-legend", "--no-pager"])
+    facts["failed_units"] = len([l for l in txt.splitlines() if l.strip()]) if ok else None
+    sections.append(("Failed units", txt if (ok and txt) else ("none" if ok else txt)))
+
+    ok, txt = run(["journalctl", "-p", "err", "-b", "--no-pager", "-n", "120"], timeout=30)
+    sections.append(("Journal errors (this boot, last 120)", txt if ok else txt))
+
+    parts = []
+    for cmd in (["flatpak", "--version"], ["flatpak", "remotes", "--columns=name,url"],
+                ["fwupdmgr", "--version"]):
+        ok, txt = run(cmd)
+        parts.append("$ %s\n%s" % (" ".join(cmd), txt))
+    sections.append(("Flatpak and firmware", "\n\n".join(parts)))
+
+    parts = []
+    for cmd in (["free", "-h"], ["df", "-h", "--output=source,size,used,avail,pcent,target", "/", "/var"]):
+        ok, txt = run(cmd)
+        parts.append("$ %s\n%s" % (" ".join(cmd), txt))
+    sections.append(("Memory and disk", "\n\n".join(parts)))
+    return sections, facts
+
+
+def render_report(sections, now=None):
+    now = now or datetime.datetime.now()
+    lines = ["# Rowyn diagnostics report", "",
+             "Generated %s. Scrubbed locally; review before sharing." % now.strftime("%Y-%m-%d %H:%M:%S"), ""]
+    for title, body in sections:
+        lines += ["## " + title, "", "```", body, "```", ""]
+    return "\n".join(lines)
+
+
+def summary_body(facts):
+    fu = facts.get("failed_units")
+    return "\n".join([
+        "**Summary (from rowyn-report; full report not attached yet)**",
+        "- OS: %s" % facts.get("os", "unknown"),
+        "- Image: %s" % facts.get("image", "unknown"),
+        "- Kernel: %s" % facts.get("kernel", "unknown"),
+        "- GPU: %s" % facts.get("gpu", "unknown"),
+        "- Session: %s" % facts.get("session", "unknown"),
+        "- Failed units: %s" % ("unknown" if fu is None else fu),
+        "", "**What happened**", "", "<describe the problem>", ""])
+
+
+def build_issue_url(title, body, cap=URL_CAP):
+    def make(b):
+        return "%s?title=%s&body=%s" % (ISSUE_BASE, quote(title, safe=""), quote(b, safe=""))
+    url = make(body)
+    while len(url) > cap and body:
+        body = body[: max(0, len(body) - max(40, (len(url) - cap) // 2))]
+        url = make(body)
+    return url
+
+
+def report_path(now=None):
+    now = now or datetime.datetime.now()
+    name = "rowyn-report-%s.md" % now.strftime("%Y%m%d-%H%M%S")
+    state = os.environ.get("XDG_STATE_HOME")
+    base = os.path.join(state, "rowyn") if state else os.path.expanduser("~")
+    return os.path.join(base, name)
+
+
+def write_private(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    os.chmod(path, 0o600)
+
+
+def open_url(url):
+    opener = shutil.which("xdg-open")
+    handler = ""
+    if shutil.which("xdg-mime"):
+        ok, handler = run(["xdg-mime", "query", "default", "x-scheme-handler/https"])
+        handler = handler if ok else ""
+    if not opener or not handler:
+        print("no web browser installed - install one from Discover or paste the URL")
+        return False
+    subprocess.Popen([opener, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="rowyn-report", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--stdout", action="store_true", help="print the scrubbed report instead of writing a file")
+    ap.add_argument("--no-sudo", action="store_true", help="skip the bootc status lookup")
+    ap.add_argument("--open", action="store_true", help="open the prefilled issue link in a browser")
+    args = ap.parse_args(argv)
+
+    ctx = make_context()
+    sections, facts = gather(use_sudo=not args.no_sudo)
+    report = scrub(render_report(sections), ctx)
+    if args.stdout:
+        sys.stdout.write(report)
+        return 0
+
+    path = report_path()
+    write_private(path, report)
+    body = scrub(summary_body({k: (scrub(str(v), ctx) if v is not None else None)
+                               for k, v in facts.items()}), ctx)
+    url = build_issue_url("Rowyn: <short problem description>", body)
+    print("Scrubbed report written to: %s" % path)
+    print("Nothing was uploaded. Read the file first; attach it to the issue only if you are happy with it.")
+    print("")
+    print("Prefilled issue link (summary only):")
+    print(url)
+    if args.open:
+        open_url(url)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

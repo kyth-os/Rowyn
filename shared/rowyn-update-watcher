@@ -1,0 +1,84 @@
+#!/bin/bash
+# rowyn-update-watcher — automatic background staging of Rowyn updates.
+#
+# Reads the update policy, then runs rowyn-safe-upgrade with
+# ROWYN_UPDATE_AUTO=1 (which enforces the AC-power / metered-connection
+# gates and the shared bootc lock). The staged update applies on the next
+# reboot. A deferral or a refusing policy is exit 0: not a failure.
+set -uo pipefail
+
+POLICY_ETC=${ROWYN_POLICY_ETC:-/etc/rowyn/update-policy.conf}
+POLICY_DEFAULT=${ROWYN_POLICY_DEFAULT:-/usr/share/rowyn/update-policy.conf}
+SAFE_UPGRADE=${ROWYN_SAFE_UPGRADE:-/usr/bin/rowyn-safe-upgrade}
+
+log() { echo "rowyn-update-watcher: $*"; }
+
+AutoStage=yes
+AllowOnBattery=no
+AllowMetered=no
+
+# Strict line-by-line parse; never source/eval the file. Returns 1 with a
+# reason in $policy_error on any problem.
+policy_error=
+parse_policy() {
+    local file=$1 line n=0 key val
+    local re='^[[:space:]]*([A-Za-z]+)[[:space:]]*=[[:space:]]*([A-Za-z]+)[[:space:]]*$'
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        line=${line%$'\r'}
+        if [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]]; then
+            continue
+        fi
+        if [[ ! "$line" =~ $re ]]; then
+            policy_error="$file:$n: malformed line"
+            return 1
+        fi
+        key=${BASH_REMATCH[1]}
+        val=${BASH_REMATCH[2]}
+        case "$val" in
+            yes|no) ;;
+            *) policy_error="$file:$n: bad value for $key (expected yes or no)"; return 1 ;;
+        esac
+        case "$key" in
+            AutoStage) AutoStage=$val ;;
+            AllowOnBattery) AllowOnBattery=$val ;;
+            AllowMetered) AllowMetered=$val ;;
+            *) policy_error="$file:$n: unknown key $key"; return 1 ;;
+        esac
+    done <"$file"
+    return 0
+}
+
+main() {
+    local file=$POLICY_DEFAULT
+    [[ -e "$POLICY_ETC" ]] && file=$POLICY_ETC
+    if [[ -e "$file" ]]; then
+        if [[ ! -r "$file" ]] || ! parse_policy "$file"; then
+            log "refusing to auto-stage: invalid update policy (${policy_error:-unreadable: $file})"
+            exit 0
+        fi
+    fi
+    if [[ "$AutoStage" == no ]]; then
+        log "AutoStage=no; automatic staging is disabled by policy"
+        exit 0
+    fi
+
+    export ROWYN_UPDATE_AUTO=1
+    [[ "$AllowOnBattery" == yes ]] && export ROWYN_ALLOW_BATTERY=1
+    [[ "$AllowMetered" == yes ]] && export ROWYN_ALLOW_METERED=1
+
+    log "checking for an update"
+    local out rc
+    out=$("$SAFE_UPGRADE" 2>&1)
+    rc=$?
+    # Drop the Hub progress markers; keep the human-readable tail.
+    out=$(printf '%s\n' "$out" | grep -v '^KYTH_STAGE_PROGRESS' | tail -n 5)
+    if (( rc == 0 )); then
+        log "done: ${out//$'\n'/ | }"
+    else
+        log "failed (exit $rc): ${out//$'\n'/ | }"
+    fi
+    exit "$rc"
+}
+
+main "$@"

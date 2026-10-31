@@ -1,0 +1,18 @@
+# Applies the regulatory domain before NetworkManager scans; see
+# /usr/libexec/rowyn-wifi-regdom. Never fails the boot (the script exits 0).
+[Unit]
+Description=Set Wi-Fi regulatory domain from the system timezone
+Documentation=file:///usr/libexec/rowyn-wifi-regdom
+ConditionPathExists=/usr/sbin/iw
+After=systemd-udev-trigger.service systemd-modules-load.service
+Wants=network-pre.target
+Before=network-pre.target NetworkManager.service wpa_supplicant.service iwd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/rowyn-wifi-regdom
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

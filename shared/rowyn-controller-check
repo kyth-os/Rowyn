@@ -1,0 +1,218 @@
+#!/usr/bin/python3
+"""rowyn-controller-check: read-only game controller readiness report.
+
+Looks at input devices, known USB gamepad IDs, controller kernel modules,
+/dev/uinput access, udev rules and joycond. It changes nothing and always
+exits 0 because it is a diagnostic.
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import shutil
+import sys
+
+# (vendor, product or None for any) -> (label, family)
+USB_IDS = [
+    ("054c", "0ce6", "DualSense", "playstation"),
+    ("054c", "0df2", "DualSense Edge", "playstation"),
+    ("054c", "05c4", "DualShock 4", "playstation"),
+    ("054c", "09cc", "DualShock 4 (v2)", "playstation"),
+    ("057e", "2009", "Switch Pro Controller", "nintendo"),
+    ("057e", "2006", "Joy-Con (L)", "nintendo"),
+    ("057e", "2007", "Joy-Con (R)", "nintendo"),
+    ("045e", "028e", "Xbox 360 controller", "xbox"),
+    ("045e", "02d1", "Xbox One controller", "xbox"),
+    ("045e", "02dd", "Xbox One controller", "xbox"),
+    ("045e", "02ea", "Xbox One S controller", "xbox"),
+    ("045e", "0b12", "Xbox Series controller", "xbox"),
+    ("045e", "0b13", "Xbox Series controller", "xbox"),
+    ("045e", "0291", "Xbox 360 wireless receiver", "xbox"),
+    ("045e", "02fe", "Xbox wireless adapter", "xbox-dongle"),
+    ("045e", "02e6", "Xbox wireless adapter", "xbox-dongle"),
+    ("28de", None, "Steam Controller / Steam Deck", "steam"),
+    ("2dc8", None, "8BitDo controller", "8bitdo"),
+]
+FAMILY_MODULES = {
+    "playstation": ["hid_playstation"],
+    "nintendo": ["hid_nintendo"],
+    "xbox": ["xpad"],
+    "steam": ["hid_steam"],
+}
+MODULES = ["hid_playstation", "hid_nintendo", "xpad", "hid_steam", "joydev", "uinput"]
+NAME_RE = re.compile(r"(?i)controller|gamepad|joypad|joystick|dualsense|dualshock|wireless controller|"
+                     r"xbox|x-box|joy-con|pro controller|steam|8bitdo|stadia")
+KNOWN_VENDORS = ("054c", "045e", "057e", "28de")
+
+
+def can_rw(path):
+    return os.access(path, os.R_OK | os.W_OK)
+
+
+def read(path):
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except Exception:
+        return None
+
+
+def input_devices(sysfs, dev):
+    devs = []
+    for d in sorted(glob.glob(os.path.join(sysfs, "class/input/input*"))):
+        name = read(os.path.join(d, "name")) or "unnamed"
+        has_js = bool(glob.glob(os.path.join(d, "js*")))
+        nodes = sorted(os.path.basename(p) for p in glob.glob(os.path.join(d, "event*")))
+        devs.append({"id": os.path.basename(d), "name": name, "joystick": has_js,
+                     "gamepad_like": has_js or bool(NAME_RE.search(name)), "nodes": nodes})
+    return devs
+
+
+def usb_controllers(sysfs):
+    found = []
+    for d in sorted(glob.glob(os.path.join(sysfs, "bus/usb/devices/*"))):
+        v = (read(os.path.join(d, "idVendor")) or "").lower()
+        p = (read(os.path.join(d, "idProduct")) or "").lower()
+        if not v:
+            continue
+        for iv, ip, label, fam in USB_IDS:
+            if v == iv and (ip is None or p == ip):
+                found.append({"id": "%s:%s" % (v, p), "label": label, "family": fam})
+                break
+    return found
+
+
+def loaded_modules(sysfs, proc_modules):
+    names = set()
+    text = read(proc_modules) if proc_modules else None
+    if text:
+        names |= {l.split()[0] for l in text.splitlines() if l.split()}
+    return {m: (m in names or os.path.isdir(os.path.join(sysfs, "module", m))) for m in MODULES}
+
+
+def udev_rules_ok(rules_dirs):
+    for d in rules_dirs:
+        if os.path.isfile(os.path.join(d, "60-steam-input.rules")):
+            return True
+        for f in glob.glob(os.path.join(d, "*.rules")):
+            t = read(f) or ""
+            if "uaccess" in t and any(v in t.lower() for v in KNOWN_VENDORS):
+                return True
+    return False
+
+
+def check(sysfs="/sys", dev="/dev", proc_modules="/proc/modules",
+          rules_dirs=("/usr/lib/udev/rules.d", "/etc/udev/rules.d")):
+    findings = []
+
+    def add(name, status, detail, hint=""):
+        findings.append({"name": name, "status": status, "detail": detail, "hint": hint})
+
+    devices = input_devices(sysfs, dev)
+    jsnodes = sorted(os.path.basename(p) for p in glob.glob(os.path.join(dev, "input/js*")))
+    events = sorted(os.path.basename(p) for p in glob.glob(os.path.join(dev, "input/event*")))
+    pads = [d for d in devices if d["gamepad_like"]]
+    if pads:
+        add("Input devices", "ok", "%d controller-like device(s): %s" % (
+            len(pads), ", ".join(d["name"] for d in pads)))
+    else:
+        add("Input devices", "warn", "no controller-like input device found (%d input devices, %d event nodes, %d js nodes)"
+            % (len(devices), len(events), len(jsnodes)),
+            "Plug in or pair a controller, then run this check again.")
+    if pads and not jsnodes:
+        add("Joystick nodes", "info", "no /dev/input/js* nodes",
+            "Most games and Steam use the event nodes, so this is usually fine. "
+            "Load the joydev module only for very old games.")
+
+    usb = usb_controllers(sysfs)
+    mods = loaded_modules(sysfs, proc_modules)
+    if usb:
+        add("USB controllers", "ok", ", ".join("%s (%s)" % (u["label"], u["id"]) for u in usb))
+    else:
+        add("USB controllers", "info", "no known gamepad USB IDs present",
+            "Bluetooth controllers do not show up here.")
+
+    for fam, needed in FAMILY_MODULES.items():
+        present = [u for u in usb if u["family"] == fam]
+        if not present:
+            continue
+        for m in needed:
+            if not mods.get(m):
+                add("Driver for %s" % present[0]["label"], "fail",
+                    "%s is not loaded or built in" % m,
+                    "The kernel driver %s was not detected. Try 'sudo modprobe %s'; if that fails "
+                    "the running kernel may not include it, so report it with rowyn-report." % (m, m))
+            else:
+                add("Driver for %s" % present[0]["label"], "ok", "%s available" % m)
+    if any(u["family"] == "xbox-dongle" for u in usb):
+        add("Xbox wireless adapter", "warn",
+            "the Microsoft wireless adapter needs an out-of-tree driver that is not part of the kernel",
+            "Wired Xbox controllers and Bluetooth work out of the box; the adapter usually needs the "
+            "xone driver, which Rowyn does not ship.")
+    if any(u["family"] == "8bitdo" for u in usb):
+        add("8BitDo controller", "info", "8BitDo pads work through the generic or Xbox driver",
+            "If it is not recognised, switch the pad to its Xbox or Switch mode (see its manual).")
+
+    for m in MODULES:
+        add("Module %s" % m, "ok" if mods[m] else "info",
+            "loaded or built in" if mods[m] else "not detected")
+
+    uin = os.path.join(dev, "uinput")
+    if not os.path.exists(uin):
+        add("uinput", "warn", "%s is missing" % uin,
+            "Remappers and Steam Input virtual pads need it. Try 'sudo modprobe uinput'.")
+    elif can_rw(uin):
+        add("uinput", "ok", "%s is present and usable by your user" % uin)
+    else:
+        add("uinput", "warn", "%s exists but your user cannot read and write it" % uin,
+            "Steam Input and remappers need access. Installing steam-devices (udev rules) grants it "
+            "to the logged-in user.")
+
+    if udev_rules_ok(rules_dirs):
+        add("udev rules", "ok", "a game controller access rule is installed")
+    else:
+        add("udev rules", "warn", "no game controller udev rule found (60-steam-input.rules)",
+            "Without it, some controllers are not usable by games running as your user. "
+            "The steam-devices package provides the rule.")
+
+    if shutil.which("joycond"):
+        add("joycond", "ok", "joycond is installed")
+    else:
+        add("joycond", "info", "joycond is not installed",
+            "Only needed to pair Joy-Con pairs and some Switch Pro features as one controller; "
+            "it is not in the image by default.")
+    return {"findings": findings, "devices": devices, "usb": usb}
+
+
+def render_text(result):
+    out = ["Controller Check", ""]
+    for f in result["findings"]:
+        out.append("%-5s %-28s %s" % (f["status"].upper(), f["name"], f["detail"]))
+        if f["hint"]:
+            out.append("      -> " + f["hint"])
+    bad = [f for f in result["findings"] if f["status"] == "fail"]
+    warn = [f for f in result["findings"] if f["status"] == "warn"]
+    out += ["", "Result: controller readiness " +
+            ("has failures." if bad else "has warnings." if warn else "is clean.")]
+    return "\n".join(out)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="rowyn-controller-check", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--sysfs-root", default="/sys", help=argparse.SUPPRESS)
+    ap.add_argument("--dev-root", default="/dev", help=argparse.SUPPRESS)
+    ap.add_argument("--proc-modules", default="/proc/modules", help=argparse.SUPPRESS)
+    ap.add_argument("--rules-dir", action="append", help=argparse.SUPPRESS)
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    args = ap.parse_args(argv)
+    kw = {}
+    if args.rules_dir:
+        kw["rules_dirs"] = tuple(args.rules_dir)
+    result = check(args.sysfs_root, args.dev_root, args.proc_modules, **kw)
+    print(json.dumps(result, indent=2) if args.json else render_text(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

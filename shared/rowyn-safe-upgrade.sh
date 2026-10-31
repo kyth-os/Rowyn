@@ -6,6 +6,12 @@
 # boot-health quarantine policy has no Rowyn equivalent and is not
 # ported):
 #
+#   * automatic staging (rowyn-update-watcher) sets ROWYN_UPDATE_AUTO=1:
+#     then, and only then, the stage is deferred (exit 0, a "Deferred: ..."
+#     line, nothing staged) while on battery power, on a metered
+#     connection, or while another upgrade holds the lock. The watcher
+#     exports ROWYN_ALLOW_BATTERY=1 / ROWYN_ALLOW_METERED=1 from the
+#     policy file to waive a gate. A manual run (Hub) is never gated.
 #   * invoked with no arguments, as root, via `sudo -A` from the Hub's
 #     bootc_upgrade command (any argument is a usage error, exit 64)
 #   * progress streams on stdout as marker lines
@@ -28,6 +34,9 @@ readonly LOCK_FILE=/run/rowyn-bootc.lock
 readonly BOOTC_TIMEOUT_SECS=3600
 readonly TERM_GRACE_SECS=10
 readonly SYSROOT_FREE_MIN_BYTES=$((2 * 1024 * 1024 * 1024))
+
+# Sysfs root and NetworkManager lookups are overridable for tests only.
+POWER_SUPPLY_DIR=${ROWYN_POWER_SUPPLY_DIR:-/sys/class/power_supply}
 
 workdir=
 child=
@@ -81,6 +90,73 @@ check_free() {
         return 1
     fi
     return 0
+}
+
+# True (0) when the machine is running on battery. A desktop (no battery
+# device), an unreadable sysfs, or anything ambiguous is NOT on battery.
+on_battery() {
+    local dir=$POWER_SUPPLY_DIR d type online status
+    local have_battery=0 have_mains=0 mains_online=0 discharging=0
+    [[ -d "$dir" ]] || return 1
+    for d in "$dir"/*; do
+        [[ -r "$d/type" ]] || continue
+        type=$(tr -d '[:space:]' <"$d/type" 2>/dev/null) || continue
+        case "$type" in
+            Battery)
+                have_battery=1
+                status=$(tr -d '[:space:]' <"$d/status" 2>/dev/null || true)
+                [[ "$status" == Discharging ]] && discharging=1
+                ;;
+            Mains|USB*)
+                online=$(tr -d '[:space:]' <"$d/online" 2>/dev/null || true)
+                if [[ "$online" == 1 ]]; then
+                    have_mains=1; mains_online=1
+                elif [[ "$online" == 0 ]]; then
+                    have_mains=1
+                fi
+                ;;
+        esac
+    done
+    (( have_battery )) || return 1
+    (( mains_online )) && return 1
+    if (( have_mains )); then
+        return 0
+    fi
+    # Battery but no readable adapter device: trust the battery's status.
+    (( discharging ))
+}
+
+# True (0) when NetworkManager reports a metered connection (value 1 = yes,
+# 3 = guess-yes). Missing nmcli/busctl or any error means "not metered".
+on_metered_connection() {
+    local out line
+    if command -v nmcli >/dev/null 2>&1; then
+        out=$(timeout 10 nmcli -g GENERAL.METERED dev show 2>/dev/null) || return 1
+        while IFS= read -r line; do
+            line=${line,,}
+            case "$line" in
+                yes|"yes (guessed)"|guess-yes|1|3) return 0 ;;
+            esac
+        done <<<"$out"
+        return 1
+    fi
+    if command -v busctl >/dev/null 2>&1; then
+        out=$(timeout 10 busctl get-property org.freedesktop.NetworkManager \
+            /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Metered 2>/dev/null) || return 1
+        [[ "$out" == "u 1" || "$out" == "u 3" ]] && return 0
+    fi
+    return 1
+}
+
+auto_gates() {
+    if [[ "${ROWYN_ALLOW_BATTERY:-0}" != 1 ]] && on_battery; then
+        echo "Deferred: running on battery power; will retry later."
+        exit 0
+    fi
+    if [[ "${ROWYN_ALLOW_METERED:-0}" != 1 ]] && on_metered_connection; then
+        echo "Deferred: metered connection; will retry later."
+        exit 0
+    fi
 }
 
 json_number() {
@@ -322,6 +398,10 @@ main() {
         fail "bootc is not installed on this system"
     fi
 
+    if [[ "${ROWYN_UPDATE_AUTO:-0}" == 1 ]]; then
+        auto_gates
+    fi
+
     workdir=$(mktemp -d)
 
     # Only the physical root needs headroom here. Rowyn boots composefs with
@@ -331,6 +411,10 @@ main() {
 
     exec 9>"$LOCK_FILE"
     if ! flock -n 9; then
+        if [[ "${ROWYN_UPDATE_AUTO:-0}" == 1 ]]; then
+            echo "Deferred: another bootc upgrade is in progress; will retry later."
+            exit 0
+        fi
         fail "Another bootc upgrade is in progress; retry later"
     fi
 

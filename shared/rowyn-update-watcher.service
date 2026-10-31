@@ -1,0 +1,24 @@
+[Unit]
+Description=Rowyn automatic update staging
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/rowyn-update-watcher
+SyslogIdentifier=rowyn-update-watcher
+# No ConditionACPower=true on purpose: rowyn-safe-upgrade checks AC power
+# itself, so desktops without a battery work and the policy file can
+# override the gate. A deferral exits 0 so the timer never shows failed.
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryHigh=512M
+MemoryMax=1G
+TimeoutStartSec=2400
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# Deliberately NO ProtectSystem/ProtectHome/PrivateTmp or other mount-
+# namespace hardening: Kyth found these break bootc ("Reading
+# /proc/1/ns/mnt: Permission denied").

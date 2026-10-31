@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically stage Rowyn updates
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=6h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

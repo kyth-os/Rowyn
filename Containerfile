@@ -153,7 +153,8 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         iputils-tracepath mtr-tiny netcat-openbsd lsof strace tcpdump hdparm \
         rfkill plocate manpages bash-completion command-not-found pastebinit \
         kwin-wayland plasma-workspace plasma-session-x11 \
-        power-profiles-daemon systemd-zram-generator gamemode steam-devices && \
+        power-profiles-daemon systemd-zram-generator gamemode steam-devices \
+        systemd-oomd iw && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -292,10 +293,15 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/performance-defaults.sh --root /
 
-# Desktop tuning: I/O schedulers, journald caps, Baloo off, and PipeWire
-# low-latency quantum applied only while GameMode is active.
+# Desktop tuning: I/O schedulers, journald caps, Baloo off, PipeWire
+# low-latency quantum and the performance power profile applied only while
+# GameMode is active, systemd-oomd thresholds, sleep policy, slice weights,
+# PowerDevil profile defaults, and the timezone-derived Wi-Fi regulatory
+# domain (rowyn-wifi-regdom, which needs the iw package above; systemd-oomd
+# is not pulled in by any KDE package, so it is named explicitly and enabled).
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/shared/desktop-tuning.sh --root /
+    /ctx/shared/desktop-tuning.sh --root / && \
+    systemctl enable rowyn-wifi-regdom.service systemd-oomd.service systemd-oomd.socket
 
 # GPU driver selection. One image serves every machine: the nvidia open
 # modules and nouveau are both installed, neither is in the initramfs, and
@@ -344,6 +350,24 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm755 /ctx/shared/rowyn-finalize-staged.sh /usr/libexec/rowyn-finalize-staged && \
     install -Dm440 /ctx/shared/rowyn-upgrade.sudoers /etc/sudoers.d/rowyn-upgrade && \
     visudo -cf /etc/sudoers.d/rowyn-upgrade
+
+# Support tools: local-only scrubbed bug report and controller readiness check
+# (python3 standard library only; both are read-only and make no network calls).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/rowyn-report /usr/bin/rowyn-report && \
+    install -Dm755 /ctx/shared/rowyn-controller-check /usr/bin/rowyn-controller-check && \
+    for t in rowyn-report rowyn-controller-check; do \
+      python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)" /usr/bin/$t /tmp/$t.pyc && \
+      rm -f /tmp/$t.pyc; \
+    done
+
+# Automatic background staging (policy-gated; applies on next reboot).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/rowyn-update-watcher /usr/libexec/rowyn-update-watcher && \
+    install -Dm644 /ctx/shared/update-policy.conf /usr/share/rowyn/update-policy.conf && \
+    install -Dm644 /ctx/shared/rowyn-update-watcher.service /usr/lib/systemd/system/rowyn-update-watcher.service && \
+    install -Dm644 /ctx/shared/rowyn-update-watcher.timer /usr/lib/systemd/system/rowyn-update-watcher.timer && \
+    systemctl enable rowyn-update-watcher.timer
 
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release

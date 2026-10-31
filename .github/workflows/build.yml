@@ -181,8 +181,19 @@ jobs:
             test -x /usr/bin/firewall-cmd
             test -x /usr/bin/rowyn-safe-upgrade
             test -x /usr/bin/rowyn-bootc-guard
+            test -x /usr/bin/rowyn-report
+            test -x /usr/bin/rowyn-controller-check
+            rowyn-report --stdout --no-sudo > /tmp/rowyn-report.out
+            grep -Fq Rowyn /tmp/rowyn-report.out
+            ! grep -Eq "/home/[A-Za-z]" /tmp/rowyn-report.out
+            rowyn-controller-check --json | python3 -m json.tool > /dev/null
             test -x /usr/libexec/rowyn-finalize-staged
             test -s /etc/sudoers.d/rowyn-upgrade
+            test -x /usr/libexec/rowyn-update-watcher
+            test -s /usr/lib/systemd/system/rowyn-update-watcher.service
+            test -s /usr/lib/systemd/system/rowyn-update-watcher.timer
+            test -s /usr/share/rowyn/update-policy.conf
+            test -e /etc/systemd/system/timers.target.wants/rowyn-update-watcher.timer
             # New accounts are seeded a permissive per-user containers
             # policy (rootless podman/distrobox pulls from any registry);
             # the strict system policy in /etc/containers stays untouched
@@ -249,6 +260,30 @@ jobs:
             test -x /usr/libexec/rowyn-gamemode-audio
             grep -Fqx "start=/usr/libexec/rowyn-gamemode-audio start" /etc/gamemode.ini
             grep -Fqx "end=/usr/libexec/rowyn-gamemode-audio end" /etc/gamemode.ini
+            test -x /usr/libexec/rowyn-gamemode-power
+            grep -Fqx "start=/usr/libexec/rowyn-gamemode-power start" /etc/gamemode.ini
+            grep -Fqx "end=/usr/libexec/rowyn-gamemode-power end" /etc/gamemode.ini
+            test -x /usr/bin/powerprofilesctl
+            test -x /usr/lib/systemd/systemd-oomd
+            test -e /etc/systemd/system/multi-user.target.wants/systemd-oomd.service
+            test -e /etc/systemd/system/sockets.target.wants/systemd-oomd.socket
+            grep -Fqx "SwapUsedLimit=85%" /usr/lib/systemd/oomd.conf.d/90-rowyn.conf
+            grep -Fqx "DefaultMemoryPressureLimit=65%" /usr/lib/systemd/oomd.conf.d/90-rowyn.conf
+            grep -Fqx "DefaultMemoryPressureDurationSec=40s" /usr/lib/systemd/oomd.conf.d/90-rowyn.conf
+            grep -Fqx "ManagedOOMMemoryPressure=kill" /usr/lib/systemd/system/user.slice.d/90-rowyn-oomd.conf
+            grep -Fqx "ManagedOOMMemoryPressureLimit=65%" /usr/lib/systemd/system/user@.service.d/90-rowyn-oomd.conf
+            grep -Fqx "AllowHibernation=no" /usr/lib/systemd/sleep.conf.d/90-rowyn.conf
+            grep -Fqx "AllowHybridSleep=no" /usr/lib/systemd/sleep.conf.d/90-rowyn.conf
+            grep -Fqx "SuspendState=mem standby freeze" /usr/lib/systemd/sleep.conf.d/90-rowyn.conf
+            grep -Fqx "CPUWeight=1000" /usr/lib/systemd/system/user.slice.d/90-rowyn-weights.conf
+            grep -Fqx "IOWeight=1000" /usr/lib/systemd/system/user.slice.d/90-rowyn-weights.conf
+            grep -Fqx "PowerProfile=power-saver" /etc/xdg/powerdevilrc
+            test -x /usr/sbin/iw
+            test -s /lib/firmware/regulatory.db
+            test -s /usr/share/zoneinfo/zone1970.tab
+            test -x /usr/libexec/rowyn-wifi-regdom
+            test -s /usr/lib/systemd/system/rowyn-wifi-regdom.service
+            test -e /etc/systemd/system/multi-user.target.wants/rowyn-wifi-regdom.service
             test -x /usr/bin/pw-metadata
             test "$(ls /usr/lib/modules | wc -l)" = 1
             kver=$(ls /usr/lib/modules)

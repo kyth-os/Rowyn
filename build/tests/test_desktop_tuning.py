@@ -141,19 +141,27 @@ class DesktopTuningTests(unittest.TestCase):
                 "-n settings 0 clock.force-quantum 0",
             ])
             # Only the [custom] hooks: the package defaults must not be clobbered.
-            self.assertEqual(ini(root / GAMEMODE), {"custom": {
-                "start": "/usr/libexec/rowyn-gamemode-audio start",
-                "end": "/usr/libexec/rowyn-gamemode-audio end",
-            }})
+            # Repeated keys are appended by GameMode, so check the raw lines;
+            # the audio hook stays first (test_system_defaults covers the rest).
+            lines = [l for l in (root / GAMEMODE).read_text().splitlines()
+                     if l and not l.startswith("#")]
+            self.assertEqual(lines[:3], [
+                "[custom]",
+                "start=/usr/libexec/rowyn-gamemode-audio start",
+                "end=/usr/libexec/rowyn-gamemode-audio end",
+            ])
 
     def test_files_are_commented_and_modes_correct(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertEqual(self.run_helper(root).returncode, 0)
             snap = self.snapshot(root)
-            self.assertEqual(set(snap), {RULES, JOURNALD, BALOO, AUDIO, GAMEMODE})
+            # Files added later are covered by test_system_defaults.
+            self.assertTrue({RULES, JOURNALD, BALOO, AUDIO, GAMEMODE} <= set(snap))
             for path, (text, mode) in snap.items():
-                self.assertEqual(mode & 0o777, 0o755 if path == AUDIO else 0o644, path)
+                self.assertEqual(
+                    mode & 0o777,
+                    0o755 if path.startswith("usr/libexec/") else 0o644, path)
                 self.assertTrue(any(l.startswith("#") for l in text.splitlines()), path)
             self.assertFalse(any(p.startswith("var/") for p in snap))
 
