@@ -262,8 +262,13 @@ run_bootc_upgrade() {
     err_offset=0
     err_buffer=
     if (( with_progress_fd )); then
+        # bootc wraps --progress-fd in tokio's unix::pipe::Sender, which
+        # rejects anything that is not a real pipe ("not a pipe") — a plain
+        # file redirect does not work. Hand it the write end of a pipe whose
+        # reader appends to the progress file that drain_progress tails.
         setsid /usr/bin/bootc upgrade --progress-fd 3 \
-            >"$workdir/bootc.out" 2>"$workdir/bootc.err" 3>"$workdir/bootc.progress" &
+            >"$workdir/bootc.out" 2>"$workdir/bootc.err" \
+            3> >(cat >>"$workdir/bootc.progress") &
     else
         setsid /usr/bin/bootc upgrade \
             >"$workdir/bootc.out" 2>"$workdir/bootc.err" &
@@ -289,6 +294,8 @@ run_bootc_upgrade() {
     done
     wait "$child"
     child_status=$?
+    # The pipe reader appends asynchronously; let it flush the last lines.
+    sleep 0.3
     drain_all
     return 0
 }
@@ -333,7 +340,7 @@ main() {
     if (( ! cancelled && ! child_timed_out && child_status != 0 )); then
         # A bootc that predates --progress-fd rejects it before doing any
         # work. Staging without live byte progress beats not staging.
-        if grep -q "unexpected argument '--progress-fd'" "$workdir/bootc.err"; then
+        if grep -qE "unexpected argument '--progress-fd'|not a pipe" "$workdir/bootc.err"; then
             blobs_needed=0
             blobs_done=0
             deploy_steps=0

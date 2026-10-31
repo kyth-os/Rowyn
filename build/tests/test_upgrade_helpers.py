@@ -24,6 +24,76 @@ class SafeUpgradeTests(unittest.TestCase):
         self.assertNotIn("BOOT_FREE_MIN_BYTES", text)
 
 
+class SafeUpgradeProgressPipeTests(unittest.TestCase):
+    """bootc's --progress-fd must be a real pipe ("not a pipe" otherwise).
+
+    Runs the real script, with its fixed paths rewritten into a temp dir,
+    against a fake bootc that enforces what the real one does.
+    """
+
+    FAKE_BOOTC = """#!/bin/sh
+case "$1" in
+upgrade)
+    for arg in "$@"; do
+        if [ "$arg" = "--progress-fd" ]; then
+            if [ ! -p /dev/fd/3 ]; then
+                echo "error: Upgrading composefs: not a pipe" >&2
+                exit 1
+            fi
+            echo '{"type":"ProgressBytes","task":"pulling","bytes":50,"bytesTotal":100,"steps":0,"stepsTotal":2}' >&3
+        fi
+    done
+    echo "Staged update"
+    ;;
+status)
+    echo '{"status":{"staged":{"image":{}}}}'
+    ;;
+esac
+"""
+
+    def run_script(self, fake_bootc: str):
+        with tempfile.TemporaryDirectory(prefix="rowyn-safe-upgrade-") as temp:
+            temp_path = Path(temp)
+            bootc = temp_path / "bootc"
+            bootc.write_text(fake_bootc, encoding="utf-8")
+            bootc.chmod(0o755)
+            finalize = temp_path / "finalize"
+            finalize.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            finalize.chmod(0o755)
+            text = SAFE_UPGRADE.read_text(encoding="utf-8")
+            text = text.replace("/usr/bin/bootc", str(bootc))
+            text = text.replace("/run/rowyn-bootc.lock", str(temp_path / "lock"))
+            text = text.replace("/usr/libexec/rowyn-finalize-staged", str(finalize))
+            script = temp_path / "rowyn-safe-upgrade"
+            script.write_text(text, encoding="utf-8")
+            return subprocess.run(["bash", str(script)], capture_output=True,
+                                  text=True, timeout=60)
+
+    @unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
+    def test_progress_fd_is_a_pipe_and_progress_is_streamed(self):
+        result = self.run_script(self.FAKE_BOOTC)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("not a pipe", result.stderr)
+        # 85 * 50 / 100 = 42: the byte progress written to the pipe reached
+        # the Hub's marker stream.
+        self.assertIn("KYTH_STAGE_PROGRESS pct=42", result.stdout)
+
+    @unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
+    def test_falls_back_without_progress_when_the_fd_is_rejected(self):
+        always_rejects = self.FAKE_BOOTC.replace(
+            'if [ ! -p /dev/fd/3 ]; then',
+            'if true; then',
+        )
+        result = self.run_script(always_rejects)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("KYTH_STAGE_PROGRESS pct=42", result.stdout)
+
+    def test_script_never_redirects_fd3_to_a_regular_file(self):
+        text = SAFE_UPGRADE.read_text(encoding="utf-8")
+        self.assertNotIn('3>"$workdir/bootc.progress"', text)
+        self.assertIn('3> >(cat >>"$workdir/bootc.progress")', text)
+
+
 class FinalizeStagedTests(unittest.TestCase):
     def run_finalize(self, cmdline: str, *args: str) -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory(prefix="rowyn-finalize-") as temp:
