@@ -166,6 +166,46 @@ class HubPortContractTests(unittest.TestCase):
         self.assertIn("ID=rowyn", script)
         self.assertIn("Rowyn identity: /usr/lib/os-release is not ID=rowyn", script)
 
+    def test_port_script_carries_legacy_junk_cut(self):
+        script = (ROOT / "build/ubuntu-hub-source.py").read_text()
+        # The cut's machinery and anchors must stay in the port: the
+        # shared-crate bin strip, the closure prune with its pgp removal,
+        # and the cargo lock re-sync (a Python re-implementation of the
+        # lock rewrite kept optional deps the pgp subtree had activated,
+        # so cargo itself performs it).
+        for anchor in ("strip_shared_crate_bins", "prune_shared_crate",
+                       "sync_cargo_lock", '"cargo", "fetch"',
+                       "OpenPGP verification for the KythOS-signed updater manifest",
+                       "src/data/com.kythos.hub.desktop", "src/data/kyth-welcome.desktop",
+                       "commands::gaming::gaming_tools,",
+                       "commands::dev_tools::dev_tools_job_cancel,",
+                       "pub(crate) struct JustRecipeResponse {",
+                       "fn hub_action_deserializes_allowlisted_recipe() {",
+                       "Process-wide single-flight for MUTATING Hub actions",
+                       "use std::collections::HashMap;",
+                       "pub(crate) fn validate_flatpak_id("):
+            self.assertIn(anchor, script)
+        self.assertEqual(hub.SHARED_CRATE_BIN_FILES, 92)
+        self.assertEqual(hub.SHARED_CRATE_BIN_SECTIONS, 91)
+        keep = set(hub.SHARED_CRATE_KEEP_MODULES)
+        self.assertEqual(len(keep), 58)
+        # Load-bearing core stays; the audit's dead set — including the
+        # whole runtime-updater/PGP heritage and the modules the shell
+        # cuts orphaned (system::just, the shared privileged protocol) —
+        # stays out.
+        for kept in ("system::bootc_query", "system::boot_health", "system::vpn_saml",
+                     "system::security_container", "system::mok_verify",
+                     "system::software_catalog", "system::installer_validation",
+                     "transfer", "url_encode"):
+            self.assertIn(kept, keep)
+        for dead in ("guardian", "privileged", "config_loader", "system::just",
+                     "system::installer_source", "system::update_manifest",
+                     "system::updater", "system::update_coordinator",
+                     "system::release_fetch", "system::signing",
+                     "system::tailscale_preset", "system::session_snapshot",
+                     "system::gaming_tools", "system::ai_dev"):
+            self.assertNotIn(dead, keep)
+
     def test_port_script_carries_slice_15_cuts(self):
         script = (ROOT / "build/ubuntu-hub-source.py").read_text()
         # Slice 1.5's anchors: the Kali card and its backend, the
@@ -511,6 +551,97 @@ class PinnedHubSourceTests(unittest.TestCase):
             self.assertNotIn("ailscale", vpn_section)
             self.assertNotIn("ailscale", (web / "src/pages/Vpn.tsx").read_text())
             self.assertIn("Open full VPN connection", vpn_section)
+
+    def test_legacy_junk_cut(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-junk-") as temp:
+            root = Path(temp) / "export"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            web = root / "src/kyth-hub-web"
+            crate = web / "src-tauri"
+            shared = root / "src/kyth-shared-rs"
+
+            # Item 2: orphaned Kyth desktop data files are gone; the
+            # provenance data kept for a future Play surface is not.
+            self.assertFalse((web / "src/data/com.kythos.hub.desktop").exists())
+            self.assertFalse((web / "src/data/kyth-welcome.desktop").exists())
+            self.assertTrue((web / "src/data/compat_games.json").is_file())
+
+            # Item 4: gaming/dev-tools command modules and registrations.
+            self.assertFalse((crate / "src/commands/gaming.rs").exists())
+            self.assertFalse((crate / "src/commands/dev_tools.rs").exists())
+            commands_mod = (crate / "src/commands/mod.rs").read_text()
+            self.assertNotIn("mod gaming", commands_mod)
+            self.assertNotIn("mod dev_tools", commands_mod)
+            main = (crate / "src/main.rs").read_text()
+            self.assertNotIn("commands::gaming::", main)
+            self.assertNotIn("commands::dev_tools::", main)
+
+            # Item 5: no just recipe runner remains in the shell.
+            updates = (crate / "src/commands/updates.rs").read_text()
+            for gone in ("HubAction", "run_hub_action", "just_list",
+                         "hub_action_jobs", "system::just"):
+                self.assertNotIn(gone, updates, gone)
+            for gone in ("commands::updates::just_list", "commands::updates::run_hub_action",
+                         "commands::updates::hub_action_status",
+                         "commands::updates::hub_action_cancel"):
+                self.assertNotIn(gone, main, gone)
+            job = (crate / "src/commands/job.rs").read_text()
+            self.assertNotIn("take_hub_action_slot", job)
+            self.assertNotIn("HUB_ACTION_MUTATING", job)
+            self.assertIn("take_flatpak_slot", job)
+
+            # Item 6: the privileged-socket client is gone; the Flatpak
+            # id gate main.rs depends on survives.
+            privilege = (crate / "src/commands/privilege.rs").read_text()
+            for gone in ("privileged.sock", "connect_privileged_socket",
+                         "connect_unix_with_timeout", "privileged_action",
+                         "fn flatpak_update", "fn flatpak_uninstall",
+                         "validated_request"):
+                self.assertNotIn(gone, privilege, gone)
+            self.assertIn("pub(crate) fn validate_flatpak_id", privilege)
+            self.assertNotIn("commands::privilege::privileged_action", main)
+            self.assertIn("commands::privilege::validate_flatpak_id", main)
+
+            # Kept functionality is still registered (guard against
+            # over-cutting): updates, VPN, security grid, exe handler.
+            for kept in ("commands::updates::bootc_upgrade",
+                         "commands::vpn::vpn_connect",
+                         "commands::security::sec_host_tools",
+                         "commands::security::security_job_status"):
+                self.assertIn(kept, main, kept)
+
+            # Items 1 + 7: the shared crate is pruned to the keep set —
+            # no bin sources, no [[bin]] sections, no pgp, and exactly
+            # the reviewed module files.
+            self.assertEqual(list((shared / "src").glob("*_bin.rs")), [])
+            manifest = (shared / "Cargo.toml").read_text()
+            self.assertNotIn("[[bin]]", manifest)
+            self.assertNotIn("pgp", manifest)
+            remaining = sorted(
+                str(p.relative_to(shared / "src"))
+                for p in (shared / "src").rglob("*.rs"))
+            keep = set(hub.SHARED_CRATE_KEEP_MODULES)
+            expected = sorted(
+                ["lib.rs", "system/mod.rs"]
+                + [f"{name}.rs" for name in keep if "::" not in name and name != "system"]
+                + [f"system/{name.rsplit('::', 1)[-1]}.rs"
+                   for name in keep if name.startswith("system::")])
+            self.assertEqual(remaining, expected)
+            for gone in ("system/update_manifest.rs", "system/updater.rs",
+                         "system/update_coordinator.rs", "system/release_fetch.rs",
+                         "system/signing.rs", "system/just.rs",
+                         "system/installer_source.rs", "guardian.rs",
+                         "privileged.rs", "config_loader.rs"):
+                self.assertFalse((shared / "src" / gone).exists(), gone)
+            for kept in ("system/bootc_query.rs", "system/vpn_saml.rs",
+                         "system/security_container.rs", "transfer.rs"):
+                self.assertTrue((shared / "src" / kept).is_file(), kept)
+            lock = (crate / "Cargo.lock").read_text()
+            lock_names = {block.split('"')[1] for block in lock.split("[[package]]")[1:]
+                          if 'name = "' in block}
+            self.assertNotIn("pgp", lock_names)
 
     def test_no_upstream_branding_survives_port(self):
         repo = _pinned_repo()

@@ -18,11 +18,211 @@ PATHS = ("src/kyth-installer-web", "src/kyth-shared-rs",
          "build_files/kyth-launch-installer", "build_files/kyth-installerd.service", "LICENSE")
 IDENTITY = "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main"
 
+# --- Legacy junk cut (approved by Patrick, Oct 30, 2026) -------------------
+# Identical shared-crate cut to the Hub port's (the two scripts each carry
+# it, as they already duplicate the export/replace helpers): the crate's
+# 92 helper-binary targets are exported although neither image build
+# compiles any of them, and only the modules in SHARED_CRATE_KEEP_MODULES
+# — the two shells' reviewed reachability closure — survive; the rest
+# leave with their declarations, along with the pgp dependency only the
+# pruned updater-manifest verifier used. The installer additionally drops
+# its never-built Slint native UI (the ISO builds only the Tauri shell,
+# the daemon, and the executor), and stops rewriting
+# system::installer_source, a module no shipped frontend references.
+SHARED_CRATE_BIN_FILES = 92
+SHARED_CRATE_BIN_SECTIONS = 91
+SHARED_CRATE_KEEP_MODULES = (
+    "atomic_io",
+    "commands",
+    "diagnostic_report",
+    "diagnostics_scrub",
+    "system",
+    "system::account",
+    "system::app_suggestions",
+    "system::boot_health",
+    "system::boot_runtime",
+    "system::bootc",
+    "system::bootc_policy",
+    "system::bootc_query",
+    "system::btrfs_status",
+    "system::cloud_oauth",
+    "system::controllers",
+    "system::deployment_history",
+    "system::desktop_stack",
+    "system::drivers",
+    "system::drives",
+    "system::exe_trust",
+    "system::firmware",
+    "system::firstboot",
+    "system::fonts_ready",
+    "system::gaming_compat",
+    "system::gaming_library",
+    "system::gaming_slice",
+    "system::gpu",
+    "system::hardware_policy",
+    "system::hardware_view",
+    "system::installer_validation",
+    "system::jobs",
+    "system::memory_pressure",
+    "system::mesa_version",
+    "system::mok_verify",
+    "system::network_identity",
+    "system::network_preset",
+    "system::pipewire",
+    "system::plasma_hdr",
+    "system::printing",
+    "system::probe",
+    "system::process",
+    "system::recovery_status",
+    "system::registry",
+    "system::runtime_output",
+    "system::security_container",
+    "system::smb",
+    "system::snapshot",
+    "system::software_catalog",
+    "system::storage",
+    "system::telemetry",
+    "system::update_availability",
+    "system::update_status",
+    "system::updates_unified",
+    "system::vpn_saml",
+    "system::windows_installer",
+    "system::windows_verify",
+    "transfer",
+    "url_encode",
+)
+
 
 def replace_once(text, old, new):
     if text.count(old) != 1:
         raise ValueError(f"expected exactly one source anchor: {old[:100]!r}")
     return text.replace(old, new)
+
+
+def strip_shared_crate_bins(root):
+    """Delete the shared crate's helper-binary sources and their [[bin]]
+    manifest sections. Neither image build compiles them (the payload
+    builds only the Hub shell package; the ISO names its three installer
+    bins explicitly), and a [[bin]] section naming a deleted file — or a
+    file left behind with no section — would break the crate's manifest,
+    so the two leave together, counted."""
+    crate = root / "src/kyth-shared-rs"
+    bins = sorted((crate / "src").glob("*_bin.rs"))
+    if len(bins) != SHARED_CRATE_BIN_FILES:
+        raise ValueError(
+            f"expected {SHARED_CRATE_BIN_FILES} shared-crate bin sources, found {len(bins)}")
+    manifest_path = crate / "Cargo.toml"
+    lines = manifest_path.read_text().splitlines(keepends=True)
+    kept, sections, index = [], 0, 0
+    while index < len(lines):
+        if lines[index].rstrip() == "[[bin]]":
+            sections += 1
+            index += 1
+            while index < len(lines) and not lines[index].startswith("["):
+                index += 1
+            continue
+        kept.append(lines[index])
+        index += 1
+    if sections != SHARED_CRATE_BIN_SECTIONS:
+        raise ValueError(
+            f"expected {SHARED_CRATE_BIN_SECTIONS} [[bin]] sections, found {sections}")
+    manifest_path.write_text("".join(kept))
+    for path in bins:
+        path.unlink()
+    return f"{len(bins)} bin sources + {sections} [[bin]] sections"
+
+
+def prune_shared_crate(root):
+    """Drop the shared crate's unreviewed library modules and the pgp
+    dependency. A module survives only if it is in
+    SHARED_CRATE_KEEP_MODULES (the shells' reachability closure); its
+    file and its `pub mod` declaration leave together, and the manifest
+    loses the rPGP dependency only the pruned updater-manifest verifier
+    used. Fails closed when a kept module is missing upstream or the
+    declared set afterwards is not exactly the keep set."""
+    crate = root / "src/kyth-shared-rs"
+    manifest_path = crate / "Cargo.toml"
+    text = manifest_path.read_text()
+    text = replace_once(
+        text,
+        "# OpenPGP verification for the KythOS-signed updater manifest (see\n"
+        "# system/update_manifest.rs). rPGP: pure Rust, so the same code builds\n"
+        "# on the dev VM, in CI, and in the Fedora image with no system crypto\n"
+        "# libraries. Verify-only use — nothing here can sign.\n"
+        "pgp = \"0.19\"\n",
+        "")
+    manifest_path.write_text(text)
+
+    keep = set(SHARED_CRATE_KEEP_MODULES)
+    dropped = []
+    for modfile, prefix in ((crate / "src/lib.rs", ""), (crate / "src/system/mod.rs", "system::")):
+        lines = modfile.read_text().splitlines(keepends=True)
+        declared = {}
+        for index, line in enumerate(lines):
+            match = re.fullmatch(r"pub mod ([a-z0-9_]+);", line.rstrip("\n"))
+            if match:
+                declared[prefix + match.group(1)] = index
+        expected_here = {name for name in keep
+                         if name.startswith(prefix) and "::" not in name[len(prefix):]}
+        missing = expected_here - set(declared)
+        if missing:
+            raise ValueError(f"kept modules missing from {modfile.name}: {sorted(missing)}")
+        remove = set()
+        for dotted, index in declared.items():
+            if dotted in keep:
+                continue
+            remove.add(index)
+            if index > 0 and lines[index - 1].startswith("#[cfg("):
+                remove.add(index - 1)
+            dropped.append(dotted)
+            name = dotted.rsplit("::", 1)[-1]
+            path = (crate / "src" / f"{name}.rs") if not prefix else (crate / "src/system" / f"{name}.rs")
+            if not path.is_file():
+                raise ValueError(f"module file missing for {dotted}: {path}")
+            path.unlink()
+        modfile.write_text("".join(
+            line for index, line in enumerate(lines) if index not in remove))
+    remaining = sorted(
+        str(path.relative_to(crate / "src"))
+        for path in (crate / "src").rglob("*.rs"))
+    expected = sorted(
+        ["lib.rs", "system/mod.rs"]
+        + [f"{name}.rs" for name in keep if "::" not in name and name != "system"]
+        + [f"system/{name.rsplit('::', 1)[-1]}.rs" for name in keep if name.startswith("system::")])
+    if remaining != expected:
+        raise ValueError(
+            f"shared-crate tree after prune is not the keep set: {remaining} != {expected}")
+    return f"{len(dropped)} modules + pgp dependency"
+
+
+def sync_cargo_lock(crate, absent_packages):
+    """Re-sync a shell crate's Cargo.lock with cargo itself after a
+    manifest dependency removal, then assert the removed packages are
+    gone. A --locked build rejects any lock cargo would rewrite, and the
+    exact rewrite (orphan pruning plus multi-version reference
+    normalization) is feature-resolution semantics only cargo owns.
+    `cargo fetch` performs the conservative sync: locked versions are
+    preserved, only the removed subtrees leave. Fails closed when cargo
+    is unavailable or errors."""
+    import shutil
+    if shutil.which("cargo") is None:
+        raise ValueError("cargo is required to re-sync Cargo.lock after a dependency removal")
+    result = subprocess.run(
+        ["cargo", "fetch"], cwd=crate, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(
+            f"cargo fetch failed to re-sync {crate}/Cargo.lock: {result.stderr[-400:]}")
+    lock = (crate / "Cargo.lock").read_text()
+    present = set()
+    for block in lock.split("[[package]]")[1:]:
+        for line in block.splitlines():
+            if line.startswith('name = "'):
+                present.add(line.split('"')[1])
+                break
+    survivors = sorted(set(absent_packages) & present)
+    if survivors:
+        raise ValueError(f"packages still in Cargo.lock after sync: {survivors}")
+    return f"{len(present)} packages remain"
 
 
 def adapt_installer_service(text):
@@ -493,22 +693,12 @@ pub(crate) fn run_output_timeout_capture(
     text = replace_once(text, 'const PROTECTED_MOUNT_TARGETS: [&str; 6]', 'const PROTECTED_MOUNT_TARGETS: [&str; 8]')
     text = replace_once(text, '    "/run/initramfs/iso",', '    "/run/initramfs/iso",\n    "/cdrom",\n    "/isodevice",')
     storage.write_text(text)
-    images = root / "src/kyth-shared-rs/src/system/installer_source.rs"
-    text = images.read_text()
-    start = text.index('pub fn install_images(')
-    end = text.index('\n}\n', start) + 2
-    text = text[:start] + f'''pub const ROWYN_RELEASE_SOURCE: &str = "{source}";
-pub const ROWYN_UPDATE_TARGET: &str = "{target}";
-
-pub fn install_images(_kernel: &str, source_image: &str, _target_image: &str) -> (String, String) {{
-    // The executor rejects any source other than ROWYN_RELEASE_SOURCE. Keep
-    // transport normalization here so a valid docker:// source is not doubled.
-    (source_image_ref(
-        source_image,
-        &format!("docker://{{ROWYN_RELEASE_SOURCE}}"),
-    ), ROWYN_UPDATE_TARGET.to_string())
-}}''' + text[end:]
-    images.write_text('// Rowyn: immutable Ubuntu source for every frontend.\n' + text)
+    # Legacy junk cut: system::installer_source is no longer rewritten.
+    # Nothing in the Tauri installer references the module (the executor
+    # carries its own ROWYN_RELEASE_SOURCE / ROWYN_UPDATE_TARGET constants
+    # and rejects any other source itself), so the prune below removes
+    # the module from the export entirely instead of the port spending
+    # anchors maintaining a rewrite only the never-built Slint UI used.
     bootc = crate / "src/installer_bootc.rs"
     text = bootc.read_text()
     text = replace_once(text, '        subcommand.clone(),', '        subcommand.clone(),\n        "--bootloader=systemd".to_string(),')
@@ -624,7 +814,46 @@ pub fn install_images(_kernel: &str, source_image: &str, _target_image: &str) ->
     (root / 'ROWYN-PORT-NOTICE').write_text(
         f'Kyth installer source {PIN}, Apache-2.0 (LICENSE).\n'
         'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'
+        'A legacy junk cut removed the never-built Slint native UI (bin target,\n'
+        'native_main.rs, the slint/slint-build dependencies and its build.rs\n'
+        'compile step), the shared crate\'s 92 helper-binary targets, and every\n'
+        'shared-crate library module outside the shells\' reachability closure\n'
+        '(incl. the runtime-updater/PGP heritage and its pgp dependency).\n'
         'Upstream OS/image/ISO assembly scripts are not included or invoked.\n')
+
+    # --- Legacy junk cut -----------------------------------------------------
+    # The Slint native UI is not built or installed (the ISO builds only
+    # kyth-installer-shell / kyth-installerd / kyth-installer-exec), but
+    # slint and slint-build are non-optional dependencies of this crate,
+    # so the whole Slint stack compiled into every ISO build. The bin
+    # target, its source, both dependencies, and the build.rs compile
+    # step leave together.
+    native = crate / "src/native_main.rs"
+    if not native.is_file():
+        raise ValueError("expected upstream native_main.rs to remove")
+    native.unlink()
+    installer_cargo = crate / "Cargo.toml"
+    text = installer_cargo.read_text()
+    text = replace_once(
+        text,
+        '[[bin]]\nname = "kyth-installer-native"\npath = "src/native_main.rs"\n\n',
+        "")
+    text = replace_once(text, 'slint-build = "1.16.0"\n', "")
+    text = replace_once(text, 'slint = "1.16.0"\n', "")
+    installer_cargo.write_text(text)
+    build_rs = crate / "build.rs"
+    text = build_rs.read_text()
+    text = replace_once(
+        text,
+        '    slint_build::compile("ui/installer.slint").expect("failed to compile native installer UI");\n',
+        "")
+    build_rs.write_text(text)
+    # The shared crate gets the same bin strip + closure prune as the Hub
+    # port, then this crate's lock is re-synced for both dependency
+    # removals (slint stack and pgp) in one cargo pass.
+    strip_shared_crate_bins(root)
+    prune_shared_crate(root)
+    sync_cargo_lock(crate, ("pgp", "slint", "slint-build"))
 
     composefs.adapt(root, digest)
     composefs.record(root, digest)

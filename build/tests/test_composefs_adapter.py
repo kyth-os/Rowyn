@@ -223,12 +223,16 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         self.assertIn('verify_esp_bootloaders(&discovered)', assurance)
 
     def test_generated_source_uses_exact_release_source_and_stable_update_target(self):
-        images = (self.root / 'src/kyth-shared-rs/src/system/installer_source.rs').read_text()
-        self.assertIn('ROWYN_RELEASE_SOURCE', images)
-        self.assertIn('ghcr.io/kyth-os/rowyn@sha256:' + 'b' * 64, images)
-        self.assertIn('ROWYN_UPDATE_TARGET', images)
-        self.assertIn('ghcr.io/kyth-os/rowyn:stable', images)
+        # Legacy junk cut: system::installer_source is pruned from the
+        # export (no shipped frontend references it); the release-source
+        # contract lives in the executor's own constants and guards.
+        self.assertFalse(
+            (self.root / 'src/kyth-shared-rs/src/system/installer_source.rs').exists())
         executor = (self.crate / 'installer_job_executor.rs').read_text()
+        self.assertIn('const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@sha256:'
+                      + 'b' * 64 + '";', executor)
+        self.assertIn('const ROWYN_UPDATE_TARGET: &str = "ghcr.io/kyth-os/rowyn:stable";',
+                      executor)
         self.assertIn('self.source_imgref != format!("docker://{ROWYN_RELEASE_SOURCE}")', executor)
         self.assertIn('self.target_imgref != ROWYN_UPDATE_TARGET', executor)
 

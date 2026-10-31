@@ -50,6 +50,83 @@ PATHS = ("src/kyth-hub-web", "src/kyth-shared-rs",
 KEPT_DESTINATIONS = ("Apps", "Updates", "VPN")
 EXPECTED_DESTINATIONS = {"Play", "Apps", "This PC", "Move In", "VPN", "Updates"}
 
+# --- Legacy junk cut (approved by Patrick, Oct 30, 2026) -------------------
+# The audit counted what the two ports pull over from Kyth: the shared
+# crate arrives whole (304 .rs files, ~78k lines) although the two shells
+# between them reach only a minority of its modules, and 92 helper-binary
+# targets are exported although neither image build compiles any of them.
+# The cut below removes, from the exported tree: the helper binaries and
+# their manifest sections, the unused library modules (with the whole
+# runtime-updater/PGP heritage), the pgp dependency that only the updater
+# manifest verifier used, and — on the Hub side — the gaming/dev-tools
+# command modules, the `just` recipe runner, and the privileged-socket
+# client for a root daemon Rowyn does not ship. The keep set is the
+# reviewed reachability closure over the post-cut shells; a module that
+# is not listed is dropped with its declaration, so upstream additions
+# fail the port closed instead of riding along unreviewed.
+SHARED_CRATE_BIN_FILES = 92
+SHARED_CRATE_BIN_SECTIONS = 91
+SHARED_CRATE_KEEP_MODULES = (
+    "atomic_io",
+    "commands",
+    "diagnostic_report",
+    "diagnostics_scrub",
+    "system",
+    "system::account",
+    "system::app_suggestions",
+    "system::boot_health",
+    "system::boot_runtime",
+    "system::bootc",
+    "system::bootc_policy",
+    "system::bootc_query",
+    "system::btrfs_status",
+    "system::cloud_oauth",
+    "system::controllers",
+    "system::deployment_history",
+    "system::desktop_stack",
+    "system::drivers",
+    "system::drives",
+    "system::exe_trust",
+    "system::firmware",
+    "system::firstboot",
+    "system::fonts_ready",
+    "system::gaming_compat",
+    "system::gaming_library",
+    "system::gaming_slice",
+    "system::gpu",
+    "system::hardware_policy",
+    "system::hardware_view",
+    "system::installer_validation",
+    "system::jobs",
+    "system::memory_pressure",
+    "system::mesa_version",
+    "system::mok_verify",
+    "system::network_identity",
+    "system::network_preset",
+    "system::pipewire",
+    "system::plasma_hdr",
+    "system::printing",
+    "system::probe",
+    "system::process",
+    "system::recovery_status",
+    "system::registry",
+    "system::runtime_output",
+    "system::security_container",
+    "system::smb",
+    "system::snapshot",
+    "system::software_catalog",
+    "system::storage",
+    "system::telemetry",
+    "system::update_availability",
+    "system::update_status",
+    "system::updates_unified",
+    "system::vpn_saml",
+    "system::windows_installer",
+    "system::windows_verify",
+    "transfer",
+    "url_encode",
+)
+
 
 def replace_once(text, old, new):
     if text.count(old) != 1:
@@ -84,6 +161,134 @@ def cut_between(text, start, end):
     if finish <= begin:
         raise ValueError(f"cut end anchor precedes its start: {start[:60]!r} .. {end[:60]!r}")
     return text[:begin] + text[finish:]
+
+
+def strip_shared_crate_bins(root):
+    """Delete the shared crate's helper-binary sources and their [[bin]]
+    manifest sections. Neither image build compiles them (the payload
+    builds only the shell package; the ISO names its three installer bins
+    explicitly), and a [[bin]] section naming a deleted file — or a file
+    left behind with no section — would break the crate's manifest, so
+    the two leave together, counted."""
+    crate = root / "src/kyth-shared-rs"
+    bins = sorted((crate / "src").glob("*_bin.rs"))
+    if len(bins) != SHARED_CRATE_BIN_FILES:
+        raise ValueError(
+            f"expected {SHARED_CRATE_BIN_FILES} shared-crate bin sources, found {len(bins)}")
+    manifest_path = crate / "Cargo.toml"
+    lines = manifest_path.read_text().splitlines(keepends=True)
+    kept, sections, index = [], 0, 0
+    while index < len(lines):
+        if lines[index].rstrip() == "[[bin]]":
+            sections += 1
+            index += 1
+            while index < len(lines) and not lines[index].startswith("["):
+                index += 1
+            continue
+        kept.append(lines[index])
+        index += 1
+    if sections != SHARED_CRATE_BIN_SECTIONS:
+        raise ValueError(
+            f"expected {SHARED_CRATE_BIN_SECTIONS} [[bin]] sections, found {sections}")
+    manifest_path.write_text("".join(kept))
+    for path in bins:
+        path.unlink()
+    return f"{len(bins)} bin sources + {sections} [[bin]] sections"
+
+
+def prune_shared_crate(root):
+    """Drop the shared crate's unreviewed library modules and the pgp
+    dependency. A module survives only if it is in
+    SHARED_CRATE_KEEP_MODULES (the shells' reachability closure); its
+    file and its `pub mod` declaration leave together, and the manifest
+    loses the rPGP dependency only the pruned updater-manifest verifier
+    used. Fails closed when a kept module is missing upstream or the
+    declared set afterwards is not exactly the keep set."""
+    import re as _re
+    crate = root / "src/kyth-shared-rs"
+    manifest_path = crate / "Cargo.toml"
+    text = manifest_path.read_text()
+    text = replace_once(
+        text,
+        "# OpenPGP verification for the KythOS-signed updater manifest (see\n"
+        "# system/update_manifest.rs). rPGP: pure Rust, so the same code builds\n"
+        "# on the dev VM, in CI, and in the Fedora image with no system crypto\n"
+        "# libraries. Verify-only use — nothing here can sign.\n"
+        "pgp = \"0.19\"\n",
+        "")
+    manifest_path.write_text(text)
+
+    keep = set(SHARED_CRATE_KEEP_MODULES)
+    dropped = []
+    for modfile, prefix in ((crate / "src/lib.rs", ""), (crate / "src/system/mod.rs", "system::")):
+        lines = modfile.read_text().splitlines(keepends=True)
+        declared = {}
+        for index, line in enumerate(lines):
+            match = _re.fullmatch(r"pub mod ([a-z0-9_]+);", line.rstrip("\n"))
+            if match:
+                declared[prefix + match.group(1)] = index
+        expected_here = {name for name in keep
+                         if name.startswith(prefix) and "::" not in name[len(prefix):]}
+        missing = expected_here - set(declared)
+        if missing:
+            raise ValueError(f"kept modules missing from {modfile.name}: {sorted(missing)}")
+        remove = set()
+        for dotted, index in declared.items():
+            if dotted in keep:
+                continue
+            remove.add(index)
+            if index > 0 and lines[index - 1].startswith("#[cfg("):
+                remove.add(index - 1)
+            dropped.append(dotted)
+            name = dotted.rsplit("::", 1)[-1]
+            path = (crate / "src" / f"{name}.rs") if not prefix else (crate / "src/system" / f"{name}.rs")
+            if not path.is_file():
+                raise ValueError(f"module file missing for {dotted}: {path}")
+            path.unlink()
+        modfile.write_text("".join(
+            line for index, line in enumerate(lines) if index not in remove))
+    remaining = sorted(
+        str(path.relative_to(crate / "src"))
+        for path in (crate / "src").rglob("*.rs"))
+    expected = sorted(
+        ["lib.rs", "system/mod.rs"]
+        + [f"{name}.rs" for name in keep if "::" not in name and name != "system"]
+        + [f"system/{name.rsplit('::', 1)[-1]}.rs" for name in keep if name.startswith("system::")])
+    if remaining != expected:
+        raise ValueError(
+            f"shared-crate tree after prune is not the keep set: {remaining} != {expected}")
+    return f"{len(dropped)} modules + pgp dependency"
+
+
+def sync_cargo_lock(crate, absent_packages):
+    """Re-sync a shell crate's Cargo.lock with cargo itself after a
+    manifest dependency removal, then assert the removed packages are
+    gone. A --locked build rejects any lock cargo would rewrite, and the
+    exact rewrite (orphan pruning plus multi-version reference
+    normalization) is feature-resolution semantics only cargo owns —
+    a past Python re-implementation kept optional dependencies that the
+    removed crate's features had activated. `cargo fetch` performs the
+    conservative sync: locked versions are preserved, only the removed
+    subtrees leave. Fails closed when cargo is unavailable or errors."""
+    import shutil
+    if shutil.which("cargo") is None:
+        raise ValueError("cargo is required to re-sync Cargo.lock after a dependency removal")
+    result = subprocess.run(
+        ["cargo", "fetch"], cwd=crate, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(
+            f"cargo fetch failed to re-sync {crate}/Cargo.lock: {result.stderr[-400:]}")
+    lock = (crate / "Cargo.lock").read_text()
+    present = set()
+    for block in lock.split("[[package]]")[1:]:
+        for line in block.splitlines():
+            if line.startswith('name = "'):
+                present.add(line.split('"')[1])
+                break
+    survivors = sorted(set(absent_packages) & present)
+    if survivors:
+        raise ValueError(f"packages still in Cargo.lock after sync: {survivors}")
+    return f"{len(present)} packages remain"
 
 
 def export_source(repo, destination):
@@ -1373,6 +1578,196 @@ mod audit_fix_tests {
     slice15_notes.append("HubPage.tsx: comments no longer name kyth-welcome-launch")
     changes.append("slice 1.5 cleanup: " + "; ".join(slice15_notes))
 
+    # ======================================================================
+    # Legacy junk cut (approved Oct 30, 2026): everything the port pulled
+    # over from Kyth that Rowyn does not need. The shell cuts come first
+    # (they shrink what the shared crate must keep), then the shared
+    # crate itself is pruned to the reviewed closure.
+    # ======================================================================
+    cut_notes = []
+
+    # --- Orphaned Kyth desktop data files ----------------------------------
+    # No importer exists in the frontend or the shell; Rowyn ships its own
+    # shared/com.rowyn.hub.desktop in the payload.
+    for rel in ("src/data/com.kythos.hub.desktop", "src/data/kyth-welcome.desktop"):
+        target = web / rel
+        if not target.is_file():
+            raise ValueError(f"expected upstream data file to remove: {rel}")
+        target.unlink()
+    cut_notes.append("com.kythos.hub.desktop + kyth-welcome.desktop data files removed")
+
+    # --- Gaming / dev-tools command modules --------------------------------
+    # Their pages were cut in slice 1; nothing in the kept frontend calls
+    # these commands (only liveData wrappers for the cut pages name them,
+    # the same kept-plumbing trade slice 1.5 made). The modules and their
+    # invoke-handler registrations leave together.
+    for name in ("gaming", "dev_tools"):
+        target = crate / f"src/commands/{name}.rs"
+        if not target.is_file():
+            raise ValueError(f"expected upstream command module to remove: {name}.rs")
+        target.unlink()
+    commands_mod = crate / "src/commands/mod.rs"
+    text = commands_mod.read_text()
+    text = replace_once(text, "pub(crate) mod dev_tools;\n", "")
+    text = replace_once(text, "pub(crate) mod gaming;\n", "")
+    commands_mod.write_text(text)
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "            commands::gaming::gaming_tools,\n"
+        "            commands::gaming::gaming_tool_install,\n"
+        "            commands::gaming::gaming_tool_uninstall,\n"
+        "            commands::gaming::gaming_tool_launch,\n"
+        "            commands::gaming::gaming_job_status,\n"
+        "            commands::gaming::gaming_job_cancel,\n"
+        "            commands::gaming::fix_discord_screenshare,\n"
+        "            commands::gaming::fix_obs_pipewire,\n"
+        "            commands::gaming::open_game_folder,\n"
+        "            commands::gaming::gaming_perf_status,\n"
+        "            commands::gaming::scx_status,\n"
+        "            commands::gaming::scx_available,\n"
+        "            commands::gaming::scx_set_scheduler,\n"
+        "            commands::gaming::per_game_profile,\n"
+        "            commands::gaming::save_per_game_profile,\n"
+        "            commands::gaming::per_game_launch_options,\n"
+        "            commands::dev_tools::dev_tools_catalog_list,\n"
+        "            commands::dev_tools::ai_dev_box_status,\n"
+        "            commands::dev_tools::dev_tools_install_selection,\n"
+        "            commands::dev_tools::dev_tools_job_status,\n"
+        "            commands::dev_tools::dev_tools_job_cancel,\n",
+        "")
+    main_rs.write_text(text)
+    cut_notes.append("commands::gaming (16) + commands::dev_tools (5) modules and registrations removed")
+
+    # --- The `just` recipe runner -------------------------------------------
+    # run_hub_action executed Kyth's ublue just recipes; the B3 pass cut
+    # every RecipeButton from the kept pages and Rowyn ships no justfile.
+    # The command, its HubAction recipe enum, its job store and slot, the
+    # just_list command, and their tests leave; system::just itself is
+    # pruned with the shared crate below (nothing else references it).
+    updates = crate / "src/commands/updates.rs"
+    text = updates.read_text()
+    # HubAction was the file's only Deserialize derive; the import goes
+    # with the enum or the shell gains an unused-import warning.
+    text = replace_once(
+        text, "use serde::{Deserialize, Serialize};\n", "use serde::Serialize;\n")
+    text = replace_once(
+        text,
+        "static HUB_ACTION_JOBS: OnceLock<JobStore> = OnceLock::new();\n"
+        "static UPDATE_JOBS: OnceLock<JobStore> = OnceLock::new();\n"
+        "\n"
+        "fn hub_action_jobs() -> &'static JobStore {\n"
+        "    HUB_ACTION_JOBS.get_or_init(JobStore::default)\n"
+        "}\n"
+        "\n",
+        "static UPDATE_JOBS: OnceLock<JobStore> = OnceLock::new();\n"
+        "\n")
+    text = cut_between(
+        text,
+        "#[derive(Serialize)]\npub(crate) struct JustRecipeResponse {",
+        "/// Start an Updates-page operation as a native Rust-managed job.")
+    text = cut_between(
+        text,
+        "#[tauri::command]\npub(crate) fn run_hub_action(action: HubAction) -> Result<HubActionLaunch, String> {",
+        "fn update_store_status(")
+    text = cut_between(
+        text,
+        "#[tauri::command]\npub(crate) fn hub_action_status(job: String) -> crate::InstallStatus {",
+        "#[tauri::command]\npub(crate) fn bootc_upgrade()")
+    text = replace_once(text, "    use super::{HubAction, *};\n", "    use super::*;\n")
+    text = cut_between(
+        text,
+        "    #[test]\n    fn hub_action_deserializes_allowlisted_recipe() {",
+        "    #[test]\n    fn stage_marker_parses_pct_phase_and_detail() {")
+    text = cut_between(
+        text,
+        "    #[test]\n    fn hub_action_read_only_classification_is_explicit() {",
+        "    #[test]\n    fn mutating_hub_actions_claim_the_slot_before_the_job_exists() {")
+    text = cut_between(
+        text,
+        "    #[test]\n    fn mutating_hub_actions_claim_the_slot_before_the_job_exists() {",
+        "    #[test]\n    fn switch_branch_uses_the_long_transfer_timeout_tier() {")
+    updates.write_text(text)
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "            commands::updates::just_list,\n"
+        "            commands::updates::run_hub_action,\n"
+        "            commands::updates::hub_action_status,\n"
+        "            commands::updates::hub_action_cancel,\n",
+        "")
+    main_rs.write_text(text)
+    job_rs = crate / "src/commands/job.rs"
+    text = job_rs.read_text()
+    text = cut_between(
+        text,
+        "/// Process-wide single-flight for MUTATING Hub actions",
+        "/// Ensure the per-user Flathub remote exists")
+    text = cut_between(
+        text,
+        "    #[test]\n    fn hub_action_slot_is_single_flight_until_dropped() {",
+        "    #[test]\n    fn task_job_deadline_fails_a_task_that_ignores_cancellation() {")
+    job_rs.write_text(text)
+    cut_notes.append(
+        "run_hub_action + HubAction enum + just_list + hub-action slot removed "
+        "(commands, registrations, job store, tests)")
+
+    # --- Privileged-socket client -------------------------------------------
+    # commands::privilege was the client for Kyth's root daemon at
+    # /run/kyth/privileged.sock, which Rowyn does not ship; the B2 pass
+    # already moved system Flatpak work to direct /usr/bin/flatpak runs.
+    # The socket client, its request validation for daemon-only
+    # operations, the three registered commands, and their tests leave.
+    # validate_flatpak_id stays: main.rs's system-Flatpak argv builders
+    # call it (5 sites), so the file reduces to that one gate and its
+    # test. No kept page invokes privileged_action (its frontend callers
+    # are the cut This PC / Play / Move In sections only).
+    privilege = crate / "src/commands/privilege.rs"
+    text = privilege.read_text()
+    text = cut_between(
+        text, "use std::collections::HashMap;", "pub(crate) fn validate_flatpak_id(")
+    text = cut_between(
+        text, "/// Hub-side precheck delegates to the single shared gate",
+        "#[cfg(test)]")
+    tail_start = text.index("    use serde_json::json;")
+    tail = text[tail_start:]
+    for marker in ("validated_request", "cancel_marks_the_job",
+                   "bounded_connect", "typed_payload_rejects"):
+        if marker not in tail:
+            raise ValueError(f"privilege.rs test tail no longer contains {marker}")
+    text = text[:tail_start].rstrip() + "\n}\n"
+    text = replace_once(
+        text,
+        "pub(crate) fn validate_flatpak_id(value: &str) -> Result<(), String> {",
+        "//! The one piece of the upstream privilege module Rowyn keeps: the\n"
+        "//! Flatpak id gate that main.rs's system-Flatpak argv builders call.\n"
+        "//! The privileged-socket client for Kyth's root daemon (which Rowyn\n"
+        "//! does not ship) was removed by the legacy junk cut.\n"
+        "\n"
+        "pub(crate) fn validate_flatpak_id(value: &str) -> Result<(), String> {")
+    privilege.write_text(text)
+    main_rs = crate / "src/main.rs"
+    text = main_rs.read_text()
+    text = replace_once(
+        text,
+        "            commands::privilege::privileged_action,\n"
+        "            commands::privilege::privileged_action_status,\n"
+        "            commands::privilege::privileged_action_cancel,\n",
+        "")
+    main_rs.write_text(text)
+    cut_notes.append(
+        "privilege.rs socket client (/run/kyth/privileged.sock) and its commands removed; "
+        "validate_flatpak_id kept")
+
+    # --- Shared crate: helper binaries, dead modules, pgp -------------------
+    cut_notes.append("shared crate bins: " + strip_shared_crate_bins(root))
+    cut_notes.append("shared crate prune: " + prune_shared_crate(root))
+    cut_notes.append("Cargo.lock re-synced after pgp removal: "
+                     + sync_cargo_lock(crate, ("pgp",)))
+    changes.append("legacy junk cut: " + "; ".join(cut_notes))
+
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
@@ -1390,6 +1785,11 @@ mod audit_fix_tests {
         "page (with its kali_* backend commands), the Guardian command family and\n"
         "its /usr/bin/kyth-guardian invocations (Rowyn ships no Guardian), and the\n"
         "open-* commands that spawned /usr/bin/kyth-welcome-launch.\n"
+        "A legacy junk cut removed the gaming/dev-tools command modules, the just\n"
+        "recipe runner (run_hub_action/HubAction), the privileged-socket client\n"
+        "for Kyth's root daemon, the shared crate's 92 helper-binary targets, and\n"
+        "every shared-crate library module outside the shells' reachability\n"
+        "closure (incl. the runtime-updater/PGP heritage and its pgp dependency).\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")
     return changes
 

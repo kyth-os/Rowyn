@@ -1172,9 +1172,11 @@ class PinnedSourceTests(unittest.TestCase):
                         capture_output=True,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
-                images = (root / "src/kyth-shared-rs/src/system/installer_source.rs").read_text()
-                fn = images[images.index('pub fn install_images('):images.index('/// Classify')]
-                self.assertNotIn('-cachy', fn)
+                # Legacy junk cut: system::installer_source is pruned
+                # from the export — no shipped frontend references it,
+                # and the executor carries its own release constants.
+                self.assertFalse(
+                    (root / "src/kyth-shared-rs/src/system/installer_source.rs").exists())
                 with self.assertRaises(ValueError):
                     port.export_source(repo, root)
 
