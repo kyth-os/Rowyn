@@ -76,7 +76,7 @@ esac
         self.assertNotIn("not a pipe", result.stderr)
         # 85 * 50 / 100 = 42: the byte progress written to the pipe reached
         # the Hub's marker stream.
-        self.assertIn("KYTH_STAGE_PROGRESS pct=42", result.stdout)
+        self.assertIn("ROWYN_STAGE_PROGRESS pct=42", result.stdout)
 
     @unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
     def test_falls_back_without_progress_when_the_fd_is_rejected(self):
@@ -86,7 +86,7 @@ esac
         )
         result = self.run_script(always_rejects)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("KYTH_STAGE_PROGRESS pct=42", result.stdout)
+        self.assertNotIn("ROWYN_STAGE_PROGRESS pct=42", result.stdout)
 
     def test_script_never_redirects_fd3_to_a_regular_file(self):
         text = SAFE_UPGRADE.read_text(encoding="utf-8")
