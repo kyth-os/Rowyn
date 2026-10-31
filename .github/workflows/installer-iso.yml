@@ -238,6 +238,7 @@ jobs:
           ./build/custom-installer-iso.sh
 
       - name: ISO summary, checksums, and signature
+        id: sign
         shell: bash --noprofile --norc -euo pipefail {0}
         run: |
           mapfile -t isos < <(find output -type f -name 'rowyn-custom-installer-*.iso' -print)
@@ -258,7 +259,117 @@ jobs:
             "${checksum}"
           ls -lh "${iso}" "${checksum}" "${bundle}"
 
+      - name: Check R2 configuration
+        id: r2cfg
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          if [[ -n "${R2_ACCESS_KEY_ID}" && -n "${R2_SECRET_ACCESS_KEY}" \
+                && ( -n "${R2_ACCOUNT_ID}" || -n "${R2_ENDPOINT_URL}" ) ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::R2 upload skipped: set the R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_ACCOUNT_ID (or R2_ENDPOINT_URL) repository secrets to publish ISOs to Cloudflare R2."
+          fi
+
+      - name: Sign R2 copies of the ISO checksum
+        id: r2stage
+        if: steps.r2cfg.outputs.configured == 'true'
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          R2_CHANNEL: stable
+        run: |
+          # The R2 keys differ from the GitHub artifact name, and the signed
+          # checksum line names the file, so each R2 name gets its own
+          # .sha256 and cosign bundle. The ISO itself is uploaded from the
+          # original file; nothing large is copied locally.
+          mapfile -t isos < <(find output -type f -name 'rowyn-custom-installer-*.iso' -print)
+          (( ${#isos[@]} == 1 ))
+          iso="${isos[0]}"
+          meta="${iso%.iso}.json"
+          test -f "${meta}"
+          hash="$(awk '{print $1; exit}' "${iso}.sha256")"
+          [[ "${hash}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          immutable="rowyn-live-${R2_CHANNEL}-$(date -u +%Y%m%d)-${SOURCE_SHA:0:8}-${RUN_ID}-${RUN_ATTEMPT}.iso"
+          pointer="rowyn-live-${R2_CHANNEL}.iso"
+          stage="${RUNNER_TEMP}/r2-stage"
+          rm -rf "${stage}"
+          mkdir -p "${stage}"
+          for name in "${immutable}" "${pointer}"; do
+            printf '%s  %s\n' "${hash}" "${name}" > "${stage}/${name}.sha256"
+            cosign sign-blob --yes --bundle "${stage}/${name}.sigstore.json" "${stage}/${name}.sha256"
+            cosign verify-blob \
+              --bundle "${stage}/${name}.sigstore.json" \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/installer-iso\.yml@refs/heads/main$" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${stage}/${name}.sha256"
+            python3 - "${meta}" "${stage}/${name}.json" "${name}" "${hash}" <<'PY'
+          import json, sys
+          src, dst, name, digest = sys.argv[1:]
+          data = json.load(open(src))
+          data["artifact"] = name
+          data["sha256"] = "sha256:" + digest
+          with open(dst, "w") as out:
+              json.dump(data, out, indent=2)
+              out.write("\n")
+          PY
+          done
+          {
+            echo "iso_path=${iso}"
+            echo "immutable=${immutable}"
+            echo "pointer=${pointer}"
+            echo "stage=${stage}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload ISO to Cloudflare R2
+        if: steps.r2cfg.outputs.configured == 'true'
+        uses: ./.github/actions/upload-r2
+        with:
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          r2-endpoint-url: ${{ secrets.R2_ENDPOINT_URL }}
+          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          iso-path: ${{ steps.r2stage.outputs.iso_path }}
+          immutable-name: ${{ steps.r2stage.outputs.immutable }}
+          pointer-name: ${{ steps.r2stage.outputs.pointer }}
+          source-dir: ${{ steps.r2stage.outputs.stage }}
+          bucket: ${{ vars.R2_BUCKET || 'rowyn-releases' }}
+          retention-keep: "5"
+
+      - name: R2 download links
+        if: steps.r2cfg.outputs.configured == 'true'
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+          IMMUTABLE: ${{ steps.r2stage.outputs.immutable }}
+          POINTER: ${{ steps.r2stage.outputs.pointer }}
+        run: |
+          {
+            echo '### Cloudflare R2'
+            echo "- immutable: \`${IMMUTABLE}\`"
+            echo "- channel pointer: \`${POINTER}\`"
+            if [[ -n "${R2_PUBLIC_URL}" ]]; then
+              base="${R2_PUBLIC_URL%/}"
+              for name in "${POINTER}" "${IMMUTABLE}"; do
+                for suffix in "" .sha256 .sigstore.json; do
+                  echo "- ${base}/${name}${suffix}"
+                done
+              done
+            else
+              echo "- Set the \`R2_PUBLIC_URL\` repository variable to print download URLs here."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload custom installer ISO
+        if: ${{ !cancelled() && steps.sign.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rowyn-custom-installer-iso-${{ steps.source.outputs.source_sha }}-${{ github.run_id }}

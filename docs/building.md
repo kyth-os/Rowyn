@@ -101,6 +101,29 @@ sha256sum -c "${ISO}.sha256"
 
 Both commands must succeed. A checksum alone does not authenticate its source.
 
+### Verify an ISO downloaded from R2
+
+When the R2 secrets are configured, every ISO build is also uploaded to Cloudflare R2 under two names: an immutable build set `rowyn-live-stable-<YYYYMMDD>-<sha8>-<run>-<attempt>.iso` and a channel pointer `rowyn-live-stable.iso` that is overwritten by each build, so a fixed URL always serves the newest ISO. Each set has `.sha256`, `.sigstore.json` and `.json` companions. The R2 names differ from the GitHub artifact name, so each set carries its own checksum file and its own Cosign bundle, signed by the same workflow identity. Download the ISO, `X.iso.sha256` and `X.iso.sigstore.json` into one directory, keep the ISO's filename, and run:
+
+```bash
+ISO='rowyn-live-stable.iso'   # or the immutable rowyn-live-stable-...-....iso name
+cosign verify-blob \
+  --bundle "${ISO}.sigstore.json" \
+  --certificate-identity-regexp '^https://github.com/kyth-os/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "${ISO}.sha256"
+sha256sum -c "${ISO}.sha256"
+```
+
+### R2 setup
+
+The upload step skips with a notice when the secrets are missing, so builds never fail for lack of them. The maintainer sets, under repository Settings, Secrets and variables, Actions:
+
+- Secrets: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and either `R2_ACCOUNT_ID` or `R2_ENDPOINT_URL` (`https://<account-id>.r2.cloudflarestorage.com`).
+- Variables: `R2_BUCKET` (default `rowyn-releases`) and optionally `R2_PUBLIC_URL`, the bucket's public base URL (custom domain or `r2.dev`) used to print download links in the run summary. The bucket must be made publicly readable in Cloudflare for those links to work.
+
+After each successful upload, retention keeps the newest 5 immutable build sets per channel (ordered by the date, run and attempt in the key name) and deletes older ones whole. Channel pointers and every key that is not a Rowyn immutable build, including `kyth-live-*` objects in a shared bucket, are never deleted. A retention failure does not fail the build.
+
 The assembler emits the ISO, source metadata, El Torito/system-area report, and SquashFS report. CI signs and verifies the portable checksum manifest and uploads the signature bundle. Apt resolves packages from Ubuntu repositories, so the package manifest is recorded but the build is not bit-for-bit reproducible.
 
 ## CI and release flow
