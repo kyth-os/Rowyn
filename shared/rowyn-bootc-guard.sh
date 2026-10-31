@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Rowyn passwordless bootc gateway for the Hub.
 #
-# A fixed-operation wrapper in the shape of Kyth's kyth-bootc-guard: the
+# A fixed-operation wrapper in the shape of the upstream bootc guard: the
 # Hub's unprivileged shell reaches bootc's root-only sysroot reads through
 # `sudo -n` (allowlisted in /etc/sudoers.d/rowyn-upgrade), and every
 # operation is a fixed argv — no caller-provided image reference or extra
 # arguments are possible. Rowyn publishes a single channel, so the only
 # switch operation is switch-latest, targeting the stable tag the image
-# pipeline promotes; Kyth's testing/cachy channels do not exist here and
+# pipeline promotes; the upstream testing/cachy channels do not exist here and
 # are refused rather than mapped onto something they are not.
 #
 # Operations (exactly one argument; anything else is a usage error):
@@ -59,7 +59,8 @@ if ! flock -n 9; then
     exit 1
 fi
 
-# Kyth prepares /boot (remount read-write) before a switch because its
+# The upstream guard prepares /boot (remount read-write) before a switch
+# because its
 # /boot is a read-only bind; Rowyn's bootc manages its boot partition
 # itself, so preparation is best-effort here and never aborts the switch.
 if [[ -x /usr/libexec/rowyn-finalize-staged ]]; then

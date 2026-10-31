@@ -27,10 +27,10 @@ Requirements include Git, Python 3 with PyYAML, Bash, and ShellCheck. Run from t
 
 The gate checks shell syntax, ShellCheck errors, workflow YAML, Ubuntu-only build guards, image and installer trust contracts, and regression tests. Advisory ShellCheck warnings are reported separately.
 
-Additional integration checks use a local Kyth checkout containing the pinned installer commit and the isolated Ubuntu runtime fixtures:
+Additional integration checks use a local upstream checkout containing the pinned installer commit and the isolated Ubuntu runtime fixtures:
 
 ```bash
-export ROWYN_TEST_KYTH_REPO=/path/to/kyth
+export ROWYN_TEST_UPSTREAM_REPO=/path/to/upstream
 ./build/validate.sh
 ```
 
@@ -40,7 +40,7 @@ Source validation does not replace booting the actual signed ISO, installing to 
 
 ## Build a custom installer ISO
 
-Requirements: Podman, Git, Python 3 with PyYAML, network access, ample disk space, and a local Kyth checkout containing commit `2baf8496b5aa904c0784f4290df743ee17edae48`.
+Requirements: Podman, Git, Python 3 with PyYAML, network access, ample disk space, and a local upstream checkout containing commit `2baf8496b5aa904c0784f4290df743ee17edae48`.
 
 Choose an existing signed Rowyn payload. Obtain its digest and original source commit from that payload's build metadata; do not resolve a mutable tag as the installation source. Replace the example values below before running:
 
@@ -50,8 +50,8 @@ mkdir -p "$TMPDIR"
 export SOURCE_TAG='REPLACE_WITH_PAYLOAD_SOURCE_COMMIT'
 export IMAGE_DIGEST='sha256:REPLACE_WITH_VERIFIED_PAYLOAD_DIGEST'
 export IMAGE_REF="ghcr.io/kyth-os/rowyn:${SOURCE_TAG}"
-export KYTH_SOURCE_DIR=/path/to/kyth
-export KYTH_INSTALLER_COMMIT=2baf8496b5aa904c0784f4290df743ee17edae48
+export UPSTREAM_SOURCE_DIR=/path/to/upstream
+export UPSTREAM_INSTALLER_COMMIT=2baf8496b5aa904c0784f4290df743ee17edae48
 export UBUNTU_LIVE_IMAGE=docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
 ROWYN_CUSTOM_INSTALLER_PREFLIGHT=1 ./build/custom-installer-iso.sh
 ./build/custom-installer-iso.sh
@@ -63,7 +63,7 @@ Use a writable scratch filesystem rather than a RAM-backed directory. The build 
 
 `build/ubuntu-live.Containerfile` starts its compiler and live stages from the digest-pinned official Ubuntu image. Apt supplies Rust, Cargo, Node, GTK/WebKit, Plasma, Casper, initramfs-tools, GRUB, xorriso, and SquashFS tools. It does not execute an upstream OS Containerfile or ISO wrapper.
 
-The Apache-2.0 Kyth installer daemon, typed execution helper, Tauri shell and web frontend, shared crate, and vendored glib dependency are exported from the pinned commit using an allowlist and `git archive`. The source checkout is not modified. The Slint UI binary is not built or installed. Licenses and the modification notice ship in `/usr/share/doc/rowyn-installer`.
+The Apache-2.0 upstream installer daemon, typed execution helper, Tauri shell and web frontend, shared crate, and vendored glib dependency are exported from the pinned commit using an allowlist and `git archive`. The source checkout is not modified. The Slint UI binary is not built or installed. Licenses and the modification notice ship in `/usr/share/doc/rowyn-installer`.
 
 `build/ubuntu-installer-source.py` adapts account groups (`sudo`, not `wheel`), tool paths, locale and keyboard configuration, and image selection for Ubuntu. Kernel selection cannot rewrite the immutable image digest.
 
@@ -150,4 +150,4 @@ Automatic runs require the upstream image metadata artifact, retained for seven 
 
 ## Attribution
 
-Rowyn uses an Ubuntu port of Kyth's custom installer. Upstream installer source is Apache-2.0; Tauri is MIT/Apache-2.0; the vendored glib Rust backport declares MIT. The live installer includes dependency license texts.
+Rowyn uses an Ubuntu port of the upstream custom installer. Upstream installer source is Apache-2.0; Tauri is MIT/Apache-2.0; the vendored glib Rust backport declares MIT. The live installer includes dependency license texts.

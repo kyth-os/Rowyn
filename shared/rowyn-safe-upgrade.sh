@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # rowyn-safe-upgrade — stage a Rowyn system update for the Hub.
 #
-# The Rowyn-side counterpart of Kyth's kyth-safe-upgrade, reduced to the
-# contract the Hub actually exercises (Kyth's rollout-ring, battery, and
+# The Rowyn-side counterpart of the upstream safe-upgrade helper, reduced
+# to the contract the Hub actually exercises (the upstream rollout-ring,
+# battery, and
 # boot-health quarantine policy has no Rowyn equivalent and is not
 # ported):
 #
@@ -15,8 +16,8 @@
 #   * invoked with no arguments, as root, via `sudo -A` from the Hub's
 #     bootc_upgrade command (any argument is a usage error, exit 64)
 #   * progress streams on stdout as marker lines
-#         KYTH_STAGE_PROGRESS pct=N phase=P detail=…
-#     which the Hub's stage parser consumes verbatim — the KYTH_ prefix
+#         ROWYN_STAGE_PROGRESS pct=N phase=P detail=…
+#     which the Hub's stage parser consumes verbatim — the ROWYN_ prefix
 #     is part of that parser contract and is deliberately kept
 #   * download occupies pct 1–85, deploy 86–99; 100 is never emitted, so
 #     a killed or failed stage can never display as complete
@@ -74,11 +75,11 @@ emit_marker() {
     last_pct=$pct
     last_phase=$phase
     last_detail=$detail
-    printf 'KYTH_STAGE_PROGRESS pct=%s phase=%s detail=%s\n' "$pct" "$phase" "$detail"
+    printf 'ROWYN_STAGE_PROGRESS pct=%s phase=%s detail=%s\n' "$pct" "$phase" "$detail"
 }
 
 check_free() {
-    # Kyth parity: an unmeasurable path is not a failure; a measured
+    # Upstream parity: an unmeasurable path is not a failure; a measured
     # shortfall is.
     local path=$1 min_bytes=$2 avail
     avail=$(df --output=avail -B1 "$path" 2>/dev/null | tail -n 1 | tr -d '[:space:]')
@@ -377,9 +378,10 @@ run_bootc_upgrade() {
 }
 
 result_detail() {
-    # bootc's own words are the job detail (Kyth relays the same text,
+    # bootc's own words are the job detail (the upstream helper relays the
+    # same text,
     # redacted and capped; the cap is kept, the redaction patterns are
-    # Kyth-service-specific and not ported).
+    # upstream-service-specific and not ported).
     local detail
     detail=$(cat "$workdir/bootc.out" "$workdir/bootc.err" 2>/dev/null \
         | tr -d '\r' | awk 'NF' | tail -n 5 | head -c 2000)

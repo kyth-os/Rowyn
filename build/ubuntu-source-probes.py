@@ -10,7 +10,7 @@ import sys
 
 
 def probes(root):
-    source = (root / 'src/kyth-shared-rs/src/system/installer_source.rs').read_text()
+    source = (root / 'src/rowyn-shared-rs/src/system/installer_source.rs').read_text()
     functions = []
     for name in ('source_image_ref', 'install_images'):
         start = source.index('pub fn ' + name + '(')
@@ -20,7 +20,7 @@ def probes(root):
         line for line in source.splitlines()
         if line.startswith('pub const ROWYN_')
     )
-    assurance = (root / 'src/kyth-installer-web/src-tauri/src/installer_assurance.rs').read_text()
+    assurance = (root / 'src/rowyn-installer-web/src-tauri/src/installer_assurance.rs').read_text()
     start = assurance.index('fn kernel_detail(')
     end = assurance.index('\n}', start) + 2
     functions.append(assurance[start:end])

@@ -13,26 +13,26 @@ install -Dm755 /rowyn/ubuntu-live-preflight.py /usr/libexec/rowyn-live-preflight
 # Retain the exact v2 verifier used by the publisher; verify download integrity.
 curl --fail --location --retry 3 \
     https://github.com/sigstore/cosign/releases/download/v2.6.1/cosign-linux-amd64 \
-    -o /usr/bin/kyth-cosign
-printf '%s  %s\n' 064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a /usr/bin/kyth-cosign | sha256sum -c -
-chmod 755 /usr/bin/kyth-cosign
+    -o /usr/bin/rowyn-cosign
+printf '%s  %s\n' 064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a /usr/bin/rowyn-cosign | sha256sum -c -
+chmod 755 /usr/bin/rowyn-cosign
 export TUF_ROOT=/var/tmp/rowyn-build-tuf
-mkdir -p "$TUF_ROOT" /usr/share/kyth
-/usr/bin/kyth-cosign verify \
+mkdir -p "$TUF_ROOT" /usr/share/rowyn
+/usr/bin/rowyn-cosign verify \
     --certificate-identity https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com "$INSTALL_SOURCE_IMAGE"
-/usr/bin/kyth-cosign download signature "$INSTALL_SOURCE_IMAGE" > /var/tmp/rowyn-signatures.json
+/usr/bin/rowyn-cosign download signature "$INSTALL_SOURCE_IMAGE" > /var/tmp/rowyn-signatures.json
 jq -cs --arg digest "$digest" '{digest:$digest, signatures:.}' /var/tmp/rowyn-signatures.json \
-    > /usr/share/kyth/image.sig.bundle.json
-bundle_hash="$(sha256sum /usr/share/kyth/image.sig.bundle.json)"
+    > /usr/share/rowyn/image.sig.bundle.json
+bundle_hash="$(sha256sum /usr/share/rowyn/image.sig.bundle.json)"
 jq -n --arg digest "$digest" --arg source "$INSTALL_SOURCE_IMAGE" \
     --arg target "$target_image" \
     --arg bundle "sha256:${bundle_hash%% *}" \
     '{schema_version:1,release_digest:$digest,digest:$digest,source_image:$source,target_image:$target,signature:"verified",signature_digest:$bundle}' \
-    > /usr/share/kyth/image-source.json
-printf 'KYTH_SOURCE_IMAGE=%s\nKYTH_TARGET_IMAGE=%s\nKYTH_SOURCE_DIGEST=%s\n' \
-    "$INSTALL_SOURCE_IMAGE" "$target_image" "$digest" > /etc/kyth-installer.env
-chmod 644 /etc/kyth-installer.env
+    > /usr/share/rowyn/image-source.json
+printf 'ROWYN_SOURCE_IMAGE=%s\nROWYN_TARGET_IMAGE=%s\nROWYN_SOURCE_DIGEST=%s\n' \
+    "$INSTALL_SOURCE_IMAGE" "$target_image" "$digest" > /etc/rowyn-installer.env
+chmod 644 /etc/rowyn-installer.env
 
 # bootc install runs later from this live system. Install the same immutable
 # image policy and verification key before the installer can invoke bootc.
@@ -133,12 +133,12 @@ cat > /etc/xdg/autostart/rowyn-installer.desktop <<'EOF'
 Type=Application
 Name=Install Rowyn
 Comment=Ubuntu live session; changes are lost at reboot. UEFI, Secure Boot disabled, whole-disk plaintext only.
-Exec=/usr/bin/kyth-launch-installer
+Exec=/usr/bin/rowyn-launch-installer
 Terminal=false
 EOF
 cat > /etc/sudoers.d/rowyn-live <<'EOF'
 Defaults:liveuser env_keep += "DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XDG_SESSION_TYPE LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE QT_QUICK_BACKEND"
-liveuser ALL=(root) NOPASSWD: /usr/bin/kyth-launch-installer ""
+liveuser ALL=(root) NOPASSWD: /usr/bin/rowyn-launch-installer ""
 EOF
 chmod 440 /etc/sudoers.d/rowyn-live
 visudo -c -f /etc/sudoers.d/rowyn-live

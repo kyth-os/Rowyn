@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prepare /boot and finalize staged deployments before shutdown.
 #
-# Ported from Kyth's kyth-finalize-staged (same modes, same contract with
+# Ported from the upstream finalize-staged helper (same modes, same
+# contract with
 # the Hub's apply_staged launcher):
 #   rowyn-finalize-staged              prepare /boot, then
 #                                      `ostree admin finalize-staged`

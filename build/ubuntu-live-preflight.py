@@ -13,7 +13,7 @@ REQUIRED = (
     '/usr/bin/podman', '/usr/bin/crun',
     '/usr/bin/lsblk', '/usr/bin/findmnt', '/usr/bin/mount', '/usr/bin/umount',
     '/usr/sbin/blockdev', '/usr/bin/udevadm', '/usr/bin/openssl', '/usr/bin/mokutil',
-    '/usr/bin/kyth-cosign', '/usr/bin/kyth-installer-exec',
+    '/usr/bin/rowyn-cosign', '/usr/bin/rowyn-installer-exec',
     '/usr/sbin/blkid', '/usr/sbin/sgdisk', '/usr/sbin/parted',
     '/usr/sbin/mkfs.btrfs', '/usr/sbin/mkfs.fat', '/usr/sbin/useradd',
     '/usr/sbin/chpasswd', '/usr/sbin/losetup', '/usr/sbin/sfdisk', '/usr/sbin/fstrim',
@@ -116,7 +116,7 @@ def runtime_closure(root=Path("/"), runner=output, process_runner=subprocess.run
     for binary in REQUIRED:
         if not os.access(rooted(binary), os.X_OK):
             raise ValueError('missing required Ubuntu runtime binary: ' + binary)
-    for binary in ('/usr/bin/bootc', '/usr/bin/kyth-installerd', '/usr/bin/kyth-installer-shell'):
+    for binary in ('/usr/bin/bootc', '/usr/bin/rowyn-installerd', '/usr/bin/rowyn-installer-shell'):
         result = process_runner([str(rooted('/usr/bin/ldd')), str(rooted(binary))],
                                 text=True, capture_output=True, timeout=15)
         if result.returncode or 'not found' in result.stdout:

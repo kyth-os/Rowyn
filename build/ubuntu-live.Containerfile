@@ -22,11 +22,11 @@ COPY third_party/ /build/third_party/
 COPY build_files/exe-handler-apps.json /build/build_files/exe-handler-apps.json
 COPY rowyn/ubuntu-source-probes.py /source-probes.py
 RUN python3 /source-probes.py /build /source-probes
-WORKDIR /build/src/kyth-installer-web
+WORKDIR /build/src/rowyn-installer-web
 RUN npm ci && npm run build
-WORKDIR /build/src/kyth-installer-web/src-tauri
-RUN cargo build --release --locked --bin kyth-installer-shell --bin kyth-installerd --bin kyth-installer-exec && \
-    mkdir /binaries && cp target/release/kyth-installer-shell target/release/kyth-installerd target/release/kyth-installer-exec /binaries/
+WORKDIR /build/src/rowyn-installer-web/src-tauri
+RUN cargo build --release --locked --bin rowyn-installer-shell --bin rowyn-installerd --bin rowyn-installer-exec && \
+    mkdir /binaries && cp target/release/rowyn-installer-shell target/release/rowyn-installerd target/release/rowyn-installer-exec /binaries/
 RUN mkdir /dependency-licenses && \
     find /root/.cargo/registry/src -type f \
       \( -iname '*license*' -o -iname 'copying*' -o -iname 'notice*' \) \
@@ -61,8 +61,8 @@ COPY --from=payload /usr/lib/bootc/ /usr/lib/bootc/
 COPY --from=payload /usr/lib/ostree/prepare-root.conf /usr/lib/ostree/prepare-root.conf
 COPY --from=compiler /binaries/ /usr/bin/
 COPY --from=compiler /dependency-licenses/ /usr/share/doc/rowyn-installer/dependency-licenses/
-COPY build_files/kyth-launch-installer /usr/bin/kyth-launch-installer
-COPY build_files/kyth-installerd.service /usr/lib/systemd/system/kyth-installerd.service
+COPY build_files/rowyn-launch-installer /usr/bin/rowyn-launch-installer
+COPY build_files/rowyn-installerd.service /usr/lib/systemd/system/rowyn-installerd.service
 COPY LICENSE ROWYN-PORT-NOTICE /usr/share/doc/rowyn-installer/
 COPY rowyn/ /rowyn/
 COPY rowyn/kubuntu-desktop-live-26.10-amd64.manifest /usr/share/rowyn/kubuntu-desktop-live-26.10-amd64.manifest

@@ -30,7 +30,7 @@
   a decision with real trade-offs, or a problem Sonnet could not resolve — and
   keep it to one focused pass with an explicit scope and a request to stop
   early.
-- Before pushing, run the full test suite (and `ROWYN_TEST_KYTH_REPO` tests for
+- Before pushing, run the full test suite (and `ROWYN_TEST_UPSTREAM_REPO` tests for
   the Hub port) yourself and state plainly what could only be verified in CI
   or on the user's hardware.
 

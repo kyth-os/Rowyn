@@ -1,6 +1,6 @@
 # Rowyn Plymouth boot splash
 # Deep navy background, rowan berry mark pulsating (breathing glow effect).
-# Animation shape ported from Kyth's kyth.script: fade in, then breathe.
+# Animation shape ported from the upstream Plymouth script: fade in, then breathe.
 
 # ── Background ────────────────────────────────────────────────────────────────
 # Deep navy matching the selected Rowyn logo art direction (the berry

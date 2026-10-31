@@ -79,7 +79,7 @@ update-alternatives \
 install -d "$(root_path /etc/plymouth)"
 cat > "$(root_path /etc/plymouth/plymouthd.conf)" <<'EOF'
 # Rowyn boot splash: draw the Rowyn theme immediately, with the same
-# device timeout Kyth's daemon configuration pins. (ShowDelay and
+# device timeout the upstream daemon configuration pins. (ShowDelay and
 # DeviceTimeout also appear in the package's plymouthd.defaults; they
 # are restated here so the splash contract lives in one visible place.)
 [Daemon]

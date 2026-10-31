@@ -46,7 +46,7 @@ concurrency:
 
 env:
   IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn
-  KYTH_INSTALLER_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
+  UPSTREAM_INSTALLER_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
   UBUNTU_LIVE_IMAGE: docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
 
 jobs:
@@ -179,14 +179,14 @@ jobs:
       - name: Fetch pinned custom installer environment
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
+          UPSTREAM_INSTALLER_COMMIT: ${{ env.UPSTREAM_INSTALLER_COMMIT }}
         run: |
           sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/rowyn-iso-scratch
           git clone --filter=blob:none --no-checkout --depth 1 \
-            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/kyth-installer"
-          git -C "${RUNNER_TEMP}/kyth-installer" fetch --depth 1 origin "${KYTH_INSTALLER_COMMIT}"
-          git -C "${RUNNER_TEMP}/kyth-installer" checkout --detach "${KYTH_INSTALLER_COMMIT}"
-          test "$(git -C "${RUNNER_TEMP}/kyth-installer" rev-parse HEAD)" = "${KYTH_INSTALLER_COMMIT}"
+            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/upstream-installer"
+          git -C "${RUNNER_TEMP}/upstream-installer" fetch --depth 1 origin "${UPSTREAM_INSTALLER_COMMIT}"
+          git -C "${RUNNER_TEMP}/upstream-installer" checkout --detach "${UPSTREAM_INSTALLER_COMMIT}"
+          test "$(git -C "${RUNNER_TEMP}/upstream-installer" rev-parse HEAD)" = "${UPSTREAM_INSTALLER_COMMIT}"
 
       - name: Pull the exact image built in this run
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -206,7 +206,7 @@ jobs:
             echo '### ISO source image'
             echo "- ref: \`${IMAGE_REF}\`"
             echo "- digest: \`${IMAGE_DIGEST}\`"
-            echo "- installer: Ubuntu live/compiler \`${UBUNTU_LIVE_IMAGE}\`; pinned Rust source \`${KYTH_INSTALLER_COMMIT}\`"
+            echo "- installer: Ubuntu live/compiler \`${UBUNTU_LIVE_IMAGE}\`; pinned Rust source \`${UPSTREAM_INSTALLER_COMMIT}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preflight pinned custom installer adapter
@@ -215,8 +215,8 @@ jobs:
           IMAGE_REF: ${{ steps.source.outputs.image_ref }}
           IMAGE_DIGEST: ${{ steps.source.outputs.image_digest }}
           SOURCE_TAG: ${{ steps.source.outputs.source_sha }}
-          KYTH_SOURCE_DIR: ${{ runner.temp }}/kyth-installer
-          KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
+          UPSTREAM_SOURCE_DIR: ${{ runner.temp }}/upstream-installer
+          UPSTREAM_INSTALLER_COMMIT: ${{ env.UPSTREAM_INSTALLER_COMMIT }}
           UBUNTU_LIVE_IMAGE: ${{ env.UBUNTU_LIVE_IMAGE }}
           TMPDIR: /mnt/rowyn-iso-scratch
           ROWYN_CUSTOM_INSTALLER_PREFLIGHT: "1"
@@ -228,8 +228,8 @@ jobs:
           IMAGE_REF: ${{ steps.source.outputs.image_ref }}
           IMAGE_DIGEST: ${{ steps.source.outputs.image_digest }}
           SOURCE_TAG: ${{ steps.source.outputs.source_sha }}
-          KYTH_SOURCE_DIR: ${{ runner.temp }}/kyth-installer
-          KYTH_INSTALLER_COMMIT: ${{ env.KYTH_INSTALLER_COMMIT }}
+          UPSTREAM_SOURCE_DIR: ${{ runner.temp }}/upstream-installer
+          UPSTREAM_INSTALLER_COMMIT: ${{ env.UPSTREAM_INSTALLER_COMMIT }}
           UBUNTU_LIVE_IMAGE: ${{ env.UBUNTU_LIVE_IMAGE }}
           TMPDIR: /mnt/rowyn-iso-scratch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -101,17 +101,17 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         run: ./build/fetch-assets.sh
 
-      - name: Fetch and port pinned Kyth System Hub source
+      - name: Fetch and port pinned upstream System Hub source
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          KYTH_HUB_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
+          UPSTREAM_HUB_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
         run: |
           git clone --filter=blob:none --no-checkout --depth 1 \
-            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/kyth-hub"
-          git -C "${RUNNER_TEMP}/kyth-hub" fetch --depth 1 origin "${KYTH_HUB_COMMIT}"
-          git -C "${RUNNER_TEMP}/kyth-hub" checkout --detach "${KYTH_HUB_COMMIT}"
-          test "$(git -C "${RUNNER_TEMP}/kyth-hub" rev-parse HEAD)" = "${KYTH_HUB_COMMIT}"
-          python3 build/ubuntu-hub-source.py "${RUNNER_TEMP}/kyth-hub" hub-source
+            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/upstream-hub"
+          git -C "${RUNNER_TEMP}/upstream-hub" fetch --depth 1 origin "${UPSTREAM_HUB_COMMIT}"
+          git -C "${RUNNER_TEMP}/upstream-hub" checkout --detach "${UPSTREAM_HUB_COMMIT}"
+          test "$(git -C "${RUNNER_TEMP}/upstream-hub" rev-parse HEAD)" = "${UPSTREAM_HUB_COMMIT}"
+          python3 build/ubuntu-hub-source.py "${RUNNER_TEMP}/upstream-hub" hub-source
 
       - name: Build image (offline Containerfile)
         shell: bash --noprofile --norc -euo pipefail {0}

@@ -54,7 +54,7 @@ VM checks cover installation, networking, the read-only OS, Flatpak apps, rootle
 
 Report problems in [GitHub Issues](https://github.com/kyth-os/Rowyn/issues). Include the ISO build or image digest, whether you are using a VM or physical hardware, and the steps needed to reproduce the problem. Remove passwords and other private information from logs before sharing them.
 
-Rowyn takes inspiration from [KythOS](https://github.com/kyth-os/kyth) and uses an Ubuntu port of its custom installer. Rowyn is licensed under [Apache 2.0](LICENSE); upstream components retain their own licenses. It is an independent project, not an official Ubuntu or KDE edition.
+Rowyn uses an Ubuntu port of the custom installer it shares lineage with. Rowyn is licensed under [Apache 2.0](LICENSE); upstream components retain their own licenses. It is an independent project, not an official Ubuntu or KDE edition.
 
 <details>
 <summary><strong>Technical documentation and contributor resources</strong></summary>

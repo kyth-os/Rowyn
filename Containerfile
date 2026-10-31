@@ -43,14 +43,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /usr/bin/python3 /ctx/shared/bootc-sigpolicy-patch.py /home/build/bootc && \
     PATH=/opt/rust/bin:$PATH /ctx/shared/build.sh /home/build/bootc
 
-# --- hub builder: compile Rowyn Hub from the pinned, ported Kyth source -----
+# --- hub builder: compile Rowyn Hub from the pinned, ported upstream source -----
 # The ported tree is produced outside the build (CI runs
-# build/ubuntu-hub-source.py against the pinned Kyth commit into hub-source/;
+# build/ubuntu-hub-source.py against the pinned upstream commit into hub-source/;
 # see .github/workflows/build.yml) so this stage only compiles. Unlike the
 # offline bootc stage it needs network for npm/cargo registries, mirroring
-# upstream Kyth's own hub-web-builder stage.
-# Layout mirrors that upstream stage on purpose: kyth-hub-web and
-# kyth-shared-rs sit one level shallower than in the Kyth repo, so the shared
+# the upstream hub-web-builder stage.
+# Layout mirrors that upstream stage on purpose: rowyn-hub-web and
+# rowyn-shared-rs sit one level shallower than in the upstream repo, so the shared
 # crate's repo-relative include of build_files/exe-handler-apps.json lands at
 # /build_files and the glib patch path lands at /third_party. Copy those two
 # inputs to match rather than editing the pinned crate.
@@ -63,13 +63,13 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
         libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev \
         libssl-dev libxdo-dev && \
     rm -rf /var/lib/apt/lists/*
-COPY hub-source/src/kyth-hub-web /build/kyth-hub-web
-COPY hub-source/src/kyth-shared-rs /build/kyth-shared-rs
+COPY hub-source/src/rowyn-hub-web /build/rowyn-hub-web
+COPY hub-source/src/rowyn-shared-rs /build/rowyn-shared-rs
 COPY hub-source/build_files/exe-handler-apps.json /build_files/exe-handler-apps.json
 COPY hub-source/third_party/gtk-glib-0.18.5 /third_party/gtk-glib-0.18.5
-WORKDIR /build/kyth-hub-web
+WORKDIR /build/rowyn-hub-web
 RUN npm ci && npm run build
-WORKDIR /build/kyth-hub-web/src-tauri
+WORKDIR /build/rowyn-hub-web/src-tauri
 RUN cargo build --release --locked && \
     cp target/release/rowyn-hub-shell /rowyn-hub-shell
 
@@ -320,7 +320,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 
 # --- Rowyn Hub ---------------------------------------------------------------
 # System hub (Dashboard, Apps, Updates, VPN) compiled by the hub-builder
-# stage from the pinned, ported Kyth source. Runtime libraries for the
+# stage from the pinned, ported upstream source. Runtime libraries for the
 # Tauri shell and the VPN stack (openconnect, vpnc-scripts, ksshaskpass,
 # firewalld) are in the KDE package layer above.
 COPY --from=hub-builder /rowyn-hub-shell /usr/bin/rowyn-hub-shell
@@ -342,7 +342,7 @@ RUN ln -s /usr/sbin/openconnect /usr/bin/openconnect && \
 # allowlist below is what lets them run without a password), staging goes
 # through the safe-upgrade helper (`sudo -A`), and applying a staged
 # update reboots through the finalizer. Rowyn's implementations are the
-# shell scripts in shared/ (fixed-operation counterparts of Kyth's Rust
+# shell scripts in shared/ (fixed-operation counterparts of the upstream Rust
 # helpers); the sudoers file grants exactly their fixed argv to %sudo.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm755 /ctx/shared/rowyn-safe-upgrade.sh /usr/bin/rowyn-safe-upgrade && \
