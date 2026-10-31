@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -35,6 +36,7 @@ def load_module(name, file):
 
 installer = load_module("ubuntu_installer_source", "build/ubuntu-installer-source.py")
 hub = load_module("ubuntu_hub_source", "build/ubuntu-hub-source.py")
+source_probes = load_module("ubuntu_source_probes", "build/ubuntu-source-probes.py")
 
 
 class InstallerJunkCutContractTests(unittest.TestCase):
@@ -76,6 +78,25 @@ class InstallerJunkCutContractTests(unittest.TestCase):
             'contains("source is not this Rowyn release")',
             "Rowyn does not support custom kernels or MOK enrollment",
         ):
+            self.assertIn(anchor, script)
+
+
+class SourceProbesContractTests(unittest.TestCase):
+    def test_probes_read_the_executor_release_gate_not_the_deleted_module(self):
+        # The junk cut deleted the shared crate's image-source selection
+        # module, but the ISO build's source probes kept reading it and
+        # crashed. The probes now extract the release contract from the
+        # installer crate: the executor's pinned constants and digest
+        # check, the bootc plan's reference normalization, and the
+        # assurance kernel check. They must never point at the deleted
+        # module (or the shared crate) again.
+        script = (ROOT / "build/ubuntu-source-probes.py").read_text()
+        self.assertNotIn("installer_source", script)
+        self.assertNotIn("rowyn-shared-rs", script)
+        for anchor in ("installer_job_executor.rs", "installer_bootc.rs",
+                       "installer_assurance.rs", "ROWYN_RELEASE_SOURCE",
+                       "ROWYN_UPDATE_TARGET", "is_sha256_digest",
+                       "safe_reference", "source_reference", "kernel_detail"):
             self.assertIn(anchor, script)
 
 
@@ -234,6 +255,49 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
                 if "kyth" in masked.lower():
                     offenders.append(str(path.relative_to(root)))
             self.assertEqual(offenders, [])
+
+
+@unittest.skipUnless(_pinned_repo() and shutil.which("rustc"),
+                     "set ROWYN_TEST_UPSTREAM_REPO to an upstream checkout containing the pinned commit and provide rustc")
+class PinnedSourceProbesTests(unittest.TestCase):
+    def test_probe_targets_exist_and_probes_pass(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-source-probes-") as temp:
+            root = Path(temp) / "source"
+            installer.export_source(repo, root)
+            installer.port_source(root, DIGEST)
+            crate_src = root / "src/rowyn-installer-web/src-tauri/src"
+
+            # Every file the probes open must exist in a fresh export,
+            # and the module they used to read must stay deleted.
+            for name in ("installer_job_executor.rs", "installer_bootc.rs",
+                         "installer_assurance.rs"):
+                self.assertTrue((crate_src / name).is_file(), name)
+            self.assertFalse(
+                (root / "src/rowyn-shared-rs/src/system/installer_source.rs").exists())
+
+            # The generated probe source is extracted from the real
+            # exported code: the port-baked release constants and the
+            # gate/normalization/kernel functions, by name.
+            generated = source_probes.probes(root)
+            for marker in (
+                f'const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@{DIGEST}";',
+                'const ROWYN_UPDATE_TARGET: &str = "ghcr.io/kyth-os/rowyn:stable";',
+                "fn is_sha256_digest(", "fn safe_reference(",
+                "fn source_reference(", "fn kernel_detail(",
+            ):
+                self.assertIn(marker, generated)
+
+            # End to end, exactly as the ISO compiler stage runs it.
+            env = dict(os.environ)
+            cargo_bin = str(Path.home() / ".cargo" / "bin")
+            env["PATH"] = cargo_bin + os.pathsep + env.get("PATH", "")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "build/ubuntu-source-probes.py"),
+                 str(root), str(Path(temp) / "out")],
+                env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("5 passed; 0 failed", result.stdout)
 
 
 @unittest.skipUnless(_pinned_repo() and shutil.which("cargo"),
