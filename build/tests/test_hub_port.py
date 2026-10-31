@@ -2,7 +2,7 @@
 """Contracts for the Rowyn Hub port (build/ubuntu-hub-source.py).
 
 Run: python3 -B -m unittest discover -s build/tests -v
-Optional real-source check: set ROWYN_TEST_KYTH_REPO to a local Kyth checkout
+Optional real-source check: set ROWYN_TEST_UPSTREAM_REPO to a local upstream checkout
 that contains the pinned commit; the port integration tests skip otherwise.
 """
 import json
@@ -69,8 +69,8 @@ class HubPortContractTests(unittest.TestCase):
                         "libayatana-appindicator3-dev", "librsvg2-dev", "libdbus-1-dev",
                         "cargo", "rustc", "nodejs", "npm"):
             self.assertIn(package, stage)
-        self.assertIn("COPY hub-source/src/kyth-hub-web /build/kyth-hub-web", stage)
-        self.assertIn("COPY hub-source/src/kyth-shared-rs /build/kyth-shared-rs", stage)
+        self.assertIn("COPY hub-source/src/rowyn-hub-web /build/rowyn-hub-web", stage)
+        self.assertIn("COPY hub-source/src/rowyn-shared-rs /build/rowyn-shared-rs", stage)
         self.assertIn("COPY hub-source/build_files/exe-handler-apps.json /build_files/exe-handler-apps.json", stage)
         self.assertIn("COPY hub-source/third_party/gtk-glib-0.18.5 /third_party/gtk-glib-0.18.5", stage)
         self.assertIn("cargo build --release --locked", stage)
@@ -233,7 +233,7 @@ class HubPortContractTests(unittest.TestCase):
         # and the heavy lifting is the repository's own fetch-assets pattern:
         # clone, pin-check, then the anchored port script.
         self.assertIn("./build/fetch-assets.sh", workflow)
-        self.assertIn(f"KYTH_HUB_COMMIT: {PIN}", workflow)
+        self.assertIn(f"UPSTREAM_HUB_COMMIT: {PIN}", workflow)
         self.assertIn('git clone --filter=blob:none --no-checkout --depth 1', workflow)
         self.assertIn('rev-parse HEAD', workflow)
         self.assertIn("python3 build/ubuntu-hub-source.py", workflow)
@@ -250,7 +250,7 @@ class HubPortContractTests(unittest.TestCase):
 
 
 def _pinned_repo():
-    repo = os.environ.get("ROWYN_TEST_KYTH_REPO")
+    repo = os.environ.get("ROWYN_TEST_UPSTREAM_REPO")
     if not repo:
         return None
     result = subprocess.run(
@@ -261,7 +261,7 @@ def _pinned_repo():
     return Path(repo)
 
 
-@unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_KYTH_REPO to a Kyth checkout containing the pinned commit")
+@unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO to an upstream checkout containing the pinned commit")
 class PinnedHubSourceTests(unittest.TestCase):
     def test_port_is_repeatable_and_scoped(self):
         repo = _pinned_repo()
@@ -274,7 +274,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                 hub.port_source(root)
                 snapshots.append({str(p.relative_to(root)): p.read_bytes()
                                   for p in root.rglob("*") if p.is_file()})
-                web = root / "src/kyth-hub-web"
+                web = root / "src/rowyn-hub-web"
                 crate = web / "src-tauri"
 
                 conf = json.loads((crate / "tauri.conf.json").read_text())
@@ -352,7 +352,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                               (crate / "src/main.rs").read_text())
                 # The check path lives in the shared crate: its guard
                 # invocations and GHCR fallback take Rowyn's name too.
-                bootc_query = (root / "src/kyth-shared-rs/src/system/bootc_query.rs").read_text()
+                bootc_query = (root / "src/rowyn-shared-rs/src/system/bootc_query.rs").read_text()
                 self.assertIn("/usr/bin/rowyn-bootc-guard", bootc_query)
                 self.assertNotIn("kyth-bootc-guard", bootc_query)
                 self.assertNotIn("ghcr.io/kyth-os/kyth", bootc_query)
@@ -369,13 +369,13 @@ class PinnedHubSourceTests(unittest.TestCase):
                 for text in (vpn, main):
                     self.assertIn(".config/rowyn-vpn-connect", text)
                     self.assertNotIn("kyth-vpn-connect", text)
-                preset = (root / "src/kyth-shared-rs/src/system/network_preset.rs").read_text()
+                preset = (root / "src/rowyn-shared-rs/src/system/network_preset.rs").read_text()
                 self.assertIn('"/etc/rowyn/network.toml"', preset)
                 self.assertNotIn("/etc/kyth/network.toml", preset)
                 self.assertNotIn("/etc/kyth/network.toml", vpn)
                 # The GlobalProtect argv construction survives the port:
                 # gp gateways are entered directly via --usergroup gateway.
-                saml = (root / "src/kyth-shared-rs/src/system/vpn_saml.rs").read_text()
+                saml = (root / "src/rowyn-shared-rs/src/system/vpn_saml.rs").read_text()
                 self.assertIn('"--usergroup"', saml)
                 self.assertIn('"gateway"', saml)
                 self.assertIn('"/etc/vpnc/vpnc-script"', saml)
@@ -397,7 +397,7 @@ class PinnedHubSourceTests(unittest.TestCase):
             root = Path(temp) / "src"
             hub.export_source(repo, root)
             hub.port_source(root)
-            query = (root / "src/kyth-shared-rs/src/system/bootc_query.rs").read_text()
+            query = (root / "src/rowyn-shared-rs/src/system/bootc_query.rs").read_text()
             body = query.split("pub fn update_check_state(", 1)[1].split("\nfn ", 1)[0]
             self.assertIn('lower.contains("update available for:")', body)
             self.assertIn('lower.contains("total new layers:") && lower.contains("added layers:")', body)
@@ -411,9 +411,9 @@ class PinnedHubSourceTests(unittest.TestCase):
             root = Path(temp) / "src"
             hub.export_source(repo, root)
             hub.port_source(root)
-            web = root / "src/kyth-hub-web"
+            web = root / "src/rowyn-hub-web"
             crate = web / "src-tauri"
-            shared = root / "src/kyth-shared-rs/src/system"
+            shared = root / "src/rowyn-shared-rs/src/system"
             comps = web / "src/components"
 
             # B3: no just recipe button on any kept page.
@@ -497,7 +497,7 @@ class PinnedHubSourceTests(unittest.TestCase):
             root = Path(temp) / "src"
             hub.export_source(repo, root)
             hub.port_source(root)
-            web = root / "src/kyth-hub-web"
+            web = root / "src/rowyn-hub-web"
             crate = web / "src-tauri"
             comps = web / "src/components"
 
@@ -558,9 +558,9 @@ class PinnedHubSourceTests(unittest.TestCase):
             root = Path(temp) / "export"
             hub.export_source(repo, root)
             hub.port_source(root)
-            web = root / "src/kyth-hub-web"
+            web = root / "src/rowyn-hub-web"
             crate = web / "src-tauri"
-            shared = root / "src/kyth-shared-rs"
+            shared = root / "src/rowyn-shared-rs"
 
             # Item 2: orphaned Kyth desktop data files are gone; the
             # provenance data kept for a future Play surface is not.
@@ -649,7 +649,7 @@ class PinnedHubSourceTests(unittest.TestCase):
             root = Path(temp) / "export"
             hub.export_source(repo, root)
             hub.port_source(root)
-            web = root / "src/kyth-hub-web"
+            web = root / "src/rowyn-hub-web"
             crate = web / "src-tauri"
 
             # Frontend: no "KythOS" anywhere under src/ except the one
@@ -696,11 +696,61 @@ class PinnedHubSourceTests(unittest.TestCase):
             # Shared-crate modules whose display strings the shell
             # surfaces (and the inhibit reaper that must match the
             # reason main.rs sets) are clean and consistent.
-            shared = root / "src/kyth-shared-rs/src/system"
+            shared = root / "src/rowyn-shared-rs/src/system"
             for name in ("process.rs", "boot_health.rs", "desktop_stack.rs"):
                 self.assertNotIn("KythOS", (shared / name).read_text(), name)
             self.assertIn("Rowyn Focus Session", (shared / "process.rs").read_text())
 
 
+    def test_rename_contract_applied(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-hub-rename-") as temp:
+            root = Path(temp) / "source"
+            hub.export_source(repo, root)
+            hub.port_source(root)
+            web = root / "src/rowyn-hub-web"
+            crate = web / "src-tauri"
+            shared = root / "src/rowyn-shared-rs"
+
+            shared_manifest = (shared / "Cargo.toml").read_text()
+            self.assertIn('name = "rowyn-shared"', shared_manifest)
+            self.assertIn('name = "rowyn-shared"', (crate / "Cargo.lock").read_text())
+            self.assertIn("path = \"../../rowyn-shared-rs\"", (crate / "Cargo.toml").read_text())
+            main = (crate / "src/main.rs").read_text()
+            self.assertIn("rowyn_shared::", main)
+            self.assertNotIn("kyth_shared", main)
+
+            updates = (crate / "src/commands/updates.rs").read_text()
+            self.assertIn("ROWYN_STAGE_PROGRESS", updates)
+            self.assertNotIn("KYTH_STAGE_PROGRESS", updates)
+            vpn = (crate / "src/commands/vpn.rs").read_text()
+            self.assertIn("submitToRowyn", vpn)
+            telemetry = (shared / "src/system/telemetry.rs").read_text()
+            self.assertIn(".local/share/rowyn/telemetry.db", telemetry)
+
+            # No unmasked kyth reference survives anywhere in the
+            # export. Deliberate exceptions: the GitHub org in
+            # registry/identity strings, the upstream cert-name
+            # matcher, one negative regression needle, and the
+            # KythOS-era provenance data in compat_games.json
+            # (excluded from the scan entirely).
+            protected = ("KythOS Secure Boot", "kyth-vpnc-script")
+            offenders = []
+            for path in root.rglob("*"):
+                if not path.is_file() or path.name == "compat_games.json":
+                    continue
+                try:
+                    masked = path.read_text()
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                for literal in protected:
+                    masked = masked.replace(literal, "")
+                masked = masked.replace("kyth-os", "")
+                if "kyth" in masked.lower():
+                    offenders.append(str(path.relative_to(root)))
+            self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main()
+

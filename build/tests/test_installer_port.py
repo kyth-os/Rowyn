@@ -3,7 +3,7 @@
 (build/ubuntu-installer-source.py).
 
 Run: python3 -B -m unittest discover -s build/tests -v
-Optional real-source check: set ROWYN_TEST_KYTH_REPO to a local Kyth checkout
+Optional real-source check: set ROWYN_TEST_UPSTREAM_REPO to a local upstream checkout
 that contains the pinned commit; the port integration tests skip otherwise.
 """
 import os
@@ -74,13 +74,13 @@ class InstallerJunkCutContractTests(unittest.TestCase):
             '#[ignore = "load-sensitive socket-deadline timing',
             '#[ignore = "load-sensitive cross-thread timing',
             'contains("source is not this Rowyn release")',
-            "Rowyn does not support custom kernels or Kyth MOK enrollment",
+            "Rowyn does not support custom kernels or MOK enrollment",
         ):
             self.assertIn(anchor, script)
 
 
 def _pinned_repo():
-    repo = os.environ.get("ROWYN_TEST_KYTH_REPO")
+    repo = os.environ.get("ROWYN_TEST_UPSTREAM_REPO")
     if not repo:
         return None
     result = subprocess.run(
@@ -91,7 +91,7 @@ def _pinned_repo():
     return Path(repo)
 
 
-@unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_KYTH_REPO to a Kyth checkout containing the pinned commit")
+@unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO to an upstream checkout containing the pinned commit")
 class PinnedInstallerJunkCutTests(unittest.TestCase):
     def test_junk_cut_applied(self):
         repo = _pinned_repo()
@@ -99,8 +99,8 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             root = Path(temp) / "source"
             installer.export_source(repo, root)
             installer.port_source(root, DIGEST)
-            crate = root / "src/kyth-installer-web/src-tauri"
-            shared = root / "src/kyth-shared-rs"
+            crate = root / "src/rowyn-installer-web/src-tauri"
+            shared = root / "src/rowyn-shared-rs"
 
             # Item 3: the Slint stack is out — bin target, source,
             # dependencies, and the build.rs compile step — while the
@@ -110,8 +110,8 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             self.assertNotIn("kyth-installer-native", manifest)
             self.assertNotIn("slint", manifest)
             self.assertNotIn("slint", (crate / "build.rs").read_text())
-            for kept_bin in ("kyth-installer-shell", "kyth-installerd",
-                             "kyth-installer-exec"):
+            for kept_bin in ("rowyn-installer-shell", "rowyn-installerd",
+                             "rowyn-installer-exec"):
                 self.assertIn(f'name = "{kept_bin}"', manifest)
 
             # Items 1 + 7 + 8: shared crate pruned to the keep set, no
@@ -149,7 +149,7 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             root = Path(temp) / "source"
             installer.export_source(repo, root)
             installer.port_source(root, DIGEST)
-            src = root / "src/kyth-installer-web/src-tauri/src"
+            src = root / "src/rowyn-installer-web/src-tauri/src"
 
             secure = (src / "installer_secure_boot.rs").read_text()
             self.assertIn("rejects_import_plans_without_handling_the_password", secure)
@@ -180,8 +180,64 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             self.assertIn('#[ignore = "load-sensitive cross-thread timing', job)
 
 
+    def test_rename_contract_applied(self):
+        repo = _pinned_repo()
+        with tempfile.TemporaryDirectory(prefix="rowyn-installer-rename-") as temp:
+            root = Path(temp) / "source"
+            installer.export_source(repo, root)
+            installer.port_source(root, DIGEST)
+            crate = root / "src/rowyn-installer-web/src-tauri"
+            shared = root / "src/rowyn-shared-rs"
+
+            # The shared crate and every reference to it carry the
+            # Rowyn name; no KYTH_ token survives in the shipped code.
+            shared_manifest = (shared / "Cargo.toml").read_text()
+            self.assertIn('name = "rowyn-shared"', shared_manifest)
+            self.assertIn("path = \"../../rowyn-shared-rs\"",
+                          (crate / "Cargo.toml").read_text())
+            executor = (crate / "src/installer_job_executor.rs").read_text()
+            self.assertIn('"/usr/bin/rowyn-cosign"', executor)
+            self.assertIn("ROWYN_SOURCE_IMAGE", executor)
+            self.assertNotIn("KYTH_", executor)
+            daemon = (crate / "src/installer_daemon.rs").read_text()
+            self.assertIn("rowyn_shared::", daemon)
+            self.assertIn("X-Rowyn-Session-Token", daemon)
+            self.assertNotIn("KYTH_", daemon)
+
+            # ISO runtime names: launcher, daemon unit, env file.
+            service = (root / "build_files/rowyn-installerd.service").read_text()
+            self.assertIn("ExecStart=/usr/bin/rowyn-installerd", service)
+            self.assertIn("EnvironmentFile=/etc/rowyn-installer.env", service)
+            self.assertIn("/run/rowyn-installer", service)
+            launcher = (root / "build_files/rowyn-launch-installer").read_text()
+            self.assertIn("ghcr.io/kyth-os/rowyn:stable", launcher)
+
+            # No unmasked kyth reference survives anywhere in the
+            # export. Deliberate exceptions: the GitHub org in
+            # registry/identity strings, the upstream cert-name
+            # matcher, one negative regression needle, and the
+            # upstream unit whose absence the ported config tests
+            # assert.
+            protected = ("KythOS Secure Boot", "kyth-vpnc-script",
+                         "kyth-system-accounts.service")
+            offenders = []
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                try:
+                    masked = path.read_text()
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                for literal in protected:
+                    masked = masked.replace(literal, "")
+                masked = masked.replace("kyth-os", "")
+                if "kyth" in masked.lower():
+                    offenders.append(str(path.relative_to(root)))
+            self.assertEqual(offenders, [])
+
+
 @unittest.skipUnless(_pinned_repo() and shutil.which("cargo"),
-                     "set ROWYN_TEST_KYTH_REPO to a Kyth checkout containing the pinned commit and provide cargo")
+                     "set ROWYN_TEST_UPSTREAM_REPO to an upstream checkout containing the pinned commit and provide cargo")
 class PinnedInstallerCargoTests(unittest.TestCase):
     def test_installer_cargo_suite_is_green(self):
         repo = _pinned_repo()
@@ -193,11 +249,11 @@ class PinnedInstallerCargoTests(unittest.TestCase):
             root = Path(temp) / "source"
             installer.export_source(repo, root)
             installer.port_source(root, CARGO_TEST_DIGEST)
-            crate = root / "src/kyth-installer-web/src-tauri"
+            crate = root / "src/rowyn-installer-web/src-tauri"
             # The shell binary's tauri::generate_context! requires the
             # frontend dist to exist even for unit tests; the ISO build
             # produces the real one with npm, the suite uses a stub.
-            dist = root / "src/kyth-installer-web/dist"
+            dist = root / "src/rowyn-installer-web/dist"
             dist.mkdir(exist_ok=True)
             (dist / "index.html").write_text("<html></html>\n")
             env = dict(os.environ)

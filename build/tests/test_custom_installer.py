@@ -2,7 +2,7 @@
 """Safe behavioral regressions; no sudo, mounts, Podman, or network are used.
 
 Run: python3 -B -m unittest discover -s build/tests -v
-Optional real-source check: set ROWYN_TEST_KYTH_REPO to a local Kyth checkout.
+Optional real-source check: set ROWYN_TEST_UPSTREAM_REPO to a local upstream checkout.
 All writes, including disposable worktrees, live below TMPDIR.
 ROWYN_TEST_ACTION / ROWYN_TEST_ADAPTER allow testing saved pre-fix files.
 """
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ACTION = Path(os.environ.get("ROWYN_TEST_ACTION", ROOT / ".github/actions/setup-compressed-storage/action.yml"))
 ADAPTER = Path(os.environ.get("ROWYN_TEST_ADAPTER", ROOT / "build/custom-installer-iso.sh"))
 PIN = "2baf8496b5aa904c0784f4290df743ee17edae48"
-EXECUTOR = "src/kyth-installer-web/src-tauri/src/installer_job_executor.rs"
+EXECUTOR = "src/rowyn-installer-web/src-tauri/src/installer_job_executor.rs"
 
 # This executable NEVER delegates to the host, even for an unexpected command.
 # Its virtual directory/mount table models reset deleting storage directories.
@@ -331,7 +331,7 @@ class UbuntuGuardTests(unittest.TestCase):
     def test_legacy_base_rejected_before_container_execution(self):
         env = dict(os.environ, IMAGE_REF="ghcr.io/kyth-os/rowyn:" + "a"*40,
                    SOURCE_TAG="a"*40, IMAGE_DIGEST="sha256:" + "b"*64,
-                   KYTH_SOURCE_DIR="/never/read", KYTH_INSTALLER_COMMIT=PIN,
+                   UPSTREAM_SOURCE_DIR="/never/read", UPSTREAM_INSTALLER_COMMIT=PIN,
                    UBUNTU_LIVE_IMAGE="ghcr.io/kyth-os/kyth@sha256:" + "c"*64)
         result = subprocess.run(["bash", str(ADAPTER)], cwd=ROOT, env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
@@ -344,7 +344,7 @@ class UbuntuGuardTests(unittest.TestCase):
         self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', adapter)
         self.assertIn('INSTALL_TARGET_IMAGE', adapter)
         self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', live)
-        self.assertIn('KYTH_TARGET_IMAGE=', live)
+        self.assertIn('ROWYN_TARGET_IMAGE=', live)
         self.assertNotIn('target_image:$source', live)
 
     def test_iso_metadata_records_source_digest_and_stable_target_separately(self):
@@ -385,7 +385,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             (root / "usr/lib/ostree/prepare-root.conf").touch()
             (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").parent.mkdir(parents=True, exist_ok=True)
             (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").touch()
-            for binary in ("kyth-installerd", "kyth-installer-shell"):
+            for binary in ("rowyn-installerd", "rowyn-installer-shell"):
                 path = root / "usr/bin" / binary
                 path.write_text("#!/bin/sh\n")
                 path.chmod(0o755)
@@ -427,7 +427,7 @@ class LiveBootcConfigurationTests(unittest.TestCase):
             (root / "usr/lib/ostree/prepare-root.conf").touch()
             (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").parent.mkdir(parents=True, exist_ok=True)
             (root / "usr/lib/systemd/boot/efi/systemd-bootx64.efi").touch()
-            for binary in ("kyth-installerd", "kyth-installer-shell"):
+            for binary in ("rowyn-installerd", "rowyn-installer-shell"):
                 path = root / "usr/bin" / binary
                 path.write_text("#!/bin/sh\n")
                 path.chmod(0o755)
@@ -1108,10 +1108,10 @@ class InstallerServiceSandboxContractTests(unittest.TestCase):
                 port.adapt_installer_service(mutated)
 
 
-@unittest.skipUnless(os.environ.get("ROWYN_TEST_KYTH_REPO"), "set ROWYN_TEST_KYTH_REPO for pinned-source integration")
+@unittest.skipUnless(os.environ.get("ROWYN_TEST_UPSTREAM_REPO"), "set ROWYN_TEST_UPSTREAM_REPO for pinned-source integration")
 class PinnedSourceTests(unittest.TestCase):
     def test_exact_object_export_is_repeatable_and_ports_actual_source(self):
-        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        repo = Path(os.environ["ROWYN_TEST_UPSTREAM_REPO"])
         original = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"])
         with tempfile.TemporaryDirectory(prefix="rowyn-pinned-") as temp:
             snapshots = []
@@ -1122,16 +1122,16 @@ class PinnedSourceTests(unittest.TestCase):
                 snapshots.append({str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()})
                 self.assertFalse((root / "installer/Containerfile").exists())
                 self.assertFalse((root / "build_files/build-live-iso.sh").exists())
-                self.assertFalse((root / "src/kyth-installer-web/node_modules").exists())
+                self.assertFalse((root / "src/rowyn-installer-web/node_modules").exists())
                 executor = (root / EXECUTOR).read_text()
                 prepare = executor[executor.index("            Phase::Prepare => {"):executor.index("            Phase::Storage =>")]
                 self.assertLess(prepare.index("self.verify_install_source(phase)?;"), prepare.index("rowyn-live-preflight"))
-                self.assertIn('Command::new("/usr/bin/kyth-cosign")', executor)
+                self.assertIn('Command::new("/usr/bin/rowyn-cosign")', executor)
                 self.assertIn('"--certificate-identity"', executor)
                 self.assertIn(port.IDENTITY, executor)
                 image = executor[executor.index('    fn execute_image('):]
                 self.assertLess(image.index('self.verify_install_source(phase)?;'), image.index('self.check_storage_preflight(phase, cancellation)?;'))
-                crate = root / "src/kyth-installer-web/src-tauri"
+                crate = root / "src/rowyn-installer-web/src-tauri"
                 accounts = (crate / "src/installer_accounts.rs").read_text()
                 self.assertNotIn("wheel", accounts)
                 self.assertIn('"sudo,video,audio,render"', accounts)
@@ -1140,31 +1140,31 @@ class PinnedSourceTests(unittest.TestCase):
                 daemon = (crate / "src/installer_daemon.rs").read_text()
                 dispatch = daemon[daemon.index('    fn dispatch('):]
                 self.assertLess(dispatch.index('return (403'), dispatch.index('let disk ='))
-                service = (root / 'build_files/kyth-installerd.service').read_text()
-                self.assertIn('EnvironmentFile=/etc/kyth-installer.env', service)
+                service = (root / 'build_files/rowyn-installerd.service').read_text()
+                self.assertIn('EnvironmentFile=/etc/rowyn-installer.env', service)
                 self.assertIn('RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6', service)
                 self.assertIn('RuntimeDirectory=bootc\n', service)
                 # The launcher owns the session-token tree. systemd must not
                 # re-own it as root:root and cut off the live UI's API access.
-                self.assertNotIn('kyth-installer', next(
+                self.assertNotIn('rowyn-installer', next(
                     line for line in service.splitlines() if line.startswith('RuntimeDirectory=')
                 ))
                 self.assertIn('RuntimeDirectoryMode=0750', service)
                 self.assertIn('StateDirectory=containers', service)
                 self.assertIn('StateDirectoryMode=0700', service)
                 self.assertIn(
-                    'ReadWritePaths=/run/kyth-installer /var/tmp /var/log /var/lib/containers /run/bootc',
+                    'ReadWritePaths=/run/rowyn-installer /var/tmp /var/log /var/lib/containers /run/bootc',
                     service,
                 )
                 self.assertNotIn('ReadWritePaths=/run\n', service)
                 self.assertNotIn('ReadWritePaths=/var\n', service)
                 if shutil.which("systemd-analyze"):
                     verify = service.replace(
-                        "ExecStart=/usr/bin/kyth-installerd",
+                        "ExecStart=/usr/bin/rowyn-installerd",
                         "ExecStart=/bin/true",
                         1,
                     )
-                    unit = root / "build_files/kyth-installerd-verify.service"
+                    unit = root / "build_files/rowyn-installerd-verify.service"
                     unit.write_text(verify)
                     result = subprocess.run(
                         ["systemd-analyze", "verify", str(unit)],
@@ -1176,7 +1176,7 @@ class PinnedSourceTests(unittest.TestCase):
                 # from the export — no shipped frontend references it,
                 # and the executor carries its own release constants.
                 self.assertFalse(
-                    (root / "src/kyth-shared-rs/src/system/installer_source.rs").exists())
+                    (root / "src/rowyn-shared-rs/src/system/installer_source.rs").exists())
                 with self.assertRaises(ValueError):
                     port.export_source(repo, root)
 
@@ -1184,7 +1184,7 @@ class PinnedSourceTests(unittest.TestCase):
         self.assertEqual(original, subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"]))
 
     def test_adapted_pinned_source_uses_ubuntu_utility_paths(self):
-        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        repo = Path(os.environ["ROWYN_TEST_UPSTREAM_REPO"])
         expected = {
             Path(path).name: path
             for path in live.REQUIRED
@@ -1194,7 +1194,7 @@ class PinnedSourceTests(unittest.TestCase):
             root = Path(temp) / "source"
             port.export_source(repo, root)
             port.port_source(root, "sha256:" + "b"*64)
-            source = root / "src/kyth-installer-web/src-tauri/src"
+            source = root / "src/rowyn-installer-web/src-tauri/src"
             for path in sorted(source.glob("*.rs")):
                 text = path.read_text()
                 for utility, expected_path in expected.items():
@@ -1209,12 +1209,12 @@ class PinnedSourceTests(unittest.TestCase):
             )
 
     def test_adapted_stream_merges_stderr_into_failure_output(self):
-        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        repo = Path(os.environ["ROWYN_TEST_UPSTREAM_REPO"])
         with tempfile.TemporaryDirectory(prefix="rowyn-stream-") as temp:
             exported = Path(temp) / "source"
             port.export_source(repo, exported)
             port.port_source(exported, "sha256:" + "b" * 64)
-            stream = (exported / "src/kyth-installer-web/src-tauri/src/installer_stream.rs").read_text()
+            stream = (exported / "src/rowyn-installer-web/src-tauri/src/installer_stream.rs").read_text()
             self.assertIn("fn merge_stderr_into_stdout", stream)
             for function in ("pub(crate) fn run_command(", "pub(crate) fn run_command_timeout("):
                 start = stream.index(function)
@@ -1223,7 +1223,7 @@ class PinnedSourceTests(unittest.TestCase):
             self.assertIn("libc::dup2(libc::STDOUT_FILENO, libc::STDERR_FILENO)", stream)
 
     def test_adapted_sector_probe_runs_with_safe_command_double(self):
-        repo = Path(os.environ["ROWYN_TEST_KYTH_REPO"])
+        repo = Path(os.environ["ROWYN_TEST_UPSTREAM_REPO"])
         if shutil.which("rustc") is None:
             self.skipTest("rustc is required for the source-extracted probe")
         with tempfile.TemporaryDirectory(prefix="rowyn-probe-") as temp:
@@ -1231,7 +1231,7 @@ class PinnedSourceTests(unittest.TestCase):
             exported = root / "source"
             port.export_source(repo, exported)
             port.port_source(exported, "sha256:" + "b"*64)
-            source = (exported / "src/kyth-installer-web/src-tauri/src/installer_disk.rs").read_text()
+            source = (exported / "src/rowyn-installer-web/src-tauri/src/installer_disk.rs").read_text()
             start = source.index("pub(crate) fn logical_sector_size")
             function = source[start:source.index("\n}\n", start) + 2]
             self.assertIn('Command::new("/usr/sbin/blockdev")', function)

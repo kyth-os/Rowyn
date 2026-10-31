@@ -176,16 +176,16 @@ umount "$root/source"
             self.assertEqual(result.returncode, 0, result.stderr)
 
 
-@unittest.skipUnless(os.environ.get('ROWYN_TEST_KYTH_REPO'), 'optional pinned-source integration requires ROWYN_TEST_KYTH_REPO')
+@unittest.skipUnless(os.environ.get('ROWYN_TEST_UPSTREAM_REPO'), 'optional pinned-source integration requires ROWYN_TEST_UPSTREAM_REPO')
 class ComposefsAdapterGenerationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='rowyn-composefs-source-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / 'source'
         self.adapter = load('ubuntu-installer-source')
-        self.adapter.export_source(Path(os.environ['ROWYN_TEST_KYTH_REPO']), self.root)
+        self.adapter.export_source(Path(os.environ['ROWYN_TEST_UPSTREAM_REPO']), self.root)
         self.adapter.port_source(self.root, 'sha256:' + 'b' * 64)
-        self.crate = self.root / 'src/kyth-installer-web/src-tauri/src'
+        self.crate = self.root / 'src/rowyn-installer-web/src-tauri/src'
 
     def test_generated_source_parses_without_losing_existing_tests_or_mount_registry(self):
         for name in ('installer_bootc.rs', 'installer_job_executor.rs', 'installer_configuration.rs',
@@ -227,7 +227,7 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         # export (no shipped frontend references it); the release-source
         # contract lives in the executor's own constants and guards.
         self.assertFalse(
-            (self.root / 'src/kyth-shared-rs/src/system/installer_source.rs').exists())
+            (self.root / 'src/rowyn-shared-rs/src/system/installer_source.rs').exists())
         executor = (self.crate / 'installer_job_executor.rs').read_text()
         self.assertIn('const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@sha256:'
                       + 'b' * 64 + '";', executor)

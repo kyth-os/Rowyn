@@ -40,7 +40,7 @@ class UpdatePolicyWiringTests(unittest.TestCase):
         self.assertIn("shared/update-policy.sh", text)
         self.assertIn("keys/update.pub", text)
         self.assertIn("$work/source/rowyn/", text)
-        self.assertIn("KYTH_INSTALLER_COMMIT", text)
+        self.assertIn("UPSTREAM_INSTALLER_COMMIT", text)
         self.assertIn("Unreviewed installer source", text)
 
         staging_command = next(

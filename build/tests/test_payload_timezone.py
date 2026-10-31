@@ -2,7 +2,7 @@
 """Contracts for the payload's timezone stack.
 
 The installer writes the chosen zone as an /etc/localtime symlink into
-the deployment (Kyth configuration machinery, inherited untransformed),
+the deployment (upstream configuration machinery, inherited untransformed),
 and KDE System Settings changes it later through systemd-timedated.
 Both need the payload to guarantee the pieces they rely on instead of
 inheriting whatever the base image happens to ship:
@@ -74,7 +74,7 @@ class PayloadTimezoneTests(unittest.TestCase):
         self.assertIn("test -x /usr/lib/polkit-1/polkitd", workflow)
 
     def test_installer_ports_leave_localtime_machinery_alone(self):
-        # The timezone write is Kyth's symlink swap into the deployment
+        # The timezone write is the upstream symlink swap into the deployment
         # etc plus the assurance step's read-back check; neither Rowyn
         # port script may rewrite any of it.
         self.assertNotIn("localtime", INSTALLER_PORT.read_text(encoding="utf-8"))
@@ -82,7 +82,7 @@ class PayloadTimezoneTests(unittest.TestCase):
 
 
 def _pinned_repo():
-    repo = os.environ.get("ROWYN_TEST_KYTH_REPO")
+    repo = os.environ.get("ROWYN_TEST_UPSTREAM_REPO")
     if not repo:
         return None
     result = subprocess.run(
@@ -95,7 +95,7 @@ def _pinned_repo():
 
 @unittest.skipUnless(
     _pinned_repo(),
-    "set ROWYN_TEST_KYTH_REPO to a Kyth checkout containing the pinned commit")
+    "set ROWYN_TEST_UPSTREAM_REPO to an upstream checkout containing the pinned commit")
 class PinnedInstallerTimezoneTests(unittest.TestCase):
     def _show(self, path: str) -> str:
         repo = _pinned_repo()

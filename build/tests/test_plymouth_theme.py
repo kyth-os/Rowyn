@@ -2,7 +2,7 @@
 """Contracts for the Rowyn Plymouth boot splash.
 
 The installed system must boot behind a splash: the Rowyn theme
-(script module, pulsing berry mark on deep navy, modeled on Kyth's) is
+(script module, pulsing berry mark on deep navy, modeled on the upstream script) is
 the plymouth daemon's default, dracut folds it into the initramfs at
 image build (verified there by shared/initramfs.sh), and bootc kargs
 give deployments `quiet splash` — without the kargs the theme never
@@ -38,7 +38,7 @@ class PlymouthThemeTests(unittest.TestCase):
     def test_script_pulses_the_logo_and_handles_messages(self):
         text = (THEME / "rowyn.script").read_text(encoding="utf-8")
         self.assertIn('Image ("rowyn-logo.png")', text)
-        # The Kyth-shaped animation: fade in, then a sine pulse.
+        # The upstream-shaped animation: fade in, then a sine pulse.
         self.assertIn("Plymouth.SetRefreshFunction", text)
         self.assertIn("Math.Sin", text)
         self.assertIn("SetOpacity", text)
