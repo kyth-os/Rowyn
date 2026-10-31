@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the minimal Apache-2.0 Kyth installer source, then port it to Ubuntu.
+"""Export the minimal Apache-2.0 upstream installer source, then port it to Ubuntu.
 
 Never executes upstream installer/Containerfile, installer/build.sh or ISO wrappers.
 The input checkout is read-only; git archive exports exactly the pinned objects.
@@ -17,6 +17,24 @@ PATHS = ("src/kyth-installer-web", "src/kyth-shared-rs",
          "third_party/gtk-glib-0.18.5", "build_files/exe-handler-apps.json",
          "build_files/kyth-launch-installer", "build_files/kyth-installerd.service", "LICENSE")
 IDENTITY = "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main"
+# The PATHS allowlist above names the upstream layout (the pinned
+# repo's own names, needed to address git archive). On the way into
+# the export the directories — and the two build_files whose names
+# the ISO installs — are renamed to Rowyn's, so every path the rest
+# of this port, and every Rowyn build, touches carries the Rowyn name.
+EXPORT_DIR_RENAMES = (
+    ("src/kyth-installer-web", "src/rowyn-installer-web"),
+    ("src/kyth-shared-rs", "src/rowyn-shared-rs"),
+    ("build_files/kyth-launch-installer", "build_files/rowyn-launch-installer"),
+    ("build_files/kyth-installerd.service", "build_files/rowyn-installerd.service"),
+)
+
+
+def export_member_path(name):
+    for old, new in EXPORT_DIR_RENAMES:
+        if name == old or name.startswith(old + "/"):
+            return new + name[len(old):]
+    return name
 
 # --- Legacy junk cut (approved by Patrick, Oct 30, 2026) -------------------
 # Identical shared-crate cut to the Hub port's (the two scripts each carry
@@ -106,7 +124,7 @@ def strip_shared_crate_bins(root):
     bins explicitly), and a [[bin]] section naming a deleted file — or a
     file left behind with no section — would break the crate's manifest,
     so the two leave together, counted."""
-    crate = root / "src/kyth-shared-rs"
+    crate = root / "src/rowyn-shared-rs"
     bins = sorted((crate / "src").glob("*_bin.rs"))
     if len(bins) != SHARED_CRATE_BIN_FILES:
         raise ValueError(
@@ -140,7 +158,7 @@ def prune_shared_crate(root):
     loses the rPGP dependency only the pruned updater-manifest verifier
     used. Fails closed when a kept module is missing upstream or the
     declared set afterwards is not exactly the keep set."""
-    crate = root / "src/kyth-shared-rs"
+    crate = root / "src/rowyn-shared-rs"
     manifest_path = crate / "Cargo.toml"
     text = manifest_path.read_text()
     text = replace_once(
@@ -225,6 +243,127 @@ def sync_cargo_lock(crate, absent_packages):
     return f"{len(present)} packages remain"
 
 
+# --- Full internal rename (approved by Patrick, Oct 31, 2026) --------------
+# The passes above rebrand user-visible copy and adapt behavior; this
+# pass renames what remains internal -- the installer bin targets
+# (rowyn-installer-shell / rowyn-installerd / rowyn-installer-exec),
+# the shared crate's package name and every `kyth_shared::` path, the
+# /run/rowyn-installer runtime tree (staging mountpoints, TUF cache,
+# journal, socket), /etc/rowyn-installer.env and its ROWYN_* variables,
+# /usr/share/rowyn payload paths, the X-Rowyn-Session-Token header, and
+# env vars -- with one uniform map, so both ends of every renamed
+# contract move together. The exported directories and the two
+# installed build_files already took the Rowyn name at extraction
+# (EXPORT_DIR_RENAMES). Masked out, as external names the code must
+# keep matching rather than names Rowyn chose:
+#   * the GitHub org in registry/repository paths (kyth-os/...):
+#     Patrick's org identity, not product naming;
+#   * "KythOS Secure Boot": the certificate name mokutil reports for
+#     an enrolled MOK -- the shared crate matches external output;
+#   * "kyth-vpnc-script": a negative regression needle in vpn_saml's
+#     tests pinning that the upstream script name stays out of argv;
+#   * "kyth-system-accounts.service": the upstream unit whose ABSENCE
+#     the ported configuration tests assert in an installed target.
+RENAME_PROTECTED = (
+    "kyth-os/kyth",
+    "kyth-os/Rowyn",
+    "kyth-os",
+    "KythOS Secure Boot",
+    "kyth-vpnc-script",
+    "kyth-system-accounts.service",
+)
+RENAME_PAIRS = (
+    ("KythOS", "Rowyn"),
+    ("KYTHOS", "ROWYN"),
+    ("kythos", "rowyn"),
+    ("KYTH", "ROWYN"),
+    ("Kyth", "Rowyn"),
+    ("kyth", "rowyn"),
+)
+
+
+def _mask_rename_protected(text):
+    slots = []
+    for literal in RENAME_PROTECTED:
+        if literal in text:
+            marker = f"\x00{len(slots)}\x00"
+            text = text.replace(literal, marker)
+            slots.append((marker, literal))
+    return text, slots
+
+
+def _unmask_rename_protected(text, slots):
+    for marker, literal in slots:
+        text = text.replace(marker, literal)
+    return text
+
+
+def repoint_upstream_refs(root):
+    """Repoint upstream-product repo/image references to Rowyn's own.
+
+    The feedback issue destination, the shared crate's bootc REGISTRY
+    constant, and parser/test-fixture image refs name the upstream
+    tracker's repo and image repository; in Rowyn's tree they must name
+    Rowyn's repo and image. The org segment is Patrick's and stays.
+    Runs immediately before rename_tree, whose protected literals keep
+    the org path itself intact."""
+    files = 0
+    refs = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
+        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/kyth-os/Rowyn")
+        renamed = renamed.replace("kyth-os/kyth", "kyth-os/Rowyn")
+        if renamed != text:
+            refs += (text.count("kyth-os/kyth"))
+            path.write_text(renamed)
+            files += 1
+    return f"{files} files, {refs} references"
+
+
+def rename_tree(root):
+    """Apply the uniform rename map to every text file in the export,
+    then fail closed if any unprotected upstream identifier survives."""
+    changed = 0
+    tokens = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        masked, slots = _mask_rename_protected(text)
+        renamed = masked
+        for old, new in RENAME_PAIRS:
+            tokens += renamed.count(old)
+            renamed = renamed.replace(old, new)
+        renamed = _unmask_rename_protected(renamed, slots)
+        if renamed != text:
+            path.write_text(renamed)
+            changed += 1
+    offenders = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = str(path.relative_to(root))
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        masked, _ = _mask_rename_protected(text)
+        if "kyth" in masked.lower():
+            offenders.append(rel)
+    if offenders:
+        raise ValueError(f"upstream identifiers survived the rename: {offenders}")
+    return f"{changed} files, {tokens} identifiers"
+
+
 def adapt_installer_service(text):
     """Apply the narrow writable-runtime contract to the pinned unit.
 
@@ -277,7 +416,7 @@ def export_source(repo, destination):
                 continue
             if not member.isfile() or Path(member.name).is_absolute() or ".." in Path(member.name).parts:
                 continue
-            path = destination / member.name
+            path = destination / export_member_path(member.name)
             path.parent.mkdir(parents=True, exist_ok=True)
             member_stream = stream.extractfile(member)
             assert member_stream is not None
@@ -295,7 +434,7 @@ def port_source(root, digest):
     spec.loader.exec_module(composefs)
     if composefs.completed(root, digest):
         return
-    crate = root / "src/kyth-installer-web/src-tauri"
+    crate = root / "src/rowyn-installer-web/src-tauri"
     executor = crate / "src/installer_job_executor.rs"
     text = executor.read_text()
     source = "ghcr.io/kyth-os/rowyn@" + digest
@@ -312,14 +451,14 @@ def port_source(root, digest):
         }
 ''' + anchor)
     anchor = '        Ok(())\n    }\n\n    fn check_storage_preflight('
-    text = replace_once(text, anchor, '''        let mut cosign = Command::new("/usr/bin/kyth-cosign");
+    text = replace_once(text, anchor, '''        let mut cosign = Command::new("/usr/bin/rowyn-cosign");
         cosign.args([
             "verify", "--certificate-identity",
             "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main",
             "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
             ROWYN_RELEASE_SOURCE,
-        ]).env("TUF_ROOT", "/run/kyth-installer/sigstore-tuf");
-        std::fs::create_dir_all("/run/kyth-installer/sigstore-tuf")
+        ]).env("TUF_ROOT", "/run/rowyn-installer/sigstore-tuf");
+        std::fs::create_dir_all("/run/rowyn-installer/sigstore-tuf")
             .map_err(|error| refuse(format!("cosign cache: {error}")))?;
         super::installer_stream::run_command_timeout(
             &mut cosign, || false, std::time::Duration::from_secs(180),
@@ -720,7 +859,7 @@ pub(crate) fn run_output_timeout_capture(
     config = crate / "src/installer_configuration.rs"
     text = config.read_text()
     text = replace_once(text, '    apply_boot_ordering_fix(&plan.target_root)?;\n',
-                        '    // Rowyn: Ubuntu has no Kyth system-account repair unit.\n')
+                        '    // Rowyn: Ubuntu has no system-account repair unit.\n')
     text = text.replace('{etc}/locale.conf', '{etc}/default/locale')
     text = text.replace('{etc}/vconsole.conf', '{etc}/default/keyboard').replace('KEYMAP={keymap}', 'XKBLAYOUT={keymap}')
     config.write_text(text)
@@ -759,7 +898,7 @@ pub(crate) fn run_output_timeout_capture(
     secure = crate / "src/installer_secure_boot.rs"
     text = secure.read_text()
     text = replace_once(text, '    let kernel = input.kernel.trim().to_ascii_lowercase();', '''    if input.force_stage || input.kernel != "ubuntu" {
-        return Err("Rowyn does not support custom kernels or Kyth MOK enrollment".into());
+        return Err("Rowyn does not support custom kernels or MOK enrollment".into());
     }
     let kernel = input.kernel.trim().to_ascii_lowercase();''')
     text = text.replace('standard KythOS kernel does not require custom MOK enrollment',
@@ -784,7 +923,7 @@ pub(crate) fn run_output_timeout_capture(
         let error = build_plan(cachy()).expect_err("Rowyn must reject MOK import plans");
         assert_eq!(
             error,
-            "Rowyn does not support custom kernels or Kyth MOK enrollment"
+            "Rowyn does not support custom kernels or MOK enrollment"
         );
         let forced = build_plan(SecureBootInput {
             kernel: "ubuntu".to_string(),
@@ -794,7 +933,7 @@ pub(crate) fn run_output_timeout_capture(
         .expect_err("forced staging must be rejected");
         assert_eq!(
             forced,
-            "Rowyn does not support custom kernels or Kyth MOK enrollment"
+            "Rowyn does not support custom kernels or MOK enrollment"
         );
     }''')
     text = replace_once(text, '''    fn classifies_existing_states_and_non_custom_kernel() {
@@ -915,7 +1054,7 @@ pub(crate) fn run_output_timeout_capture(
                 .expect_err("Rowyn must reject non-Ubuntu kernel plans");
             assert_eq!(
                 error,
-                "Rowyn does not support custom kernels or Kyth MOK enrollment"
+                "Rowyn does not support custom kernels or MOK enrollment"
             );
         }
         let plan = build_plan(SecureBootInput {
@@ -963,7 +1102,7 @@ pub(crate) fn run_output_timeout_capture(
         .expect_err("Rowyn must reject MOK import plans");
         assert_eq!(
             rejected,
-            "Rowyn does not support custom kernels or Kyth MOK enrollment"
+            "Rowyn does not support custom kernels or MOK enrollment"
         );
         let secure_boot = installer_secure_boot::build_plan(SecureBootInput {
             kernel: "ubuntu".into(),
@@ -1232,7 +1371,7 @@ pub(crate) fn run_output_timeout_capture(
     text = replace_once(text, '''    #[test]
     fn image_phase_verifies_digest_pinned_docker_source() {''',
                         '''    #[test]
-    #[ignore = "requires the live ISO environment: /usr/bin/kyth-cosign, a writable /run/kyth-installer, and Sigstore TUF network access"]
+    #[ignore = "requires the live ISO environment: /usr/bin/rowyn-cosign, a writable /run/rowyn-installer, and Sigstore TUF network access"]
     fn image_phase_verifies_digest_pinned_docker_source() {''')
     text = replace_once(text, '''    fn preparation_persists_a_recoverable_native_transaction() {
         let directory = tempfile::tempdir().expect("temporary transaction directory");
@@ -1316,9 +1455,9 @@ pub(crate) fn run_output_timeout_capture(
         assert_eq!(transaction["job_id"], 42);
     }''')
     executor_tests.write_text(text)
-    # Rowyn ships the upstream Tauri shell + web frontend, as Kyth does.
+    # Rowyn ships the upstream Tauri shell + web frontend.
     # The crate's native Slint UI is not built or installed (see Containerfile).
-    web = root / "src/kyth-installer-web"
+    web = root / "src/rowyn-installer-web"
     app = web / "src/InstallerApp.tsx"
     text = app.read_text()
     # Ubuntu has one kernel: drop the kernel-choice step entirely.
@@ -1355,21 +1494,36 @@ pub(crate) fn run_output_timeout_capture(
     text = replace_once(text, '"title": "KythOS Installer"', '"title": "Rowyn Installer"')
     conf.write_text(text)
     # The launcher stays on the upstream Tauri shell binary.
-    launcher = root / "build_files/kyth-launch-installer"
+    launcher = root / "build_files/rowyn-launch-installer"
     text = launcher.read_text()
     if '/usr/bin/kyth-installer-shell --socket-path' not in text:
         raise ValueError("upstream launcher no longer targets the Tauri shell")
+    # The launcher's fallback install source names the upstream image;
+    # Rowyn's only channel is its own stable one (the ISO's env file
+    # normally pins the exact release digest instead).
+    text = replace_once(text, "ghcr.io/kyth-os/kyth:latest",
+                        "ghcr.io/kyth-os/rowyn:stable")
     launcher.write_text(text.replace('KythOS', 'Rowyn'))
-    service = root / "build_files/kyth-installerd.service"
-    service.write_text(adapt_installer_service(service.read_text()))
+    service = root / "build_files/rowyn-installerd.service"
+    text = adapt_installer_service(service.read_text())
+    # The unit's documentation pointer is shipped metadata for the
+    # renamed daemon; it names Rowyn's repository, not the upstream's.
+    text = replace_once(text, "Documentation=https://github.com/kyth-os/kyth\n",
+                        "Documentation=https://github.com/kyth-os/Rowyn\n")
+    service.write_text(text)
     (root / 'ROWYN-PORT-NOTICE').write_text(
-        f'Kyth installer source {PIN}, Apache-2.0 (LICENSE).\n'
+        f'Pinned upstream installer source {PIN}, Apache-2.0 (LICENSE).\n'
         'Modified by Rowyn: Ubuntu accounts, tool paths, Tauri web UI, source trust, firmware policy.\n'
         'A legacy junk cut removed the never-built Slint native UI (bin target,\n'
         'native_main.rs, the slint/slint-build dependencies and its build.rs\n'
         'compile step), the shared crate\'s 92 helper-binary targets, and every\n'
         'shared-crate library module outside the shells\' reachability closure\n'
         '(incl. the runtime-updater/PGP heritage and its pgp dependency).\n'
+        'A full internal rename rewrites every remaining upstream identifier\n'
+        'the shared crate package and its paths, the installer bin targets,\n'
+        'the /run runtime tree, the env file and its variables, the session\n'
+        'token header) to the Rowyn name, and the exported layout directories\n'
+        'take the Rowyn name at extraction.\n'
         'Upstream OS/image/ISO assembly scripts are not included or invoked.\n')
 
     # --- Legacy junk cut -----------------------------------------------------
@@ -1399,6 +1553,14 @@ pub(crate) fn run_output_timeout_capture(
         '    slint_build::compile("ui/installer.slint").expect("failed to compile native installer UI");\n',
         "")
     build_rs.write_text(text)
+    # The shared crate's directory took the Rowyn name at extraction,
+    # so the dependency path follows now — the Cargo.lock re-sync
+    # below resolves it with cargo and would fail against the old
+    # path. The package name itself is renamed by the rename pass at
+    # the end of the port, together with every `kyth_shared::` path.
+    text = installer_cargo.read_text()
+    text = replace_once(text, 'path = "../../kyth-shared-rs"', 'path = "../../rowyn-shared-rs"')
+    installer_cargo.write_text(text)
     # The shared crate gets the same bin strip + closure prune as the Hub
     # port, then this crate's lock is re-synced for both dependency
     # removals (slint stack and pgp) in one cargo pass.
@@ -1407,6 +1569,10 @@ pub(crate) fn run_output_timeout_capture(
     sync_cargo_lock(crate, ("pgp", "slint", "slint-build"))
 
     composefs.adapt(root, digest)
+    # --- Full internal rename -------------------------------------------
+    repoint_upstream_refs(root)
+    rename_tree(root)
+    sync_cargo_lock(crate, ("kyth-shared",))
     composefs.record(root, digest)
 
 

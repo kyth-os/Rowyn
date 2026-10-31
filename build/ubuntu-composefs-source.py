@@ -15,7 +15,7 @@ def replace(text, old, new):
 def fingerprints(root):
     # Only exported installer inputs, never build outputs or dependency trees.
     result = {}
-    for base in ('src/kyth-installer-web', 'src/kyth-shared-rs',
+    for base in ('src/rowyn-installer-web', 'src/rowyn-shared-rs',
                  'third_party/gtk-glib-0.18.5', 'build_files'):
         for directory, dirs, files in os.walk(root / base, followlinks=False):
             dirs[:] = [d for d in dirs if d not in ('target', 'node_modules', 'dist', '.git')]
@@ -407,7 +407,7 @@ def adapt_configuration_tests(text):
 
 def adapt(root, release_digest=None):
     fixture_digest = (release_digest or 'sha256:' + 'b' * 64).removeprefix('sha256:')
-    crate = root / 'src/kyth-installer-web/src-tauri/src'
+    crate = root / 'src/rowyn-installer-web/src-tauri/src'
     bootc = crate / 'installer_bootc.rs'
     text = bootc.read_text()
     text = replace(text, '    if subcommand == "to-filesystem" {',

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the pinned Kyth System Hub source, then port it to Rowyn on Ubuntu.
+"""Export the pinned upstream System Hub source, then port it to Rowyn on Ubuntu.
 
 The port is deliberately scoped: only the Home/Dashboard, Apps, Updates,
 and VPN destinations survive. Play, This PC, Move In, and the shell-only
@@ -9,12 +9,12 @@ anchor-checked diff instead of a fork. The Updates channel is repointed at
 Rowyn's own releases and GHCR repository, and the update helpers the Hub
 shells out to are repointed at the Rowyn implementations the payload
 ships (shared/rowyn-safe-upgrade.sh, shared/rowyn-bootc-guard.sh,
-shared/rowyn-finalize-staged.sh — fixed-operation counterparts of Kyth's
+shared/rowyn-finalize-staged.sh — fixed-operation counterparts of the upstream
 Rust helpers, with a passwordless sudoers allowlist). Branch switching
 stays registered in Rust; the guard it calls implements only Rowyn's
-single stable channel and refuses Kyth's other channels.
+single stable channel and refuses the upstream's other channels.
 
-The VPN destination is Kyth's openconnect client (GlobalProtect "gp"
+The VPN destination is the upstream openconnect client (GlobalProtect "gp"
 profile, SAML redirect/cookie/reconnect flow); it ports unchanged apart
 from its on-disk paths, which take the Rowyn name. The payload image
 provides its runtime stack — openconnect, vpnc-scripts, ksshaskpass (the
@@ -30,8 +30,9 @@ boot-health OS identity check in updates.rs to Rowyn's os-release ID
 system unhealthy). The sweep is mechanical (counted replace-alls per
 file) so a new upstream string fails the port closed in the branding
 regression test instead of shipping under the wrong name. Provenance
-data that legitimately names KythOS (src/data/compat_games.json, whose
-notes record where a compatibility verdict came from) is not rewritten.
+data that legitimately names the upstream system
+(src/data/compat_games.json, whose notes record where a compatibility
+verdict came from) is not rewritten.
 
 Never executes upstream build scripts. The input checkout is read-only; git
 archive exports exactly the pinned objects.
@@ -44,6 +45,22 @@ import subprocess
 import tarfile
 
 PIN = "2baf8496b5aa904c0784f4290df743ee17edae48"
+# The PATHS allowlist below names the upstream layout (the pinned
+# repo's own directory names, needed to address git archive). On the
+# way into the export the directories are renamed to Rowyn's layout,
+# so every path the rest of this port — and every Rowyn build —
+# touches carries the Rowyn name.
+EXPORT_DIR_RENAMES = (
+    ("src/kyth-hub-web", "src/rowyn-hub-web"),
+    ("src/kyth-shared-rs", "src/rowyn-shared-rs"),
+)
+
+
+def export_member_path(name):
+    for old, new in EXPORT_DIR_RENAMES:
+        if name == old or name.startswith(old + "/"):
+            return new + name[len(old):]
+    return name
 PATHS = ("src/kyth-hub-web", "src/kyth-shared-rs",
          "third_party/gtk-glib-0.18.5", "build_files/exe-handler-apps.json",
          "LICENSE")
@@ -51,7 +68,7 @@ KEPT_DESTINATIONS = ("Apps", "Updates", "VPN")
 EXPECTED_DESTINATIONS = {"Play", "Apps", "This PC", "Move In", "VPN", "Updates"}
 
 # --- Legacy junk cut (approved by Patrick, Oct 30, 2026) -------------------
-# The audit counted what the two ports pull over from Kyth: the shared
+# The audit counted what the two ports pull over from the upstream tree: the shared
 # crate arrives whole (304 .rs files, ~78k lines) although the two shells
 # between them reach only a minority of its modules, and 92 helper-binary
 # targets are exported although neither image build compiles any of them.
@@ -170,7 +187,7 @@ def strip_shared_crate_bins(root):
     explicitly), and a [[bin]] section naming a deleted file — or a file
     left behind with no section — would break the crate's manifest, so
     the two leave together, counted."""
-    crate = root / "src/kyth-shared-rs"
+    crate = root / "src/rowyn-shared-rs"
     bins = sorted((crate / "src").glob("*_bin.rs"))
     if len(bins) != SHARED_CRATE_BIN_FILES:
         raise ValueError(
@@ -205,7 +222,7 @@ def prune_shared_crate(root):
     used. Fails closed when a kept module is missing upstream or the
     declared set afterwards is not exactly the keep set."""
     import re as _re
-    crate = root / "src/kyth-shared-rs"
+    crate = root / "src/rowyn-shared-rs"
     manifest_path = crate / "Cargo.toml"
     text = manifest_path.read_text()
     text = replace_once(
@@ -291,6 +308,134 @@ def sync_cargo_lock(crate, absent_packages):
     return f"{len(present)} packages remain"
 
 
+# --- Full internal rename (approved by Patrick, Oct 31, 2026) --------------
+# The passes above rebrand user-visible copy and repoint the helpers
+# Rowyn ships; this pass renames what remains internal -- the shared
+# crate's package name and every `kyth_shared::` path, on-disk data
+# paths (telemetry, probe cache, the exe-handler app database), the
+# KYTH_STAGE_PROGRESS wire token the safe-upgrade helper emits, env
+# vars, and the injected SAML script's identifiers -- with one uniform
+# map, so both ends of every renamed contract move together. The
+# exported directories already took the Rowyn name at extraction
+# (EXPORT_DIR_RENAMES). Three classes of literal are masked out, each
+# an external name the code must keep matching rather than a name
+# Rowyn chose:
+#   * the GitHub org in registry/repository paths (kyth-os/...):
+#     Patrick's org identity, not product naming;
+#   * "KythOS Secure Boot": the certificate name mokutil reports for
+#     an enrolled MOK -- the Dashboard check matches external output;
+#   * "kyth-vpnc-script": a negative regression needle in vpn_saml's
+#     tests pinning that the upstream script name stays out of argv.
+# One file is excluded outright: src/data/compat_games.json, whose
+# notes are provenance data recording that a verdict came from
+# upstream validation; rewriting them would falsify the record (the
+# branding regression test allowlists exactly this file).
+RENAME_PROTECTED = (
+    "kyth-os/kyth",
+    "kyth-os/Rowyn",
+    "kyth-os",
+    "KythOS Secure Boot",
+    "kyth-vpnc-script",
+)
+RENAME_EXCLUDED = {"src/rowyn-hub-web/src/data/compat_games.json"}
+RENAME_PAIRS = (
+    ("KythOS", "Rowyn"),
+    ("KYTHOS", "ROWYN"),
+    ("kythos", "rowyn"),
+    ("KYTH", "ROWYN"),
+    ("Kyth", "Rowyn"),
+    ("kyth", "rowyn"),
+)
+
+
+def _mask_rename_protected(text):
+    slots = []
+    for literal in RENAME_PROTECTED:
+        if literal in text:
+            marker = f"\x00{len(slots)}\x00"
+            text = text.replace(literal, marker)
+            slots.append((marker, literal))
+    return text, slots
+
+
+def _unmask_rename_protected(text, slots):
+    for marker, literal in slots:
+        text = text.replace(marker, literal)
+    return text
+
+
+def repoint_upstream_refs(root):
+    """Repoint upstream-product repo/image references to Rowyn's own.
+
+    The feedback issue destination, the shared crate's bootc REGISTRY
+    constant, and parser/test-fixture image refs name the upstream
+    tracker's repo and image repository; in Rowyn's tree they must name
+    Rowyn's repo and image. The org segment is Patrick's and stays.
+    Runs immediately before rename_tree, whose protected literals keep
+    the org path itself intact."""
+    files = 0
+    refs = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if str(path.relative_to(root)) in RENAME_EXCLUDED:
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
+        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/kyth-os/Rowyn")
+        renamed = renamed.replace("kyth-os/kyth", "kyth-os/Rowyn")
+        if renamed != text:
+            refs += (text.count("kyth-os/kyth"))
+            path.write_text(renamed)
+            files += 1
+    return f"{files} files, {refs} references"
+
+
+def rename_tree(root):
+    """Apply the uniform rename map to every text file in the export,
+    then fail closed if any unprotected upstream identifier survives."""
+    changed = 0
+    tokens = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if str(path.relative_to(root)) in RENAME_EXCLUDED:
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        masked, slots = _mask_rename_protected(text)
+        renamed = masked
+        for old, new in RENAME_PAIRS:
+            tokens += renamed.count(old)
+            renamed = renamed.replace(old, new)
+        renamed = _unmask_rename_protected(renamed, slots)
+        if renamed != text:
+            path.write_text(renamed)
+            changed += 1
+    offenders = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = str(path.relative_to(root))
+        if rel in RENAME_EXCLUDED:
+            continue
+        try:
+            text = path.read_text()
+        except (UnicodeDecodeError, ValueError):
+            continue
+        masked, _ = _mask_rename_protected(text)
+        if "kyth" in masked.lower():
+            offenders.append(rel)
+    if offenders:
+        raise ValueError(f"upstream identifiers survived the rename: {offenders}")
+    return f"{changed} files, {tokens} identifiers"
+
+
 def export_source(repo, destination):
     actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", PIN + "^{commit}"], text=True).strip()
     if actual != PIN:
@@ -307,7 +452,7 @@ def export_source(repo, destination):
                 continue
             if not member.isfile() or Path(member.name).is_absolute() or ".." in Path(member.name).parts:
                 continue
-            path = destination / member.name
+            path = destination / export_member_path(member.name)
             path.parent.mkdir(parents=True, exist_ok=True)
             member_stream = stream.extractfile(member)
             assert member_stream is not None
@@ -317,7 +462,7 @@ def export_source(repo, destination):
 
 def port_source(root):
     changes = []
-    web = root / "src/kyth-hub-web"
+    web = root / "src/rowyn-hub-web"
     crate = web / "src-tauri"
 
     # --- Tauri identity: Rowyn Hub, com.rowyn.hub -------------------------
@@ -349,6 +494,14 @@ def port_source(root):
     text = replace_once(text, 'name = "kyth-hub-shell"\nversion = "0.1.0"',
                         'name = "rowyn-hub-shell"\nversion = "0.1.0"')
     lock.write_text(text)
+    # The shared crate's directory took the Rowyn name at extraction, so
+    # the dependency path follows now — the Cargo.lock re-sync later in
+    # this port resolves it with cargo and would fail against the old
+    # path. The package name itself is renamed by the rename pass at
+    # the end of the port, together with every `kyth_shared::` path.
+    text = cargo.read_text()
+    text = replace_once(text, 'path = "../../kyth-shared-rs"', 'path = "../../rowyn-shared-rs"')
+    cargo.write_text(text)
     changes.append("Cargo.toml/Cargo.lock: package + bin kyth-hub-shell -> rowyn-hub-shell")
 
     # --- Browser-chrome title ---------------------------------------------
@@ -585,9 +738,9 @@ def port_source(root):
     # update_check / status_commands in bootc_query.rs invoke the guard
     # by absolute path (via `sudo -n` for unprivileged callers) — that is
     # the Updates page's *check* path, so it is repointed with the rest.
-    # The image-reference fallback also names Kyth's GHCR repository in a
+    # The image-reference fallback also names the upstream GHCR repository in a
     # regex, a substring probe, and its test fixtures; all take Rowyn's.
-    bootc_query = root / "src/kyth-shared-rs/src/system/bootc_query.rs"
+    bootc_query = root / "src/rowyn-shared-rs/src/system/bootc_query.rs"
     text = bootc_query.read_text()
     text, query_guard_count = replace_all_counted(
         text, "/usr/bin/kyth-bootc-guard", "/usr/bin/rowyn-bootc-guard")
@@ -659,7 +812,7 @@ def port_source(root):
     text = main_rs.read_text()
     text = replace_once(text, ".config/kyth-vpn-connect", ".config/rowyn-vpn-connect")
     main_rs.write_text(text)
-    preset = root / "src/kyth-shared-rs/src/system/network_preset.rs"
+    preset = root / "src/rowyn-shared-rs/src/system/network_preset.rs"
     text = preset.read_text()
     text = replace_once(text, "/etc/kyth/network.toml", "/etc/rowyn/network.toml")
     preset.write_text(text)
@@ -701,7 +854,7 @@ def port_source(root):
         path.write_text(text)
         sweep_notes.append(f"{path.name}: " + ", ".join(notes))
 
-    web_src = "src/kyth-hub-web/src"
+    web_src = "src/rowyn-hub-web/src"
     # Update status/error copy shared by the Updates and Apps pages;
     # this file carries the exact sentence from the screenshot.
     sweep(f"{web_src}/components/updateMessages.ts", (("KythOS", "Rowyn"),))
@@ -781,7 +934,7 @@ def port_source(root):
                         '"invalid Rowyn configuration path"')
     main_rs.write_text(text)
     sweep_notes.append(f"main.rs: KythOS x{main_os}, Kyth Hub x{main_hub}, config-path error")
-    process_rs = root / "src/kyth-shared-rs/src/system/process.rs"
+    process_rs = root / "src/rowyn-shared-rs/src/system/process.rs"
     text = process_rs.read_text()
     text, reap_count = replace_all_counted(
         text, "KythOS Focus Session", "Rowyn Focus Session")
@@ -807,12 +960,12 @@ def port_source(root):
     # Shared-crate display strings the shell surfaces: the boot-health
     # quarantine summary (boot menu / status) and a desktop-stack check
     # detail shown in health views.
-    boot_health = root / "src/kyth-shared-rs/src/system/boot_health.rs"
+    boot_health = root / "src/rowyn-shared-rs/src/system/boot_health.rs"
     text = boot_health.read_text()
     text = replace_once(text, "KythOS update quarantined after",
                         "Rowyn update quarantined after")
     boot_health.write_text(text)
-    desktop_stack = root / "src/kyth-shared-rs/src/system/desktop_stack.rs"
+    desktop_stack = root / "src/rowyn-shared-rs/src/system/desktop_stack.rs"
     text = desktop_stack.read_text()
     text = replace_once(text, "KythOS ships Plasma Wayland only",
                         "Rowyn ships Plasma Wayland only")
@@ -1236,7 +1389,7 @@ fn open_m365_app(name: String) -> Result<String, String> {
     audit_notes.append("D5: open_m365_app/open_external_url check for an https handler before xdg-open")
 
     # --- D1 / D6: shared crate ---------------------------------------------------
-    history = root / "src/kyth-shared-rs/src/system/deployment_history.rs"
+    history = root / "src/rowyn-shared-rs/src/system/deployment_history.rs"
     text = history.read_text()
     text = replace_once(
         text,
@@ -1247,7 +1400,7 @@ fn open_m365_app(name: String) -> Result<String, String> {
     history.write_text(text)
     audit_notes.append("D1: deployment_history falls back to bootc_query::fetch_status_data")
 
-    fonts = root / "src/kyth-shared-rs/src/system/fonts_ready.rs"
+    fonts = root / "src/rowyn-shared-rs/src/system/fonts_ready.rs"
     text = fonts.read_text()
     text = replace_once(
         text, "//! Checks Noto Sans + Arial via fc-list; mirrors Python's 5s timeout each.",
@@ -1743,7 +1896,7 @@ mod audit_fix_tests {
         "pub(crate) fn validate_flatpak_id(value: &str) -> Result<(), String> {",
         "//! The one piece of the upstream privilege module Rowyn keeps: the\n"
         "//! Flatpak id gate that main.rs's system-Flatpak argv builders call.\n"
-        "//! The privileged-socket client for Kyth's root daemon (which Rowyn\n"
+        "//! The privileged-socket client for the upstream root daemon (which Rowyn\n"
         "//! does not ship) was removed by the legacy junk cut.\n"
         "\n"
         "pub(crate) fn validate_flatpak_id(value: &str) -> Result<(), String> {")
@@ -1768,8 +1921,14 @@ mod audit_fix_tests {
                      + sync_cargo_lock(crate, ("pgp",)))
     changes.append("legacy junk cut: " + "; ".join(cut_notes))
 
+    # --- Full internal rename -------------------------------------------
+    changes.append("upstream refs repointed: " + repoint_upstream_refs(root))
+    changes.append("internal rename: " + rename_tree(root))
+    changes.append("Cargo.lock re-synced after the kyth-shared -> rowyn-shared "
+                   "package rename: " + sync_cargo_lock(crate, ("kyth-shared",)))
+
     (root / "ROWYN-PORT-NOTICE").write_text(
-        f"Kyth System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
+        f"Pinned upstream System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
         "Dashboard/Apps/Updates/VPN, updates channel repointed to kyth-os/Rowyn releases\n"
         "and ghcr.io/kyth-os/rowyn images, update helpers repointed to the Rowyn-shipped\n"
@@ -1777,19 +1936,24 @@ mod audit_fix_tests {
         "filed against kyth-os/Rowyn,\n"
         "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"
         "preset path to /etc/rowyn/network.toml.\n"
-        "A branding sweep rewrites all remaining KythOS/Kyth Hub display copy to Rowyn\n"
+        "A branding sweep rewrites all remaining upstream brand display copy to Rowyn\n"
         "(update status/error text, service prompts, dialog copy, exe-handler suggestion\n"
         "data, the focus-session inhibit reason and its shared-crate matcher) and rekeys\n"
         "the boot-health OS identity check to ID=rowyn.\n"
-        "A content cleanup removed the Kyth-catalog Kali toolbox card from the Apps\n"
+        "A content cleanup removed the upstream-catalog Kali toolbox card from the Apps\n"
         "page (with its kali_* backend commands), the Guardian command family and\n"
-        "its /usr/bin/kyth-guardian invocations (Rowyn ships no Guardian), and the\n"
-        "open-* commands that spawned /usr/bin/kyth-welcome-launch.\n"
+        "its guardian-binary invocations (Rowyn ships no Guardian), and the\n"
+        "open-* commands that spawned the upstream welcome launcher.\n"
         "A legacy junk cut removed the gaming/dev-tools command modules, the just\n"
         "recipe runner (run_hub_action/HubAction), the privileged-socket client\n"
-        "for Kyth's root daemon, the shared crate's 92 helper-binary targets, and\n"
+        "for the upstream root daemon, the shared crate's 92 helper-binary targets, and\n"
         "every shared-crate library module outside the shells' reachability\n"
         "closure (incl. the runtime-updater/PGP heritage and its pgp dependency).\n"
+        "A full internal rename rewrites every remaining upstream identifier\n"
+        "(the shared crate package and its paths, on-disk data paths, the stage\n"
+        "progress wire token, env vars, the SAML script identifiers) to the Rowyn\n"
+        "name, and the exported layout directories take the Rowyn name at\n"
+        "extraction.\n"
         "Upstream OS/image/ISO assembly scripts are not included or invoked.\n")
     return changes
 
