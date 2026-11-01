@@ -323,7 +323,9 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("/dev-tools", search)
 
                 dashboard = (web / "src/pages/Dashboard.tsx").read_text()
-                self.assertIn("Rowyn command center", dashboard)
+                self.assertIn("CONTROL ROOM", dashboard)
+                self.assertIn("Your workspaces", dashboard)
+                self.assertIn("home-destination", dashboard)
                 self.assertNotIn('navigate("/play"', dashboard)
                 self.assertNotIn("/this-pc?section=", dashboard)
                 self.assertNotIn("fetchFirstbootAppsStatus", dashboard)

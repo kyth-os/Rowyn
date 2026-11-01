@@ -323,6 +323,11 @@ class PinnedInstallerCargoTests(unittest.TestCase):
             env = dict(os.environ)
             cargo_bin = str(Path.home() / ".cargo" / "bin")
             env["PATH"] = cargo_bin + os.pathsep + env.get("PATH", "")
+            # Serialize Rust test functions: the external-writer flock
+            # assertion is flaky under parallel load on the shared dev
+            # filesystem. Tests that exercise internal concurrency still
+            # create their own threads.
+            env["RUST_TEST_THREADS"] = "1"
             result = subprocess.run(
                 ["cargo", "test", "--locked", "--no-fail-fast"],
                 cwd=crate, env=env, text=True, capture_output=True,

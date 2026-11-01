@@ -40,6 +40,29 @@ class MvpRoutes(unittest.TestCase):
                 self.assertNotIn('setInterval', page)
 
 
+class MvpHomeDashboard(unittest.TestCase):
+    @unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO")
+    def test_control_room_overlay_replaces_pinned_dashboard_with_safe_navigation(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-home-dashboard-") as temp:
+            root = Path(temp) / "export"
+            hub.export_source(_pinned_repo(), root)
+            hub.apply_rowyn_mvp(root)
+            web = root / "src/rowyn-hub-web"
+            page = (web / "src/pages/Dashboard.tsx").read_text()
+            for needle in (
+                "CONTROL ROOM", "home-destination", "fetchBootRuntimeChecks",
+                "fetchRecoveryStatus", "fetchUpdateChannel", "Status unavailable",
+                "route: '/play'", "route: '/diagnostics'", "route: '/apps'",
+                "route: '/updates'", "route: '/vpn'",
+            ):
+                self.assertIn(needle, page)
+            for forbidden in ("Guardian", "RecipeButton", "installFlatpak"):
+                self.assertNotIn(forbidden, page)
+            css = (web / "src/styles/rowynMvp.css").read_text()
+            for needle in (".rowyn-home", ".home-destination", "prefers-reduced-motion", "focus-visible"):
+                self.assertIn(needle, css)
+
+
 class MvpDiagnostics(unittest.TestCase):
     def test_read_only_bridge_has_fixed_bounded_scrubbed_probes_and_explicit_export(self):
         path = ROOT / "build/hub/src-tauri/src/commands/rowyn_diagnostics.rs"
