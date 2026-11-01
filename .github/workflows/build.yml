@@ -336,8 +336,9 @@ jobs:
             grep -F "default: docker.io/library/ubuntu:26.10" /tmp/rowyn-distrobox-help
             test "$(netplan get network.renderer)" = NetworkManager
             netplan generate --root-dir /
-            test -s /run/NetworkManager/system-connections/netplan-all-en.nmconnection
-            test -s /run/NetworkManager/system-connections/netplan-all-eth.nmconnection
+            test -s /etc/NetworkManager/system-connections/rowyn-wired.nmconnection
+            test ! -e /run/NetworkManager/system-connections/netplan-all-en.nmconnection
+            test ! -e /run/NetworkManager/system-connections/netplan-all-eth.nmconnection
             if test -f /run/udev/rules.d/90-netplan.rules; then
               ! grep -F "NM_UNMANAGED}=\"1\"" /run/udev/rules.d/90-netplan.rules
             fi

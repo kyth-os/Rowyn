@@ -239,7 +239,7 @@ RUN systemctl enable systemd-resolved && \
         > /etc/ssh/sshd_config.d/10-rowyn.conf && \
     chmod 0644 /etc/ssh/sshd_config.d/10-rowyn.conf && \
     mkdir -p /etc/netplan && \
-    printf 'network:\n  version: 2\n  renderer: NetworkManager\n  ethernets:\n    all-en:\n      match:\n        name: en*\n      dhcp4: true\n    all-eth:\n      match:\n        name: eth*\n      dhcp4: true\n' > /etc/netplan/90-default.yaml && \
+    printf 'network:\n  version: 2\n  renderer: NetworkManager\n' > /etc/netplan/90-default.yaml && \
     chmod 0600 /etc/netplan/90-default.yaml
 
 # Boot splash: the Rowyn Plymouth theme (pulsing berry mark on deep navy)

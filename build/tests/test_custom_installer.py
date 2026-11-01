@@ -718,9 +718,11 @@ class InstalledPayloadDesktopTests(unittest.TestCase):
                                    check=True, text=True, capture_output=True).stdout
         config = yaml.safe_load(generated)["network"]
         self.assertEqual(config.get("renderer"), "NetworkManager")
-        for group, pattern in (("all-en", "en*"), ("all-eth", "eth*")):
-            self.assertEqual(config["ethernets"][group]["match"]["name"], pattern)
-            self.assertTrue(config["ethernets"][group]["dhcp4"])
+        # Renderer only: wired DHCP comes from the single rowyn-wired NM
+        # profile. A netplan ethernets block would add two more wired
+        # profiles for the same NIC (netplan-all-en / netplan-all-eth).
+        self.assertNotIn("ethernets", config)
+        self.assertIn("id=rowyn-wired", payload)
         self.assertIn("chmod 0600 /etc/netplan/90-default.yaml", payload)
         self.assertIn("netplan generate --root-dir /", payload)
 
