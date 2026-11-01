@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "shared/update-policy.sh"
 REPOSITORY = "ghcr.io/kyth-os/rowyn"
 KEY_PATH = "/usr/share/rowyn/update.pub"
-UNRELATED_GHCR_IMAGE = "docker://ghcr.io/fluxcd/flux-cli:v2.7.1"
+SIGNED_ROWYN_IMAGE = "docker://ghcr.io/kyth-os/rowyn@sha256:028e2da270db929be62ccd2ae2184303182cf77d2cb9249c1bfdf3bb7dd04663"
 UBUNTU_IMAGE = "docker://docker.io/library/ubuntu:latest"
 UNSCOPED_IMAGE = "docker://quay.io/podman/hello:latest"
 
@@ -153,37 +153,28 @@ class UpdatePolicyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which("skopeo"), "skopeo is unavailable")
-    def test_actual_unrelated_ghcr_is_allowed_but_scoped_rowyn_is_not(self):
+    def test_scoped_rowyn_requires_the_update_signing_key(self):
         temporary, root, policy, registries = self.install_fixture()
         with temporary:
-            unrelated = self.run_skopeo_copy(
-                policy, registries, UNRELATED_GHCR_IMAGE, root / "unrelated-ghcr"
+            # This immutable registry fixture carries a valid Rowyn signature.
+            # Pin the repo key locally so the test is independent of host state.
+            policy_data = json.loads(policy.read_text(encoding="utf-8"))
+            policy_data["transports"]["docker"][REPOSITORY][0]["keyPath"] = str(ROOT / "keys/update.pub")
+            policy.write_text(json.dumps(policy_data), encoding="utf-8")
+            signed = self.run_skopeo_copy(
+                policy, registries, SIGNED_ROWYN_IMAGE, root / "rowyn-signed",
             )
-            self.assert_runtime_fixture_available(unrelated, UNRELATED_GHCR_IMAGE)
-            self.assertEqual(unrelated.returncode, 0, unrelated.stderr)
+            self.assert_runtime_fixture_available(signed, "signed Rowyn image")
+            self.assertEqual(signed.returncode, 0, signed.stderr)
 
-            scoped = self.run_skopeo_copy(
-                policy, registries, "docker://ghcr.io/kyth-os/rowyn:spike", root / "rowyn"
+            # A different checked-in public key must not authorize that image.
+            policy_data["transports"]["docker"][REPOSITORY][0]["keyPath"] = str(ROOT / "shared/retired-dev-key.pub")
+            policy.write_text(json.dumps(policy_data), encoding="utf-8")
+            wrong_key = self.run_skopeo_copy(
+                policy, registries, SIGNED_ROWYN_IMAGE, root / "rowyn-wrong-key",
             )
-            if scoped.returncode == 0:
-                self.fail("scoped Rowyn repository bypassed sigstoreSigned policy")
-            stderr = scoped.stderr.lower()
-            if any(marker in stderr for marker in (
-                "connection refused",
-                "connection reset",
-                "dial tcp",
-                "forbidden",
-                "i/o timeout",
-                "manifest unknown",
-                "no such host",
-                "proxyconnect",
-                "temporary failure",
-                "tls handshake timeout",
-                "too many requests",
-                "unauthorized",
-            )):
-                self.skipTest(f"Rowyn registry fixture unavailable: {scoped.stderr.strip()}")
-            self.assertRegex(stderr, "(rejected|signature|update.pub|policy)")
+            self.assertNotEqual(wrong_key.returncode, 0, wrong_key.stderr)
+            self.assertRegex(wrong_key.stderr.lower(), "(rejected|signature|policy|key)")
 
     @unittest.skipUnless(shutil.which("skopeo"), "skopeo is unavailable")
     def test_actual_unscoped_registry_is_rejected_by_default_policy(self):

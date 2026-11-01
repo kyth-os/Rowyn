@@ -150,6 +150,11 @@ fn main() {
         )
 
     def test_util_linux_bind_remount_is_private_and_leaves_source_writable(self):
+        privileged = os.environ.get('ROWYN_MOUNT_FIXTURE_PRIVILEGED') == '1'
+        command = mount_fixture_command(privileged=privileged)
+        probe = subprocess.run(command + ['true'], capture_output=True, text=True)
+        if probe.returncode != 0 and 'Operation not permitted' in probe.stderr:
+            self.skipTest(f'mount namespace creation is blocked by the host: {probe.stderr.strip()}')
         script = r'''
 set -eu
 root="$1"

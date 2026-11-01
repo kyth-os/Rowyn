@@ -47,11 +47,14 @@ class PlymouthThemeTests(unittest.TestCase):
         self.assertIn("Window.SetBackgroundTopColor", text)
         self.assertIn("Window.SetBackgroundBottomColor", text)
 
-    def test_kargs_dropin_carries_quiet_splash(self):
+    def test_kargs_dropin_suppresses_scrolling_boot_and_shutdown_status(self):
         with (THEME / "99-rowyn-splash.toml").open("rb") as handle:
             parsed = tomllib.load(handle)
         self.assertIn("quiet", parsed["kargs"])
         self.assertIn("splash", parsed["kargs"])
+        self.assertIn("loglevel=3", parsed["kargs"])
+        self.assertIn("rd.systemd.show_status=0", parsed["kargs"])
+        self.assertIn("systemd.show_status=0", parsed["kargs"])
 
     def test_installer_script_places_theme_config_and_kargs(self):
         with tempfile.TemporaryDirectory(prefix="rowyn-plymouth-") as temp:
