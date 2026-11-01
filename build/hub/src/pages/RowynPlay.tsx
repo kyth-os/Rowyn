@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { ExternalLink } from '../components/ExternalLink';
 import { cancelInstall, fetchInstalledFlatpaks, installFlatpak, waitInstallJob, invalidateSharedReads, getInFlightJob, confirmUserAction, type InstalledFlatpaksResult } from '../services/liveData';
-import { rowynControllerScan, openRowynLauncher } from '../services/rowynMvp';
-import { LAUNCHERS, launcherState, installLauncher, createPlayStatusOwner, launchOptions, type Reading } from '../services/rowynMvpModel';
+import { rowynControllerScan, openRowynLauncher, rowynSteamGamesScan } from '../services/rowynMvp';
+import { LAUNCHERS, launcherState, installLauncher, createPlayStatusOwner, launchOptions, steamCompatibilityLinks, type Reading, type SteamScan } from '../services/rowynMvpModel';
 import '../styles/rowynMvp.css';
 
 export function Play() {
   const [scan, setScan] = useState<InstalledFlatpaksResult | null>(null);
+  const [steamScan, setSteamScan] = useState<SteamScan | null>(null);
   const [controllers, setControllers] = useState<Reading[] | null>(null);
   const [status, setStatus] = useState('Choose Refresh launchers to detect installed Flatpaks. No checks run automatically.');
   const [busy, setBusy] = useState(false);
@@ -35,7 +36,7 @@ export function Play() {
   return <div className="page-content rowyn-mvp">
     <section className="glass dashboard-card" id="hub-section-gaming">
       <span className="home-eyebrow">Rowyn Play · MVP</span><h1>Play</h1>
-      <p className="card-copy">Four launchers, installed as personal Flatpaks from Flathub using the same jobs as Apps. No native package installs or system tuning. A launcher being installed does not establish game compatibility. This MVP detects launchers only; game-library discovery and play history are not implemented.</p>
+      <p className="card-copy">Four launchers, installed as personal Flatpaks from Flathub using the same jobs as Apps. No native package installs or system tuning. A launcher being installed does not establish game compatibility. Steam game discovery is an explicit, read-only scan of local app manifests; it does not validate or launch games.</p>
       <div className="home-actions"><button className="action-button" disabled={busy} onClick={() => run('Reading installed launchers…', refreshLaunchers)}>Refresh launchers</button>
         {tracked && <button className="action-button" disabled={cancelBusy} onClick={async () => {
           setCancelBusy(true);
@@ -62,10 +63,34 @@ export function Play() {
         </article>;
       })}</div>
     </section>
-    <section className="glass dashboard-card" id="hub-section-compatibility"><h2>Compatibility &amp; anti-cheat</h2>
+    <section className="glass dashboard-card">
+      <h2>Compatibility &amp; anti-cheat</h2>
       <p className="card-copy">Guidance reviewed 2026-10-31; not Rowyn-validated game results. Linux/Proton support changes with game, launcher and anti-cheat updates. Kernel-level Windows anti-cheat generally cannot run under Proton. Easy Anti-Cheat and BattlEye support requires the game developer to enable Linux/Proton support; the middleware name alone proves nothing. Check the exact title and multiplayer mode before buying or installing.</p>
       <p className="card-copy">Provenance: <ExternalLink href="https://partner.steamgames.com/doc/steamdeck/proton">Valve’s Proton / anti-cheat documentation</ExternalLink> (developer guidance), <ExternalLink href="https://www.protondb.com/">ProtonDB</ExternalLink> and <ExternalLink href="https://areweanticheatyet.com/">Are We Anti-Cheat Yet?</ExternalLink> (community reports, not guarantees). Links require a web browser; no compatibility lookup or network probe runs in this page.</p>
-      <h3>Per-game launch options</h3>
+    </section>
+    <section className="glass dashboard-card" id="hub-section-steam-library"><h2>Installed Steam games</h2>
+      <p className="card-copy">Local metadata only: scans Steam app manifests in common native and Flatpak library paths when you ask. It never reads game files, sends a network request, launches a title, or rates compatibility. ProtonDB links are community reports and do not mean Rowyn tested the game.</p>
+      <button className="action-button" disabled={busy} onClick={() => run('Reading Steam library metadata…', async () => {
+        setSteamScan(null);
+        const next = await rowynSteamGamesScan(); setSteamScan(next);
+        if (!next.available) return 'Steam was not detected in the common native or Flatpak paths. A custom library location may not have been scanned.';
+        if (next.warnings) return `Partial scan: ${next.warnings} library item(s) were skipped or unreadable; detected titles are listed below, but others may be missing.`;
+        return next.games.length ? `Detected ${next.games.length} installed title(s) from local Steam manifests. Compatibility was not tested.` : 'No fully installed titles found in the scanned libraries; other locations may not have been scanned.';
+      })}>Scan Steam games (local only)</button>
+      {!steamScan && <p className="card-copy">Not scanned yet. No scan runs automatically.</p>}
+      {steamScan && !steamScan.available && <p className="card-copy">Steam was not detected in common locations. No titles are inferred from this result.</p>}
+      {steamScan && steamScan.available && !steamScan.games.length && <p className="card-copy">No fully installed titles were detected in the scanned metadata.</p>}
+      {steamScan?.games.map((item) => {
+        const links = steamCompatibilityLinks(item.app_id);
+        return <article className="rowyn-launcher" key={item.app_id}><h3>{item.name}</h3>
+          <p className="card-copy">Steam App ID {item.app_id} · detected from local metadata; compatibility not tested by Rowyn.</p>
+          <div className="home-actions"><ExternalLink href={links.protondb}>ProtonDB community reports (not a guarantee)</ExternalLink>
+            <ExternalLink href={links.steamStore}>Steam store page</ExternalLink></div>
+        </article>;
+      })}
+      {!!steamScan?.warnings && <p className="card-copy" role="status">Partial scan: skipped or unreadable library metadata may hide additional titles.</p>}
+    </section>
+    <section className="glass dashboard-card" id="hub-section-compatibility"><h2>Compatibility &amp; anti-cheat</h2>
       <label>Game label (local only; never executed)<input value={game} maxLength={80} onChange={(event) => setGame(event.target.value)} placeholder="Your game" /></label>
       <label>Where does this game run?<select value={boundary} onChange={(event) => setBoundary(event.target.value as 'flatpak' | 'host')}><option value="flatpak">Flatpak Steam / sandboxed launcher</option><option value="host">Host-native Steam / host command</option></select></label>
       <label><input type="checkbox" checked={gaming} disabled={boundary === 'flatpak'} onChange={(event) => setGaming(event.target.checked)} /> Use Rowyn gaming slice / GameMode when available</label>

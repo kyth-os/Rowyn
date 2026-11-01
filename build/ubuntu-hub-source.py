@@ -516,14 +516,15 @@ def apply_rowyn_mvp(root):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
     commands_mod = web / "src-tauri/src/commands/mod.rs"
-    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\n')
+    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\npub(crate) mod rowyn_steam;\n')
     main = web / "src-tauri/src/main.rs"
     main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
         '            commands::rowyn_diagnostics::rowyn_diagnostics_snapshot,\n'
         '            commands::rowyn_diagnostics::rowyn_controller_scan,\n'
         '            commands::rowyn_diagnostics::rowyn_export_report,\n'
-        '            commands::rowyn_play::rowyn_launcher_open,'))
+        '            commands::rowyn_play::rowyn_launcher_open,\n'
+        '            commands::rowyn_steam::rowyn_steam_games_scan,'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
     assert spec is not None and spec.loader is not None

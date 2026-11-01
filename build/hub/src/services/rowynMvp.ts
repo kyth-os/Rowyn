@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { inTauriShell } from './tauriEnv';
-import type { DiagnosticsSnapshot, Reading } from './rowynMvpModel';
+import type { DiagnosticsSnapshot, Reading, SteamScan } from './rowynMvpModel';
 
 // Native reads have their own 8s-per-probe bounds and backend single-flight.
 // No timer race here: clearing a UI timeout while native work continues would
@@ -23,4 +23,8 @@ export async function exportRowynReport(report: string): Promise<string> {
 export async function openRowynLauncher(id: string): Promise<string> {
   nativeOnly();
   return invoke<string>('rowyn_launcher_open', { id });
+}
+export async function rowynSteamGamesScan(): Promise<SteamScan> {
+  nativeOnly();
+  return invoke<SteamScan>('rowyn_steam_games_scan');
 }

@@ -75,6 +75,15 @@ test('host-only options never pretend to work inside Flatpak Steam', () => {
   assert.match(m.launchOptions('host', true, true), /rowyn-game-launch \/usr\/bin\/rowyn-mimalloc-run %command%/);
 });
 
+test('Steam compatibility links accept only numeric app IDs and clearly point to community data', () => {
+  assert.deepEqual(m.steamCompatibilityLinks('620'), {
+    protondb: 'https://www.protondb.com/app/620',
+    steamStore: 'https://store.steampowered.com/app/620',
+  });
+  for (const id of ['', '0', '000620', '../620', '620?x=1', '１２３', '12345678901'])
+    assert.throws(() => m.steamCompatibilityLinks(id), /invalid Steam app id/);
+});
+
 test('native pages wire explicit reads, report actions, install and cancel without timer loops', async () => {
   const diagnostics = await readFile(resolve(root, 'src/pages/RowynDiagnostics.tsx'), 'utf8');
   const play = await readFile(resolve(root, 'src/pages/RowynPlay.tsx'), 'utf8');
@@ -84,8 +93,10 @@ test('native pages wire explicit reads, report actions, install and cancel witho
   assert.match(play, /waitInstallJob/);
   assert.match(play, /cancelInstall/);
   assert.match(play, /rowynControllerScan/);
-  assert.match(play, /2026-10-31/);
+  assert.match(play, /rowynSteamGamesScan/);
+  assert.match(play, /Scan Steam games \(local only\)/);
   assert.match(play, /not Rowyn-validated/);
   assert.match(play, /ExternalLink/);
+  assert.equal([...play.matchAll(/id="hub-section-compatibility"/g)].length, 1);
   assert.doesNotMatch(play, /target=["']_blank/);
 });

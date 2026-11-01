@@ -103,6 +103,13 @@ def adapt(web, replace_once):
     assert.match(handler,''')
     # New bridge uses single-quoted literals too.
     text = replace_once(text, r'/invoke(?:<[^>]+>)?\(\"([^\"]+)\"/g', r'''/invoke(?:<[^>]+>)?\(["']([^"']+)["']/g''')
+    native = web / "src-tauri/src/commands/rowyn_steam.rs"
+    commands = (web / "src-tauri/src/commands/mod.rs").read_text()
+    main = (web / "src-tauri/src/main.rs").read_text()
+    if not native.is_file() or "pub(crate) mod rowyn_steam;" not in commands:
+        raise ValueError("Steam metadata scanner overlay was not exported")
+    if "commands::rowyn_steam::rowyn_steam_games_scan" not in main:
+        raise ValueError("Steam metadata scan command is not registered")
     path.write_text(text)
 
     path = web / "tests/hub-shell-smoke.test.mjs"

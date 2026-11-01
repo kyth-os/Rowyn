@@ -1,5 +1,7 @@
 import type { InstalledFlatpaksResult } from './liveData';
 export interface Reading { name: string; state: string; detail: string }
+export interface SteamGame { app_id: string; name: string }
+export interface SteamScan { available: boolean; warnings: number; games: SteamGame[] }
 export interface DiagnosticsSnapshot { collected_at: number; readings: Reading[] }
 export const LAUNCHERS = [
   { id: 'com.valvesoftware.Steam', name: 'Steam', description: 'Steam library and Proton. Enable Steam Play per title when needed.' },
@@ -43,6 +45,13 @@ export function createPlayStatusOwner(write: (message: string) => void) {
 export function launchOptions(boundary: 'flatpak' | 'host', gaming: boolean, mimalloc: boolean): string {
   if (boundary === 'flatpak') return '%command%';
   return [gaming ? '/usr/bin/rowyn-game-launch' : '', mimalloc ? '/usr/bin/rowyn-mimalloc-run' : '', '%command%'].filter(Boolean).join(' ');
+}
+export function steamCompatibilityLinks(appId: string) {
+  if (!/^[1-9][0-9]{0,9}$/.test(appId)) throw new Error('invalid Steam app id');
+  return {
+    protondb: `https://www.protondb.com/app/${appId}`,
+    steamStore: `https://store.steampowered.com/app/${appId}`,
+  };
 }
 export function formatReport(snapshot: DiagnosticsSnapshot): string {
   return ['Rowyn Diagnostics — read-only', `Collected: ${new Date(snapshot.collected_at * 1000).toISOString()}`,

@@ -62,6 +62,25 @@ class MvpDiagnostics(unittest.TestCase):
             self.assertNotIn(forbidden, page)
 
 
+class MvpSteamGames(unittest.TestCase):
+    def test_scan_is_manual_read_only_and_never_claims_compatibility(self):
+        page = (ROOT / "build/hub/src/pages/RowynPlay.tsx").read_text()
+        for needle in ('Scan Steam games (local only)', 'rowynSteamGamesScan',
+                       'not mean Rowyn tested', 'ProtonDB community reports',
+                       'No scan runs automatically', 'custom library location may not have been scanned'):
+            self.assertIn(needle, page)
+        service = (ROOT / "build/hub/src/services/rowynMvp.ts").read_text()
+        self.assertIn("rowyn_steam_games_scan", service)
+        scanner = ROOT / "build/hub/src-tauri/src/commands/rowyn_steam.rs"
+        self.assertTrue(scanner.is_file(), "native Steam metadata scanner is missing")
+        text = scanner.read_text()
+        for needle in ('libraryfolders.vdf', 'appmanifest_', 'MAX_LIBRARIES',
+                       'MAX_MANIFESTS', 'StateFlags', 'pub(crate) async fn rowyn_steam_games_scan'):
+            self.assertIn(needle, text)
+        for forbidden in ('Command::new', 'sudo', 'pkexec', 'rowyn-game-launch'):
+            self.assertNotIn(forbidden, text)
+
+
 class MvpPlay(unittest.TestCase):
     def test_play_uses_curated_flatpak_jobs_and_honest_host_boundary(self):
         page = (ROOT / "build/hub/src/pages/RowynPlay.tsx").read_text()

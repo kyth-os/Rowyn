@@ -30,10 +30,17 @@ installed and unknown/partial scopes. Opening accepts only the four curated
 IDs, checks both scopes and requests the detected scope. It reports a launch
 request, not that a detached application window or game is working.
 
-The MVP detects launcher installations only. Game-library discovery (including
-Flatpak Steam library paths), play history, game execution and per-game
-compatibility verdicts are deferred; it does not present runner directories as
-games or imply that libraries were scanned.
+The MVP detects launcher installations with explicit scans. Steam game discovery
+is a separate, opt-in read-only scan of bounded `libraryfolders.vdf` and
+`appmanifest_*.acf` metadata in common native/Flatpak Steam locations. It
+includes external libraries Steam lists but does not read game files, reveal
+library paths, launch games, or make compatibility claims. A missing install or
+partial metadata read is shown as unknown/partial rather than a clean empty
+library. ProtonDB links are generated only from validated numeric app IDs and
+lead to community reports; they are not Rowyn test results. Custom Steam roots
+outside the locations and libraries discovered from Steam's metadata may be
+missed. Play history, game execution and per-game compatibility verdicts remain
+deferred.
 
 Controller rescan calls the same fixed read-only helper. Compatibility copy is
 dated 2026-10-31, sourced to Valve's Proton anti-cheat developer documentation
