@@ -91,11 +91,18 @@ jobs:
       - name: Ensure podman
         shell: bash --noprofile --norc -euo pipefail {0}
         run: |
-          if ! command -v podman >/dev/null; then
+          if ! command -v podman >/dev/null || ! command -v mkfs.btrfs >/dev/null; then
             sudo apt-get update -o Acquire::Retries=3
-            sudo apt-get install -y --no-install-recommends podman
+            sudo apt-get install -y --no-install-recommends podman btrfs-progs
           fi
           podman --version
+          mkfs.btrfs --version
+
+      # The package layer is large enough to exhaust the runner's root disk
+      # while committing (ENOSPC seen on 380df69). Keep rootful Podman
+      # storage on the sparse compressed image, as the ISO build does.
+      - name: Provision compressed Podman storage
+        uses: ./.github/actions/setup-compressed-storage
 
       - name: Fetch build assets (toolchain tarball, bootc source, vendored deps)
         shell: bash --noprofile --norc -euo pipefail {0}
