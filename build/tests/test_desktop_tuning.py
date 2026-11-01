@@ -91,10 +91,11 @@ class DesktopTuningTests(unittest.TestCase):
             root = Path(tmp)
             self.assertEqual(self.run_helper(root).returncode, 0)
             self.assertEqual(ini(root / JOURNALD), {"Journal": {
-                "SystemMaxUse": "1G",
-                "SystemMaxFileSize": "64M",
-                "RuntimeMaxUse": "128M",
-                "MaxRetentionSec": "1month",
+                "SystemMaxUse": "200M",
+                "SystemMaxFileSize": "32M",
+                "RuntimeMaxUse": "64M",
+                "MaxRetentionSec": "2week",
+                "ForwardToSyslog": "no",
             }})
 
     def test_baloo_off_in_xdg_only(self):
@@ -145,7 +146,7 @@ class DesktopTuningTests(unittest.TestCase):
             # the audio hook stays first (test_system_defaults covers the rest).
             lines = [l for l in (root / GAMEMODE).read_text().splitlines()
                      if l and not l.startswith("#")]
-            self.assertEqual(lines[:3], [
+            self.assertEqual(lines[2:5], [
                 "[custom]",
                 "start=/usr/libexec/rowyn-gamemode-audio start",
                 "end=/usr/libexec/rowyn-gamemode-audio end",

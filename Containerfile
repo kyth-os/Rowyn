@@ -154,7 +154,7 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         rfkill plocate manpages bash-completion command-not-found pastebinit \
         kwin-wayland plasma-workspace plasma-session-x11 \
         power-profiles-daemon systemd-zram-generator gamemode steam-devices \
-        systemd-oomd iw && \
+        systemd-oomd iw libmimalloc3 && \
     apt-get install -y --no-install-recommends \
         flatpak plasma-discover-backend-flatpak distrobox \
         slirp4netns uidmap fuse-overlayfs && \
@@ -302,6 +302,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/desktop-tuning.sh --root / && \
     systemctl enable rowyn-wifi-regdom.service systemd-oomd.service systemd-oomd.socket
+
+# Opt-in gaming helpers: gaming slice + rowyn-game-launch, rowyn-mimalloc-run,
+# and rowyn-tune (aggressive latency sysctls, off by default).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/gaming-defaults.sh --root /
 
 # GPU driver selection. One image serves every machine: the nvidia open
 # modules and nouveau are both installed, neither is in the initramfs, and

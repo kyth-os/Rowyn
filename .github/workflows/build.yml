@@ -253,7 +253,13 @@ jobs:
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/system.conf.d/90-rowyn-limits.conf
             grep -Fqx "DefaultLimitNOFILE=1024:1048576" /usr/lib/systemd/user.conf.d/90-rowyn-limits.conf
             grep -Fq "queue/scheduler" /usr/lib/udev/rules.d/60-rowyn-ioschedulers.rules
-            grep -Fqx "SystemMaxUse=1G" /usr/lib/systemd/journald.conf.d/90-rowyn.conf
+            grep -Fqx "SystemMaxUse=200M" /usr/lib/systemd/journald.conf.d/90-rowyn.conf
+            grep -Fqx "renice=10" /etc/gamemode.ini
+            test -x /usr/bin/rowyn-game-launch
+            test -x /usr/bin/rowyn-mimalloc-run
+            test -x /usr/bin/rowyn-tune
+            test -f /usr/lib/systemd/user/rowyn-gaming.slice
+            test -e /usr/lib/x86_64-linux-gnu/libmimalloc.so.3 || ldconfig -p | grep -Fq libmimalloc.so.3
             grep -Fqx "Indexing-Enabled=false" /etc/xdg/baloofilerc
             test ! -e /etc/systemd/system/network-online.target.wants/NetworkManager-wait-online.service
             test "$(systemctl is-enabled NetworkManager-wait-online.service || true)" != enabled

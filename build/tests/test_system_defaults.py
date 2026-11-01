@@ -134,6 +134,8 @@ class SystemdDropIns(InstalledTree):
         lines = [l for l in (self.root / "etc/gamemode.ini").read_text().splitlines()
                  if l and not l.startswith("#")]
         self.assertEqual(lines, [
+            "[general]",
+            "renice=10",
             "[custom]",
             "start=/usr/libexec/rowyn-gamemode-audio start",
             "end=/usr/libexec/rowyn-gamemode-audio end",

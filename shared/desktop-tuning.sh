@@ -70,10 +70,12 @@ EOF2
 write_file /usr/lib/systemd/journald.conf.d/90-rowyn.conf 0644 <<'EOF2'
 # Rowyn journal size caps. Override in /etc/systemd/journald.conf.d/.
 [Journal]
-SystemMaxUse=1G
-SystemMaxFileSize=64M
-RuntimeMaxUse=128M
-MaxRetentionSec=1month
+SystemMaxUse=200M
+SystemMaxFileSize=32M
+RuntimeMaxUse=64M
+MaxRetentionSec=2week
+# Nothing reads a syslog socket on this image; skip the extra copy.
+ForwardToSyslog=no
 EOF2
 
 # KDE reads /etc/xdg through XDG_CONFIG_DIRS; a user's ~/.config/baloofilerc
@@ -160,11 +162,16 @@ EOF2
 
 # GameMode loads /usr/share/gamemode/gamemode.ini, then /etc/gamemode.ini,
 # merging per key (repeated start=/end= lines in [custom] are appended, run in
-# order), so only the [custom] hooks are needed here.
+# order), so only the keys Rowyn changes are needed here.
 write_file /etc/gamemode.ini 0644 <<'EOF2'
 # Rowyn: low-latency PipeWire and the performance power profile only while a
 # game runs under GameMode. The package defaults in
 # /usr/share/gamemode/gamemode.ini still apply.
+[general]
+# Raise the game's priority (nice -10) while GameMode is active. GameMode
+# skips this quietly if the user lacks RLIMIT_NICE headroom.
+renice=10
+
 [custom]
 start=/usr/libexec/rowyn-gamemode-audio start
 end=/usr/libexec/rowyn-gamemode-audio end

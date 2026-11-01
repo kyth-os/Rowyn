@@ -90,6 +90,12 @@ w /sys/kernel/mm/lru_gen/enabled - - - - y
 w /sys/kernel/mm/transparent_hugepage/enabled - - - - madvise
 # Defrag stalls only for madvise regions; others fall back to small pages.
 w /sys/kernel/mm/transparent_hugepage/defrag - - - - defer+madvise
+# khugepaged scans every 10 s instead of 10 ms-class bursts: collapses huge
+# pages for madvise users (Unreal Engine, Star Citizen) without the CPU spikes
+# that show as frame-time stutter. Missing on kernels without THP: the dash
+# lets tmpfiles ignore a nonexistent node.
+w- /sys/kernel/mm/transparent_hugepage/khugepaged/scan_sleep_millisecs - - - - 10000
+w- /sys/kernel/mm/transparent_hugepage/khugepaged/alloc_sleep_millisecs - - - - 60000
 EOF2
 
 write_file /usr/lib/modules-load.d/rowyn-ntsync.conf 0644 <<'EOF2'
