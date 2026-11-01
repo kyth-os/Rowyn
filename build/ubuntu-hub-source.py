@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Export the pinned upstream System Hub source, then port it to Rowyn on Ubuntu.
 
-The port is deliberately scoped: only the Home/Dashboard, Apps, Updates,
-and VPN destinations survive. Play, This PC, Move In, and the shell-only
-Dev Tools route are cut from navigation, routing, search, and the sidebar;
-their page files stay in the tree (unreferenced) so the cut stays a small,
-anchor-checked diff instead of a fork. The Updates channel is repointed at
+The port is deliberately scoped: Home/Dashboard, Apps, Updates and VPN
+survive upstream. This PC, Move In, the legacy Play and shell-only Dev Tools
+surfaces are cut. Small checked-in build/hub overlays add Rowyn-owned
+read-only Diagnostics and Play MVP routes without restoring legacy helpers;
+unreferenced upstream page files remain typecheckable. The Updates channel is repointed at
 Rowyn's own releases and GHCR repository, and the update helpers the Hub
 shells out to are repointed at the Rowyn implementations the payload
 ships (shared/rowyn-safe-upgrade.sh, shared/rowyn-bootc-guard.sh,
@@ -458,6 +458,78 @@ def export_source(repo, destination):
             assert member_stream is not None
             path.write_bytes(member_stream.read())
             path.chmod(member.mode & 0o777)
+
+
+def apply_rowyn_mvp(root):
+    """Add Rowyn-owned pages after the upstream cuts; never restore gaming.rs.
+
+    The overlays are normal reviewable source files. Only the native bridge
+    and manifest wiring are spliced into the pinned source, with anchors.
+    """
+    import shutil
+    web = root / "src/rowyn-hub-web"
+    manifest_path = web / "src/data/hubRoutes.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["destinations"] = [d for d in manifest["destinations"] if d["key"] != "Play"]
+    manifest["destinations"] += [
+        {"key": "Diagnostics", "route": "/diagnostics", "sections": [
+            {"key": "Diagnostics", "title": "Diagnostics", "description": "Read-only OS, kernel, image, graphics, controller, memory and disk checks; preview a local report."}]},
+        {"key": "Play", "route": "/play", "sections": [
+            {"key": "Gaming", "title": "Launchers", "description": "Install or open Steam, Heroic, Lutris and Bottles as Flatpaks."},
+            {"key": "Compatibility", "title": "Compatibility", "description": "Dated support guidance, anti-cheat caveats and per-game launch options."},
+            {"key": "Controllers", "title": "Controllers", "description": "Read-only controller readiness; rescan after connecting a gamepad."}]},
+    ]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    app = web / "src/App.tsx"
+    text = app.read_text()
+    # The raw-pin test may still contain Play; the production cut has removed it.
+    if 'const Play = lazy(' in text:
+        text = replace_once(text, './pages/Play', './pages/RowynPlay')
+    else:
+        text = replace_once(text, 'const Apps = lazy(', 'const Play = lazy(() => import("./pages/RowynPlay").then(({ Play: page }) => ({ default: page })));\nconst Apps = lazy(')
+        text = replace_once(text, '  "/apps": "Apps",', '  "/play": "Play",\n  "/apps": "Apps",')
+        text = replace_once(text, '              <Route path="/apps"', '              <Route path="/play" element={<Play />} />\n              <Route path="/apps"')
+    text = replace_once(text, 'const Apps = lazy(', 'const Diagnostics = lazy(() => import("./pages/RowynDiagnostics").then(({ Diagnostics: page }) => ({ default: page })));\nconst Apps = lazy(')
+    text = replace_once(text, '  "/apps": "Apps",', '  "/diagnostics": "Diagnostics",\n  "/apps": "Apps",')
+    text = replace_once(text, '              <Route path="/apps"', '              <Route path="/diagnostics" element={<Diagnostics />} />\n              <Route path="/apps"')
+    app.write_text(text)
+    sidebar = web / "src/components/Sidebar.tsx"
+    text = sidebar.read_text()
+    old_play = '  Play: { hint: "Games, boost, controllers", Icon: IconPlay },\n'
+    if old_play in text:
+        text = replace_once(text, old_play, '')
+    text = replace_once(text, '  Apps: { hint:', '  Diagnostics: { hint: "Read-only system report", Icon: IconShield },\n  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n  Apps: { hint:')
+    sidebar.write_text(text)
+    sections = web / "src/data/hubSections.ts"
+    sections.write_text(replace_once(sections.read_text(),
+        '  if (!destination) {',
+        '  if (!destination && ["This PC", "Move In"].includes(destinationKey)) return [];\n  if (!destination) {')
+        + '\nexport const DIAGNOSTICS_SECTIONS = sectionsFor("Diagnostics");\n')
+    destinations = web / "src/data/destinations.ts"
+    text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  DIAGNOSTICS_SECTIONS,\n  APPS_SECTIONS,')
+    text = replace_once(text, '  Apps: APPS_SECTIONS,', '  Diagnostics: DIAGNOSTICS_SECTIONS,\n  Apps: APPS_SECTIONS,')
+    destinations.write_text(text)
+    overlay = Path(__file__).resolve().parent / "hub"
+    for source in sorted(overlay.rglob("*")):
+        if source.is_file() and source.relative_to(overlay).parts[0] in {"src", "src-tauri", "tests"}:
+            target = web / source.relative_to(overlay)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+    commands_mod = web / "src-tauri/src/commands/mod.rs"
+    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\n')
+    main = web / "src-tauri/src/main.rs"
+    main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
+        'tauri::generate_handler![\n'
+        '            commands::rowyn_diagnostics::rowyn_diagnostics_snapshot,\n'
+        '            commands::rowyn_diagnostics::rowyn_controller_scan,\n'
+        '            commands::rowyn_diagnostics::rowyn_export_report,\n'
+        '            commands::rowyn_play::rowyn_launcher_open,'))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.adapt(web, replace_once)
 
 
 def port_source(root):
@@ -1921,6 +1993,9 @@ mod audit_fix_tests {
                      + sync_cargo_lock(crate, ("pgp",)))
     changes.append("legacy junk cut: " + "; ".join(cut_notes))
 
+    apply_rowyn_mvp(root)
+    changes.append("Rowyn-owned Diagnostics and Play MVP overlays applied; legacy gaming backend stays removed")
+
     # --- Full internal rename -------------------------------------------
     changes.append("upstream refs repointed: " + repoint_upstream_refs(root))
     changes.append("internal rename: " + rename_tree(root))
@@ -1930,7 +2005,8 @@ mod audit_fix_tests {
     (root / "ROWYN-PORT-NOTICE").write_text(
         f"Pinned upstream System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
-        "Dashboard/Apps/Updates/VPN, updates channel repointed to kyth-os/Rowyn releases\n"
+        "Dashboard/Apps/Updates/VPN plus Rowyn-owned Diagnostics/Play MVP overlays;\n"
+        "updates channel repointed to kyth-os/Rowyn releases\n"
         "and ghcr.io/kyth-os/rowyn images, update helpers repointed to the Rowyn-shipped\n"
         "rowyn-safe-upgrade / rowyn-bootc-guard / rowyn-finalize-staged, feedback issues\n"
         "filed against kyth-os/Rowyn,\n"

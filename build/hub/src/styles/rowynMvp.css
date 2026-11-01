@@ -1,0 +1,15 @@
+.rowyn-mvp { display: flex; flex-direction: column; gap: 18px; }
+.rowyn-mvp .dashboard-card { padding: 24px; }
+.rowyn-mvp h1 { margin: 8px 0 12px; }
+.rowyn-mvp h2 { margin-top: 0; }
+.rowyn-mvp h3 { margin-bottom: 8px; }
+.rowyn-mvp pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; line-height: 1.6; background: rgba(0,0,0,.18); border-radius: 12px; padding: 14px; }
+.rowyn-mvp .rowyn-state { font-size: .8rem; font-weight: 500; opacity: .75; }
+.rowyn-launchers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; margin-top: 18px; }
+.rowyn-launcher { border: 1px solid rgba(128,128,128,.25); border-radius: 16px; padding: 18px; }
+.rowyn-launcher code { font-size: .75rem; overflow-wrap: anywhere; }
+.rowyn-mvp label { display: block; margin: 14px 0; }
+.rowyn-mvp label > input:not([type=checkbox]), .rowyn-mvp select { display: block; margin-top: 8px; max-width: 100%; padding: 8px 12px; border: 1px solid currentColor; border-radius: 8px; background: var(--bg, #20242b); color: inherit; }
+.rowyn-mvp .home-actions { flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.rowyn-mvp button:disabled { opacity: .5; cursor: not-allowed; }
+.rowyn-mvp a { text-decoration: underline; }

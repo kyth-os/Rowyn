@@ -290,15 +290,15 @@ class PinnedHubSourceTests(unittest.TestCase):
 
                 manifest = json.loads((web / "src/data/hubRoutes.json").read_text())
                 self.assertEqual([d["key"] for d in manifest["destinations"]],
-                                 ["Apps", "VPN", "Updates"])
+                                 ["Apps", "VPN", "Updates", "Diagnostics", "Play"])
 
                 app = (web / "src/App.tsx").read_text()
-                for route in ("/play", "/dev-tools", "/this-pc", "/move-in"):
+                for route in ("/dev-tools", "/this-pc", "/move-in"):
                     self.assertNotIn(f'path="{route}"', app)
                     self.assertNotIn(f'"{route}":', app)
-                for page in ("Play", "DevTools", "ThisPc", "MoveIn"):
+                for page in ("DevTools", "ThisPc", "MoveIn"):
                     self.assertNotIn(f"const {page} = lazy(", app)
-                for route in ("/", "/apps", "/updates", "/vpn"):
+                for route in ("/", "/apps", "/updates", "/vpn", "/diagnostics", "/play"):
                     self.assertIn(f'path="{route}"', app)
                 # VPN restored: lazy import, route, and crumb all present.
                 self.assertIn("const Vpn = lazy(", app)
@@ -313,7 +313,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("Kyth Hub", sidebar)
                 self.assertNotIn("/dev-tools", sidebar)
                 self.assertNotIn("IconTerminal", sidebar)
-                for key in ("Play", '"This PC"', '"Move In"'):
+                for key in ('"This PC"', '"Move In"'):
                     self.assertNotIn(f"{key}: {{ hint:", sidebar)
                 self.assertIn('VPN: { hint: "Secure work connections", Icon: IconLock },', sidebar)
                 self.assertIn("IconLock", sidebar)

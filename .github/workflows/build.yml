@@ -11,6 +11,7 @@ on:
       - keys/**
       - build/fetch-assets.sh
       - build/ubuntu-hub-source.py
+      - build/hub/**
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
