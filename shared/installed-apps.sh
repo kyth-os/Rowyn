@@ -34,7 +34,7 @@ root_path() {
     fi
 }
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+script_dir=$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_source="$script_dir/flathub-v1.flatpakrepo"
 [[ -f "$repo_source" ]] || {
     echo "missing Flathub remote declaration: $repo_source" >&2

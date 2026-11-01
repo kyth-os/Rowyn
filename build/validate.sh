@@ -22,11 +22,8 @@ echo "[validate] shell syntax passed"
 
 command -v shellcheck >/dev/null 2>&1 || fail "shellcheck is required"
 
-echo "[validate] ShellCheck advisory diagnostics"
-shellcheck --severity=warning "${scripts[@]}" || true
-
-echo "[validate] ShellCheck errors"
-shellcheck --severity=error "${scripts[@]}"
+echo "[validate] ShellCheck warnings and errors"
+shellcheck --severity=warning "${scripts[@]}"
 
 echo "[validate] ShellCheck passed"
 

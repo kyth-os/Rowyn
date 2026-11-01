@@ -334,8 +334,10 @@ run_bootc_upgrade() {
     : >"$workdir/bootc.out"
     : >"$workdir/bootc.err"
     : >"$workdir/bootc.progress"
+    # shellcheck disable=SC2034  # read and written by name in pump()
     prog_offset=0
     prog_buffer=
+    # shellcheck disable=SC2034
     err_offset=0
     err_buffer=
     if (( with_progress_fd )); then

@@ -8,7 +8,7 @@ while (($#)); do
         *) echo "usage: $0 [--root PATH]" >&2; exit 2 ;;
     esac
 done
-script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+script_dir=$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 assets="$script_dir/wallpaper"
 package="${root%/}/usr/share/wallpapers/RowynBlack"
 test -s "$assets/metadata.json"

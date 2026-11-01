@@ -11,7 +11,7 @@ printf 'reproducible=yes\nhostonly=no\ncompress=zstd\nadd_dracutmodules+=" bootc
 # renders on the firmware framebuffer (simpledrm/efifb) until the real root
 # loads the right driver. dracut's drm module would otherwise fold nouveau in.
 printf 'omit_drivers+=" nouveau nvidia nvidia_drm nvidia_modeset nvidia_uvm nvidia_peermem nvidia-drm nvidia-modeset nvidia-uvm nvidia-peermem "\n' | tee /usr/lib/dracut/dracut.conf.d/40-rowyn-gpu-omit.conf
-kernel_dir="$(find /usr/lib/modules -maxdepth 1 -type d | grep -v -E "*.img" | tail -n 1)"
+kernel_dir="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 dracut --force "${kernel_dir}/initramfs.img"
 
 # The boot splash lives or dies here: Plymouth can only draw the Rowyn

@@ -2,6 +2,8 @@
 
 set -xeuo pipefail
 
+# Deliberate: the payload keeps only /usr; everything else is recreated at boot.
+# shellcheck disable=SC2114
 rm -rf /boot /home /root /usr/local /srv /opt /mnt /var /usr/lib/sysimage/log /usr/lib/sysimage/cache/pacman/pkg
 
 mkdir -p /sysroot /boot /usr/lib/ostree /var
