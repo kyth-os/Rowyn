@@ -14,6 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "shared/update-policy.sh"
 REPOSITORY = "ghcr.io/kyth-os/rowyn"
+TARGET_REPOSITORY = "ghcr.io/mrtrickdotorg/rowyn"
 KEY_PATH = "/usr/share/rowyn/update.pub"
 SIGNED_ROWYN_IMAGE = "docker://ghcr.io/kyth-os/rowyn@sha256:028e2da270db929be62ccd2ae2184303182cf77d2cb9249c1bfdf3bb7dd04663"
 UBUNTU_IMAGE = "docker://docker.io/library/ubuntu:latest"
@@ -120,10 +121,30 @@ class UpdatePolicyTests(unittest.TestCase):
                 config_path.read_text(encoding="utf-8"),
                 "docker:\n"
                 "  ghcr.io/kyth-os/rowyn:\n"
+                "    use-sigstore-attachments: true\n"
+                "  ghcr.io/mrtrickdotorg/rowyn:\n"
                 "    use-sigstore-attachments: true\n",
             )
             self.assertFalse((root / "root").exists())
             self.assertFalse((root / "var").exists())
+
+    def test_transition_policy_trusts_only_the_old_and_new_rowyn_repositories(self):
+        temporary, root, policy_path, _ = self.install_fixture()
+        with temporary:
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+            docker = policy["transports"]["docker"]
+            for repository in (REPOSITORY, TARGET_REPOSITORY):
+                self.assertEqual(docker[repository], [{
+                    "type": "sigstoreSigned",
+                    "keyPath": KEY_PATH,
+                    "signedIdentity": {
+                        "type": "exactRepository",
+                        "dockerRepository": repository,
+                    },
+                }])
+            self.assertEqual(set(docker), {
+                "docker.io", "ghcr.io", REPOSITORY, TARGET_REPOSITORY,
+            })
 
     def test_is_idempotent(self):
         with tempfile.TemporaryDirectory(prefix="rowyn-update-policy-idempotent-") as temporary:

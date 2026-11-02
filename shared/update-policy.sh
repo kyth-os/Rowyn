@@ -4,8 +4,10 @@
 # This is a system policy in /etc, so it is part of the immutable image and is
 # available to root and rootless users that do not provide a user policy. The
 # default is fail-closed. Docker Hub and GHCR are explicitly allowed for normal
-# Ubuntu and unrelated GHCR images; the more-specific Rowyn repository scope
-# overrides the broader GHCR allowance and requires the Rowyn signature key.
+# Ubuntu and unrelated GHCR images; the more-specific Rowyn repository scopes
+# override the broader GHCR allowance and require the Rowyn signature key. Trust
+# both namespaces during the repository handoff; the new scope is inert until the
+# migration workflow publishes there.
 set -euo pipefail
 
 root=/
@@ -64,6 +66,16 @@ cat > "$policy" <<'EOF'
             "dockerRepository": "ghcr.io/kyth-os/rowyn"
           }
         }
+      ],
+      "ghcr.io/mrtrickdotorg/rowyn": [
+        {
+          "type": "sigstoreSigned",
+          "keyPath": "/usr/share/rowyn/update.pub",
+          "signedIdentity": {
+            "type": "exactRepository",
+            "dockerRepository": "ghcr.io/mrtrickdotorg/rowyn"
+          }
+        }
       ]
     }
   }
@@ -74,6 +86,8 @@ chmod 0644 "$policy"
 cat > "$registries" <<'EOF'
 docker:
   ghcr.io/kyth-os/rowyn:
+    use-sigstore-attachments: true
+  ghcr.io/mrtrickdotorg/rowyn:
     use-sigstore-attachments: true
 EOF
 chmod 0644 "$registries"

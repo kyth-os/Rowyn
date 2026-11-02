@@ -30,6 +30,7 @@ SYSTEM_HELPER = ROOT / "shared/update-policy.sh"
 CONTAINERFILE = ROOT / "Containerfile"
 BUILD_WORKFLOW = ROOT / ".github/workflows/build.yml"
 REPOSITORY = "ghcr.io/kyth-os/rowyn"
+TARGET_REPOSITORY = "ghcr.io/mrtrickdotorg/rowyn"
 KEY_PATH = "/usr/share/rowyn/update.pub"
 
 
@@ -98,6 +99,14 @@ class ContainersUserPolicyTests(unittest.TestCase):
                 "signedIdentity": {
                     "type": "exactRepository",
                     "dockerRepository": REPOSITORY,
+                },
+            }])
+            self.assertEqual(docker[TARGET_REPOSITORY], [{
+                "type": "sigstoreSigned",
+                "keyPath": KEY_PATH,
+                "signedIdentity": {
+                    "type": "exactRepository",
+                    "dockerRepository": TARGET_REPOSITORY,
                 },
             }])
 
