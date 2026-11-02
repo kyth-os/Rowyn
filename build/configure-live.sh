@@ -7,7 +7,7 @@ set -euo pipefail
 : "${INSTALL_SOURCE_IMAGE:?}"
 [[ "$INSTALL_SOURCE_IMAGE" =~ ^ghcr\.io/kyth-os/rowyn@sha256:[0-9a-f]{64}$ ]] || exit 1
 digest="${INSTALL_SOURCE_IMAGE##*@}"
-target_image="ghcr.io/kyth-os/rowyn:stable"
+target_image="ghcr.io/mrtrickdotorg/rowyn:stable"
 export INSTALL_TARGET_IMAGE="$target_image"
 install -Dm755 /rowyn/ubuntu-live-preflight.py /usr/libexec/rowyn-live-preflight
 # Retain the exact v2 verifier used by the publisher; verify download integrity.

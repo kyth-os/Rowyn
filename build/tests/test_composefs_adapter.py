@@ -236,7 +236,7 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         executor = (self.crate / 'installer_job_executor.rs').read_text()
         self.assertIn('const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@sha256:'
                       + 'b' * 64 + '";', executor)
-        self.assertIn('const ROWYN_UPDATE_TARGET: &str = "ghcr.io/kyth-os/rowyn:stable";',
+        self.assertIn('const ROWYN_UPDATE_TARGET: &str = "ghcr.io/mrtrickdotorg/rowyn:stable";',
                       executor)
         self.assertIn('self.source_imgref != format!("docker://{ROWYN_RELEASE_SOURCE}")', executor)
         self.assertIn('self.target_imgref != ROWYN_UPDATE_TARGET', executor)

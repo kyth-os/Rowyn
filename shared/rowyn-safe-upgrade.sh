@@ -32,6 +32,7 @@
 set -uo pipefail
 
 readonly LOCK_FILE=/run/rowyn-bootc.lock
+readonly UPDATE_REF=ghcr.io/mrtrickdotorg/rowyn:stable
 readonly BOOTC_TIMEOUT_SECS=3600
 readonly TERM_GRACE_SECS=10
 readonly SYSROOT_FREE_MIN_BYTES=$((2 * 1024 * 1024 * 1024))
@@ -326,11 +327,17 @@ terminate_child() {
 child_status=0
 child_timed_out=0
 
-# Run `bootc upgrade` supervised: streams progress, enforces the timeout,
+# Run `bootc switch` supervised: streams progress, enforces the timeout,
 # honours cancellation; records the outcome in child_status /
 # child_timed_out / cancelled.
-run_bootc_upgrade() {
-    local with_progress_fd=$1
+run_bootc_update() {
+    local operation=$1 with_progress_fd=$2
+    local -a args
+    case "$operation" in
+        switch) args=(switch "$UPDATE_REF") ;;
+        upgrade) args=(upgrade) ;;
+        *) fail "Unsupported bootc update operation" ;;
+    esac
     : >"$workdir/bootc.out"
     : >"$workdir/bootc.err"
     : >"$workdir/bootc.progress"
@@ -345,11 +352,16 @@ run_bootc_upgrade() {
         # rejects anything that is not a real pipe ("not a pipe") — a plain
         # file redirect does not work. Hand it the write end of a pipe whose
         # reader appends to the progress file that drain_progress tails.
-        setsid /usr/bin/bootc upgrade --progress-fd 3 \
+        if [[ "$operation" == switch ]]; then
+            args=(switch --progress-fd 3 "$UPDATE_REF")
+        else
+            args=(upgrade --progress-fd 3)
+        fi
+        setsid /usr/bin/bootc "${args[@]}" \
             >"$workdir/bootc.out" 2>"$workdir/bootc.err" \
             3> >(cat >>"$workdir/bootc.progress") &
     else
-        setsid /usr/bin/bootc upgrade \
+        setsid /usr/bin/bootc "${args[@]}" \
             >"$workdir/bootc.out" 2>"$workdir/bootc.err" &
     fi
     child=$!
@@ -377,6 +389,25 @@ run_bootc_upgrade() {
     sleep 0.3
     drain_all
     return 0
+}
+
+booted_image_reference() {
+    local status_json ref
+    status_json=$(timeout 30 /usr/bin/bootc status --json) || return 1
+    ref=$(printf '%s' "$status_json" | /usr/bin/python3 -c '
+import json, re, sys
+try:
+    doc = json.load(sys.stdin)
+    ref = doc["status"]["booted"]["image"]["image"]["image"]
+    if not isinstance(ref, str) or not re.fullmatch(
+        r"ghcr\.io/(?:kyth-os/rowyn|mrtrickdotorg/rowyn)(?::[A-Za-z0-9_.-]+|@sha256:[0-9a-f]{64})", ref
+    ):
+        raise ValueError("unsupported image reference")
+    print(ref)
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    sys.exit(1)
+') || return 1
+    printf '%s' "$ref"
 }
 
 result_detail() {
@@ -422,9 +453,17 @@ main() {
         fail "Another bootc upgrade is in progress; retry later"
     fi
 
+    local booted_ref operation
+    booted_ref=$(booted_image_reference) || fail "Could not determine the booted Rowyn image reference"
+    case "$booted_ref" in
+        ghcr.io/kyth-os/rowyn:*|ghcr.io/kyth-os/rowyn@sha256:*) operation=switch ;;
+        ghcr.io/mrtrickdotorg/rowyn:*|ghcr.io/mrtrickdotorg/rowyn@sha256:*) operation=upgrade ;;
+        *) fail "Unsupported booted Rowyn image reference" ;;
+    esac
+
     emit_marker 1 download "Starting image download"
 
-    run_bootc_upgrade 1
+    run_bootc_update "$operation" 1
     if (( ! cancelled && ! child_timed_out && child_status != 0 )); then
         # A bootc that predates --progress-fd rejects it before doing any
         # work. Staging without live byte progress beats not staging.
@@ -432,14 +471,14 @@ main() {
             blobs_needed=0
             blobs_done=0
             deploy_steps=0
-            run_bootc_upgrade 0
+            run_bootc_update "$operation" 0
         fi
     fi
     if (( cancelled )); then
-        fail "bootc upgrade was terminated and did not complete; nothing was staged"
+        fail "bootc update was terminated and did not complete; nothing was staged"
     fi
     if (( child_timed_out )); then
-        fail "bootc upgrade timed out; retry later"
+        fail "bootc update timed out; retry later"
     fi
     if (( child_status != 0 )); then
         local detail
@@ -447,7 +486,7 @@ main() {
         if [[ -n "$detail" ]]; then
             fail "$detail"
         fi
-        fail "bootc upgrade failed (exit code $child_status)"
+        fail "bootc update failed (exit code $child_status)"
     fi
 
     # Did anything actually stage? bootc exits 0 for "no changes" too,

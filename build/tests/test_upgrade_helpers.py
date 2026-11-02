@@ -15,6 +15,20 @@ FINALIZE = ROOT / "shared/rowyn-finalize-staged.sh"
 
 
 class SafeUpgradeTests(unittest.TestCase):
+    def test_staging_targets_the_destination_stable_channel(self):
+        text = SAFE_UPGRADE.read_text(encoding="utf-8")
+        self.assertIn("readonly UPDATE_REF=ghcr.io/mrtrickdotorg/rowyn:stable", text)
+        self.assertIn('switch) args=(switch "$UPDATE_REF")', text)
+        self.assertIn('upgrade) args=(upgrade)', text)
+        self.assertIn("mrtrickdotorg/rowyn", text)
+        self.assertNotIn("/usr/bin/bootc upgrade --progress-fd", text)
+
+    def test_manual_switch_targets_the_destination_stable_channel(self):
+        text = (ROOT / "shared/rowyn-bootc-guard.sh").read_text(encoding="utf-8")
+        self.assertIn("readonly STABLE_REF=ghcr.io/mrtrickdotorg/rowyn:stable", text)
+        self.assertIn('bootc switch "$STABLE_REF"', text)
+        self.assertIn('/usr/bin/bootc upgrade', text)
+
     def test_only_the_physical_root_space_is_checked(self):
         text = SAFE_UPGRADE.read_text(encoding="utf-8")
         self.assertIn('check_free /sysroot "$SYSROOT_FREE_MIN_BYTES"', text)
@@ -22,6 +36,61 @@ class SafeUpgradeTests(unittest.TestCase):
         # /boot free-space check always failed with "0 MiB free".
         self.assertNotIn("check_free /boot", text)
         self.assertNotIn("BOOT_FREE_MIN_BYTES", text)
+
+
+class BootcGuardOperationTests(unittest.TestCase):
+    FAKE_BOOTC = """#!/bin/sh
+case "$1" in
+status)
+    printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}}}}' "$BOOTED_IMAGE_REF"
+    ;;
+switch|upgrade)
+    printf '%s' "$*" >> "$BOOTC_CALLS"
+    ;;
+*) exit 9 ;;
+esac
+"""
+
+    def run_guard(self, image_ref):
+        with tempfile.TemporaryDirectory(prefix="rowyn-bootc-guard-") as temp:
+            base = Path(temp)
+            bootc = base / "bootc"
+            bootc.write_text(self.FAKE_BOOTC, encoding="utf-8")
+            bootc.chmod(0o755)
+            finalize = base / "finalize"
+            finalize.write_text("#!/bin/sh\necho \"$*\" >> \"$FINALIZE_CALLS\"\nexit 0\n",
+                                encoding="utf-8")
+            finalize.chmod(0o755)
+            calls = base / "bootc-calls"
+            finalizer_calls = base / "finalizer-calls"
+            text = (ROOT / "shared/rowyn-bootc-guard.sh").read_text(encoding="utf-8")
+            text = text.replace("/usr/bin/bootc", str(bootc))
+            text = text.replace("/run/rowyn-bootc.lock", str(base / "lock"))
+            text = text.replace("/usr/libexec/rowyn-finalize-staged", str(finalize))
+            script = base / "guard"
+            script.write_text(text, encoding="utf-8")
+            env = dict(os.environ, BOOTED_IMAGE_REF=image_ref,
+                       BOOTC_CALLS=str(calls), FINALIZE_CALLS=str(finalizer_calls))
+            result = subprocess.run(["bash", str(script), "switch-latest"],
+                                    capture_output=True, text=True, timeout=30, env=env)
+            return result, calls.read_text(encoding="utf-8") if calls.exists() else ""
+
+    def test_old_registry_booted_image_switches_to_destination(self):
+        result, calls = self.run_guard("ghcr.io/kyth-os/rowyn:stable")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("switch ghcr.io/mrtrickdotorg/rowyn:stable", calls)
+        self.assertNotIn("upgrade", calls)
+
+    def test_destination_booted_image_uses_upgrade_to_avoid_switch_collision(self):
+        result, calls = self.run_guard("ghcr.io/mrtrickdotorg/rowyn:stable")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.strip(), "upgrade")
+        self.assertNotIn("switch", calls)
+
+    def test_unrecognized_booted_image_fails_closed(self):
+        result, calls = self.run_guard("ghcr.io/attacker/rowyn:stable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, "")
 
 
 class SafeUpgradeProgressPipeTests(unittest.TestCase):
@@ -33,7 +102,17 @@ class SafeUpgradeProgressPipeTests(unittest.TestCase):
 
     FAKE_BOOTC = """#!/bin/sh
 case "$1" in
-upgrade)
+switch|upgrade)
+    if [ "$1" = switch ]; then
+        [ "$BOOTED_IMAGE_REF" = "ghcr.io/kyth-os/rowyn:stable" ] || exit 9
+        found=0
+        for arg in "$@"; do
+            [ "$arg" = "ghcr.io/mrtrickdotorg/rowyn:stable" ] && found=1
+        done
+        [ "$found" = 1 ] || exit 9
+    else
+        [ "$BOOTED_IMAGE_REF" = "ghcr.io/mrtrickdotorg/rowyn:stable" ] || exit 9
+    fi
     for arg in "$@"; do
         if [ "$arg" = "--progress-fd" ]; then
             if [ ! -p /dev/fd/3 ]; then
@@ -46,12 +125,12 @@ upgrade)
     echo "Staged update"
     ;;
 status)
-    echo '{"status":{"staged":{"image":{}}}}'
+    printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}},"staged":{"image":{}}}}\n' "$BOOTED_IMAGE_REF"
     ;;
 esac
 """
 
-    def run_script(self, fake_bootc: str):
+    def run_script(self, fake_bootc: str, booted_image_ref="ghcr.io/kyth-os/rowyn:stable"):
         with tempfile.TemporaryDirectory(prefix="rowyn-safe-upgrade-") as temp:
             temp_path = Path(temp)
             bootc = temp_path / "bootc"
@@ -61,15 +140,16 @@ esac
             finalize.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             finalize.chmod(0o755)
             text = SAFE_UPGRADE.read_text(encoding="utf-8")
+            text = text.replace("if (( EUID != 0 )); then", "if false; then")
             text = text.replace("/usr/bin/bootc", str(bootc))
             text = text.replace("/run/rowyn-bootc.lock", str(temp_path / "lock"))
             text = text.replace("/usr/libexec/rowyn-finalize-staged", str(finalize))
             script = temp_path / "rowyn-safe-upgrade"
             script.write_text(text, encoding="utf-8")
+            env = dict(os.environ, BOOTED_IMAGE_REF=booted_image_ref)
             return subprocess.run(["bash", str(script)], capture_output=True,
-                                  text=True, timeout=60)
+                                  text=True, timeout=60, env=env)
 
-    @unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
     def test_progress_fd_is_a_pipe_and_progress_is_streamed(self):
         result = self.run_script(self.FAKE_BOOTC)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -78,7 +158,12 @@ esac
         # the Hub's marker stream.
         self.assertIn("ROWYN_STAGE_PROGRESS pct=42", result.stdout)
 
-    @unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
+    def test_destination_image_uses_upgrade_not_switch(self):
+        result = self.run_script(self.FAKE_BOOTC,
+                                 "ghcr.io/mrtrickdotorg/rowyn:stable")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ROWYN_STAGE_PROGRESS pct=42", result.stdout)
+
     def test_falls_back_without_progress_when_the_fd_is_rejected(self):
         always_rejects = self.FAKE_BOOTC.replace(
             'if [ ! -p /dev/fd/3 ]; then',

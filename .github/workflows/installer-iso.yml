@@ -193,15 +193,13 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.source.outputs.image_ref }}
           IMAGE_DIGEST: ${{ steps.source.outputs.image_digest }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           test -n "${IMAGE_REF}"
           test -n "${IMAGE_DIGEST}"
-          echo "${GITHUB_TOKEN}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
           IMAGE_NAME="${IMAGE_REF%:*}"
           [[ "${IMAGE_NAME}" == "ghcr.io/kyth-os/rowyn" ]]
-          sudo podman pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
           skopeo inspect --no-creds "docker://${IMAGE_NAME}@${IMAGE_DIGEST}" >/dev/null
+          sudo podman pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
           {
             echo '### ISO source image'
             echo "- ref: \`${IMAGE_REF}\`"
@@ -232,9 +230,7 @@ jobs:
           UPSTREAM_INSTALLER_COMMIT: ${{ env.UPSTREAM_INSTALLER_COMMIT }}
           UBUNTU_LIVE_IMAGE: ${{ env.UBUNTU_LIVE_IMAGE }}
           TMPDIR: /mnt/rowyn-iso-scratch
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${GITHUB_TOKEN}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
           ./build/custom-installer-iso.sh
 
       - name: ISO summary, checksums, and signature

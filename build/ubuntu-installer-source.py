@@ -438,7 +438,7 @@ def port_source(root, digest):
     executor = crate / "src/installer_job_executor.rs"
     text = executor.read_text()
     source = "ghcr.io/kyth-os/rowyn@" + digest
-    target = "ghcr.io/kyth-os/rowyn:stable"
+    target = "ghcr.io/mrtrickdotorg/rowyn:stable"
     anchor = 'const FILESYSTEM_STAGING_MOUNTPOINT: &str = "/run/kyth-installer/alongside-target";\n'
     text = replace_once(text, anchor, anchor + f'const ROWYN_RELEASE_SOURCE: &str = "{source}";\n'
                         f'const ROWYN_UPDATE_TARGET: &str = "{target}";\n')

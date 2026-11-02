@@ -136,7 +136,13 @@ The fixed payload signing identity is:
 https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main
 ```
 
-`installer-iso.yml` runs after a successful trusted main image release. It checks the upstream run through the GitHub API, reads only that run's image metadata artifact, checks its SHA/run binding, and verifies the image signer before privileged work. Installer code comes from trusted main, not from the triggering run. The installation source is `ghcr.io/kyth-os/rowyn@sha256:…`; tags are provenance labels, not installation-source selectors.
+`installer-iso.yml` runs after a successful trusted main image release. It checks the upstream run through the GitHub API, reads only that run's image metadata artifact, checks its SHA/run binding, and verifies the image signer before privileged work. Until the repository transfer, the installation source is the immutable source digest at `ghcr.io/kyth-os/rowyn@sha256:…`; the installed updater targets `ghcr.io/mrtrickdotorg/rowyn:stable`. Tags are provenance labels, not installation-source selectors.
+
+### Registry migration collision guard
+
+During the transition, the old source image and the new update target intentionally differ. The bridge is delivered through old `ghcr.io/kyth-os/rowyn:stable`; only after the destination image is publicly pullable and signed does the old stable promotion proceed. The destination stable image is a derivative with `/usr/share/rowyn-registry-migration-destination-v1`, a new rootfs file absent from the old image. CI verifies the marker is absent in the source and present in the destination, verifies both destination signatures and an anonymous pull, then checks the destination stable digest before old stable advances.
+
+This unique rootfs content is required: the pinned bootc 1.17.3 implementation rejects `bootc switch` when the target composefs fs-verity digest matches any booted, staged, rollback, or pinned deployment. A tag, repository path, signature, or OCI manifest digest change alone does not make a switch safe. The automatic and manual helpers use `bootc switch` only from the old registry and ordinary `bootc upgrade` after the system is already on the destination, avoiding repeated switch collisions on the current deployment. Keep both package paths public during rollout. Rollback/re-switch behavior remains a separate runtime qualification; do not claim it has been exercised by source tests.
 
 ISO-only changes validate the installer without rebuilding the payload or selecting a mutable latest image. To retry against an existing signed payload, replace both values with its exact digest and original source commit:
 

@@ -17,7 +17,7 @@ cd "$repo_root"
 [[ "$UBUNTU_LIVE_IMAGE" =~ ^docker\.io/library/ubuntu@sha256:[0-9a-f]{64}$ ]] || { echo 'Live and compiler base must be digest-pinned official Ubuntu' >&2; exit 1; }
 [[ -z "${UPSTREAM_INSTALLER_BASE_IMAGE:-}" ]] || { echo 'Legacy live-base override is forbidden' >&2; exit 1; }
 source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"
-target_image="ghcr.io/kyth-os/rowyn:stable"
+target_image="ghcr.io/mrtrickdotorg/rowyn:stable"
 export INSTALL_SOURCE_IMAGE="$source_image"
 export INSTALL_TARGET_IMAGE="$target_image"
 python3 -B build/ubuntu-only-check.py

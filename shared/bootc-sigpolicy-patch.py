@@ -213,7 +213,7 @@ def apply(source: Path) -> None:
         "            sigverify: ostree_container::SignatureSource::ContainerPolicy,\n"
         "            imgref: ostree_container::ImageReference {\n"
         "                transport: ostree_container::Transport::Registry,\n"
-        "                name: \"ghcr.io/kyth-os/rowyn:stable\".to_string(),\n"
+        "                name: \"ghcr.io/mrtrickdotorg/rowyn:stable\".to_string(),\n"
         "            },\n"
         "        };\n"
         "        let actual = composefs_source_spec(&target, &source);\n"

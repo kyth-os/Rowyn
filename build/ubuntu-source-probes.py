@@ -51,10 +51,10 @@ fn only_the_pinned_release_matches_the_gate() {
     let digest = ROWYN_RELEASE_SOURCE.rsplit_once('@').unwrap().1;
     let hex = &digest[7..];
     let first = if hex.as_bytes()[0] == b'a' { 'b' } else { 'a' };
-    let other_digest = format!("ghcr.io/kyth-os/rowyn@sha256:{first}{}", &hex[1..]);
+    let other_digest = format!("ghcr.io/mrtrickdotorg/rowyn@sha256:{first}{}", &hex[1..]);
     for candidate in [ROWYN_UPDATE_TARGET, other_digest.as_str(),
                       "docker.io/library/ubuntu:26.10",
-                      "docker://ghcr.io/kyth-os/rowyn:stable"] {
+                      "docker://ghcr.io/mrtrickdotorg/rowyn:stable"] {
         assert_ne!(source_reference(candidate).unwrap(), gate, "{candidate}");
     }
     for transported in [format!("containers-storage:{ROWYN_RELEASE_SOURCE}"),
@@ -89,12 +89,11 @@ fn transport_is_not_duplicated() {
 #[test]
 fn caller_target_cannot_replace_the_fixed_update_channel() {
     // The update channel is a pinned constant, not a caller choice: the
-    // executor's Prepare gate requires target_imgref == ROWYN_UPDATE_TARGET,
-    // exactly the stable channel of the same repository the release source
-    // is pinned to — a mutable tag, never a digest.
-    assert_eq!(ROWYN_UPDATE_TARGET, "ghcr.io/kyth-os/rowyn:stable");
+    // The executor's Prepare gate requires target_imgref == ROWYN_UPDATE_TARGET,
+    // a mutable destination stable tag rather than a caller-supplied digest.
+    assert_eq!(ROWYN_UPDATE_TARGET, "ghcr.io/mrtrickdotorg/rowyn:stable");
     let (source_repo, digest) = ROWYN_RELEASE_SOURCE.rsplit_once('@').unwrap();
-    assert_eq!(ROWYN_UPDATE_TARGET.rsplit_once(':').unwrap().0, source_repo);
+    assert_eq!(source_repo, "ghcr.io/kyth-os/rowyn");
     assert!(is_sha256_digest(digest));
     assert!(!ROWYN_UPDATE_TARGET.contains('@'));
 }

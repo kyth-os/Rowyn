@@ -282,7 +282,7 @@ class PinnedSourceProbesTests(unittest.TestCase):
             generated = source_probes.probes(root)
             for marker in (
                 f'const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@{DIGEST}";',
-                'const ROWYN_UPDATE_TARGET: &str = "ghcr.io/kyth-os/rowyn:stable";',
+                'const ROWYN_UPDATE_TARGET: &str = "ghcr.io/mrtrickdotorg/rowyn:stable";',
                 "fn is_sha256_digest(", "fn safe_reference(",
                 "fn source_reference(", "fn kernel_detail(",
             ):

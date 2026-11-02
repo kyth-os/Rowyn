@@ -333,7 +333,7 @@ class PinnedHubSourceTests(unittest.TestCase):
 
                 updates = (crate / "src/commands/updates.rs").read_text()
                 self.assertIn("https://api.github.com/repos/kyth-os/Rowyn/releases?per_page=100", updates)
-                self.assertIn("ghcr.io/kyth-os/rowyn@", updates)
+                self.assertIn("ghcr.io/mrtrickdotorg/rowyn@", updates)
                 self.assertNotIn("ghcr.io/kyth-os/kyth@", updates)
                 self.assertNotIn("kyth-os/kyth/releases", updates)
                 # The update actions shell out to helper binaries; Rowyn
@@ -359,7 +359,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("kyth-bootc-guard", bootc_query)
                 self.assertNotIn("ghcr.io/kyth-os/kyth", bootc_query)
                 self.assertNotIn(r"ghcr\.io/kyth-os/kyth", bootc_query)
-                self.assertIn("ghcr.io/kyth-os/rowyn", bootc_query)
+                self.assertIn("ghcr.io/mrtrickdotorg/rowyn", bootc_query)
                 main = (crate / "src/main.rs").read_text()
                 self.assertIn("commands::updates::bootc_switch_branch", main)
                 self.assertIn('"https://github.com/kyth-os/Rowyn",', main)

@@ -10,6 +10,8 @@ on:
       - shared/**
       - keys/**
       - build/fetch-assets.sh
+      - build/destination-derivative.Containerfile
+      - build/registry-migration-destination-v1
       - build/ubuntu-hub-source.py
       - build/hub/**
       - .github/workflows/build.yml
@@ -458,18 +460,22 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMAGE_NAME}@${IMAGE_DIGEST}"
 
-  # During the migration, the source workflow copies the exact verified digest
-  # to the destination namespace and signs it with the persistent Rowyn key.
-  # This job must succeed before the old stable channel advances to a bridge.
+  # Build a destination-only derivative with a new rootfs marker. bootc 1.17.3
+  # refuses `switch` when the target composefs digest is already deployed, so
+  # the destination image must differ from both the old bridge and prior images.
+  # This job must succeed before the old stable channel advances to the bridge.
   stage_destination:
     name: Sign and stage image in destination registry
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
     needs: [build, sign]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+      id-token: write
+    outputs:
+      destination_digest: ${{ steps.build_destination.outputs.destination_digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -482,17 +488,21 @@ jobs:
         with:
           cosign-release: v2.6.1
 
-      - name: Install Skopeo
+      - name: Install Podman and Skopeo
         shell: bash --noprofile --norc -euo pipefail {0}
         run: |
-          if ! command -v skopeo >/dev/null 2>&1; then
-            sudo apt-get update -o Acquire::Retries=3
-            sudo apt-get install -y --no-install-recommends skopeo
-          fi
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y --no-install-recommends podman skopeo btrfs-progs
+          command -v podman
           command -v skopeo
+          podman --version
           skopeo --version
 
-      - name: Copy immutable image to destination GHCR
+      - name: Setup compressed Podman storage
+        uses: ./.github/actions/setup-compressed-storage
+
+      - name: Build and publish unique destination image
+        id: build_destination
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
@@ -506,32 +516,45 @@ jobs:
           SOURCE_IMAGE="${IMAGE_REF%:*}"
           [[ "${SOURCE_IMAGE}" == "ghcr.io/kyth-os/rowyn" ]]
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
-          auth_file="${RUNNER_TEMP}/rowyn-destination-auth.json"
-          umask 077
-          trap 'rm -f "${auth_file}"' EXIT
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | skopeo login \
-            --authfile "${auth_file}" \
-            --username "${GHCR_USERNAME}" \
-            --password-stdin ghcr.io
-          skopeo copy --all --preserve-digests --src-no-creds \
-            --dest-authfile "${auth_file}" \
-            "docker://${SOURCE_IMAGE}@${IMAGE_DIGEST}" \
-            "docker://${DEST_IMAGE}:${GITHUB_SHA}"
-          destination_digest="$(skopeo inspect --authfile "${auth_file}" \
-            --no-tags --format '{{.Digest}}' \
-            "docker://${DEST_IMAGE}:${GITHUB_SHA}")"
-          [[ "${destination_digest}" == "${IMAGE_DIGEST}" ]]
+          push_digest_file="${RUNNER_TEMP}/rowyn-destination.digest"
+          marker="/usr/share/rowyn-registry-migration-destination-v1"
+          source_digest="$(skopeo inspect --no-creds --format '{{.Digest}}' \
+            "docker://${SOURCE_IMAGE}@${IMAGE_DIGEST}")"
+          [[ "${source_digest}" == "${IMAGE_DIGEST}" ]]
+          echo "${ROWYN_DEST_GHCR_TOKEN}" | sudo podman login ghcr.io \
+            -u "${GHCR_USERNAME}" --password-stdin
+          sudo podman build --pull=always --format oci \
+            --build-arg "ROWYN_BASE_IMAGE=${SOURCE_IMAGE}@${IMAGE_DIGEST}" \
+            -f build/destination-derivative.Containerfile \
+            -t "${DEST_IMAGE}:${GITHUB_SHA}-destination" .
+          # Prove that the destination-only file is absent from the verified
+          # bridge base and present in the image whose fs-verity root changes.
+          sudo podman run --rm --entrypoint /bin/sh \
+            "${SOURCE_IMAGE}@${IMAGE_DIGEST}" -ec 'test ! -e "$1"' sh "${marker}"
+          sudo podman run --rm --entrypoint /bin/sh \
+            "${DEST_IMAGE}:${GITHUB_SHA}-destination" -ec 'test -s "$1"' sh "${marker}"
+          sudo podman run --rm --entrypoint /usr/bin/bootc \
+            "${DEST_IMAGE}:${GITHUB_SHA}-destination" container lint
+          sudo podman push --digestfile "${push_digest_file}" \
+            "${DEST_IMAGE}:${GITHUB_SHA}-destination"
+          destination_digest="$(cat "${push_digest_file}")"
+          [[ "${destination_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${destination_digest}" != "${IMAGE_DIGEST}" ]]
+          echo "destination_digest=${destination_digest}" >> "${GITHUB_OUTPUT}"
+          published_digest="$(skopeo inspect --no-creds --format '{{.Digest}}' \
+            "docker://${DEST_IMAGE}:${GITHUB_SHA}-destination")"
+          [[ "${published_digest}" == "${destination_digest}" ]]
 
       - name: Sign exact destination image with update-channel key
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
           ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
           ROWYN_UPDATE_SIGNING_KEY: ${{ secrets.ROWYN_UPDATE_SIGNING_KEY }}
           COSIGN_PASSWORD: ${{ secrets.ROWYN_UPDATE_SIGNING_PASSWORD }}
           GHCR_USERNAME: mrtrick37
         run: |
-          [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -s "keys/update.pub"
           test -n "${ROWYN_DEST_GHCR_TOKEN}"
           test -n "${ROWYN_UPDATE_SIGNING_KEY}"
@@ -540,22 +563,39 @@ jobs:
           printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           cosign sign --yes --key env://ROWYN_UPDATE_SIGNING_KEY \
-            "${DEST_IMAGE}@${IMAGE_DIGEST}"
+            "${DEST_IMAGE}@${DESTINATION_DIGEST}"
+
+      - name: Sign exact destination image with keyless identity
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
+          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
+          GHCR_USERNAME: mrtrick37
+        run: |
+          [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
+          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
+            -u "${GHCR_USERNAME}" --password-stdin
+          cosign sign -y "${DEST_IMAGE}@${DESTINATION_DIGEST}"
 
       - name: Verify destination update-channel signature
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
           ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
           GHCR_USERNAME: mrtrick37
         run: |
-          [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -s "keys/update.pub"
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
           printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           cosign verify --key keys/update.pub \
-            "${DEST_IMAGE}@${IMAGE_DIGEST}"
+            "${DEST_IMAGE}@${DESTINATION_DIGEST}"
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/build\.yml@refs/heads/main$" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${DEST_IMAGE}@${DESTINATION_DIGEST}"
 
       - name: Reject stale main before destination stable promotion
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -585,11 +625,11 @@ jobs:
       - name: Promote exact digest to destination stable
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
+          DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
           ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
           GHCR_USERNAME: mrtrick37
         run: |
-          [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -n "${ROWYN_DEST_GHCR_TOKEN}"
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
           auth_file="${RUNNER_TEMP}/rowyn-destination-auth.json"
@@ -601,31 +641,22 @@ jobs:
             --password-stdin ghcr.io
           skopeo copy --preserve-digests \
             --src-authfile "${auth_file}" --dest-authfile "${auth_file}" \
-            "docker://${DEST_IMAGE}@${IMAGE_DIGEST}" \
+            "docker://${DEST_IMAGE}@${DESTINATION_DIGEST}" \
             "docker://${DEST_IMAGE}:stable"
           stable_digest="$(skopeo inspect --authfile "${auth_file}" \
             --format '{{.Digest}}' "docker://${DEST_IMAGE}:stable")"
-          [[ "${stable_digest}" == "${IMAGE_DIGEST}" ]]
+          [[ "${stable_digest}" == "${DESTINATION_DIGEST}" ]]
 
       - name: Verify destination stable tag digest
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
         run: |
-          [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
-          auth_file="${RUNNER_TEMP}/rowyn-destination-auth.json"
-          umask 077
-          trap 'rm -f "${auth_file}"' EXIT
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | skopeo login \
-            --authfile "${auth_file}" \
-            --username "${GHCR_USERNAME}" \
-            --password-stdin ghcr.io
-          stable_digest="$(skopeo inspect --authfile "${auth_file}" \
+          stable_digest="$(skopeo inspect --no-creds \
             --format '{{.Digest}}' "docker://${DEST_IMAGE}:stable")"
-          [[ "${stable_digest}" == "${IMAGE_DIGEST}" ]]
+          [[ "${stable_digest}" == "${DESTINATION_DIGEST}" ]]
 
   # The stable update channel is a separate promotion boundary. It requires
   # both the existing keyless attestation and a repository-controlled static

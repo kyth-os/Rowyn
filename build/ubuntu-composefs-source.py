@@ -484,11 +484,11 @@ def adapt(root, release_digest=None):
         '                        .unwrap_or_else(|_| "ghcr.io/kyth-os/rowyn@sha256:'
         + fixture_digest + '".to_string()),',
         'target_imgref: std::env::var("KYTH_TARGET_IMAGE")\n'
-        '                        .unwrap_or_else(|_| "ghcr.io/kyth-os/rowyn:stable".to_string()),',
+        '                        .unwrap_or_else(|_| "ghcr.io/mrtrickdotorg/rowyn:stable".to_string()),',
     )
     text = text.replace(
         '"target_image": "ghcr.io/kyth-os/rowyn@sha256:' + fixture_digest + '"',
-        '"target_image": "ghcr.io/kyth-os/rowyn:stable"',
+        '"target_image": "ghcr.io/mrtrickdotorg/rowyn:stable"',
     )
     executor.write_text(text)
 

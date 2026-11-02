@@ -16,12 +16,32 @@
 #   check         bootc upgrade --check, 90s bound; stdout/stderr pass
 #                 through untouched — the Hub parses bootc's own
 #                 "Update available for:" / "No changes in:" wording
-#   switch-latest bootc switch ghcr.io/kyth-os/rowyn:stable under the
-#                 bootc flock, then finalize the staged deployment
+#   switch-latest bootc switch ghcr.io/mrtrickdotorg/rowyn:stable from old
+#                 deployments, or bootc upgrade once already on the destination,
+#                 under the bootc flock, then finalize the staged deployment
 set -uo pipefail
 
 readonly LOCK_FILE=/run/rowyn-bootc.lock
-readonly STABLE_REF=ghcr.io/kyth-os/rowyn:stable
+readonly STABLE_REF=ghcr.io/mrtrickdotorg/rowyn:stable
+
+booted_image_reference() {
+    local status_json ref
+    status_json=$(timeout 30 /usr/bin/bootc status --json) || return 1
+    ref=$(printf '%s' "$status_json" | /usr/bin/python3 -c '
+import json, re, sys
+try:
+    doc = json.load(sys.stdin)
+    ref = doc["status"]["booted"]["image"]["image"]["image"]
+    if not isinstance(ref, str) or not re.fullmatch(
+        r"ghcr\.io/(?:kyth-os/rowyn|mrtrickdotorg/rowyn)(?::[A-Za-z0-9_.-]+|@sha256:[0-9a-f]{64})", ref
+    ):
+        raise ValueError("unsupported image reference")
+    print(ref)
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    sys.exit(1)
+') || return 1
+    printf '%s' "$ref"
+}
 
 if (( $# != 1 )); then
     echo "usage: rowyn-bootc-guard <status|status-json|check|switch-latest>" >&2
@@ -67,7 +87,22 @@ if [[ -x /usr/libexec/rowyn-finalize-staged ]]; then
     /usr/libexec/rowyn-finalize-staged prepare-boot >/dev/null 2>&1 || true
 fi
 
-timeout 3600 /usr/bin/bootc switch "$STABLE_REF"
+booted_ref=$(booted_image_reference) || {
+    echo "rowyn-bootc-guard: could not determine the booted Rowyn image reference" >&2
+    exit 1
+}
+case "$booted_ref" in
+    ghcr.io/kyth-os/rowyn:*|ghcr.io/kyth-os/rowyn@sha256:*)
+        timeout 3600 /usr/bin/bootc switch "$STABLE_REF"
+        ;;
+    ghcr.io/mrtrickdotorg/rowyn:*|ghcr.io/mrtrickdotorg/rowyn@sha256:*)
+        timeout 3600 /usr/bin/bootc upgrade
+        ;;
+    *)
+        echo "rowyn-bootc-guard: unsupported booted Rowyn image reference" >&2
+        exit 1
+        ;;
+esac
 status=$?
 if (( status != 0 )); then
     exit "$status"

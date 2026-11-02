@@ -18,8 +18,9 @@ POLICY = ROOT / "shared/update-policy.conf"
 
 FAKE_BOOTC = """#!/bin/sh
 case "$1" in
+switch) echo "$@" >> "$BOOTC_CALLS"; echo "Staged update" ;;
 upgrade) echo "$@" >> "$BOOTC_CALLS"; echo "Staged update" ;;
-status) echo '{"status":{"staged":{"image":{}}}}' ;;
+status) printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}},"staged":{"image":{}}}}\n' "$BOOTED_IMAGE_REF" ;;
 esac
 """
 
@@ -41,6 +42,7 @@ class Sandbox:
         fin.write_text("#!/bin/sh\nexit 0\n")
         fin.chmod(0o755)
         text = SAFE_UPGRADE.read_text()
+        text = text.replace("if (( EUID != 0 )); then", "if false; then")
         text = text.replace("/usr/bin/bootc", str(bootc))
         text = text.replace("/run/rowyn-bootc.lock", str(self.dir / "lock"))
         text = text.replace("/usr/libexec/rowyn-finalize-staged", str(fin))
@@ -64,6 +66,7 @@ class Sandbox:
         e["PATH"] = f"{self.bin}:{e['PATH']}"
         e["ROWYN_POWER_SUPPLY_DIR"] = str(self.power)
         e["BOOTC_CALLS"] = str(self.calls)
+        e["BOOTED_IMAGE_REF"] = "ghcr.io/kyth-os/rowyn:stable"
         for k in ("ROWYN_UPDATE_AUTO", "ROWYN_ALLOW_BATTERY", "ROWYN_ALLOW_METERED"):
             e.pop(k, None)
         if auto:
@@ -76,7 +79,6 @@ class Sandbox:
         return self.calls.exists()
 
 
-@unittest.skipUnless(os.geteuid() == 0, "the helper insists on running as root")
 class AutoGateTests(unittest.TestCase):
     def setUp(self):
         self.sb = Sandbox(self)
@@ -98,6 +100,19 @@ class AutoGateTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Deferred", r.stdout)
         self.assertTrue(self.sb.upgraded())
+        self.assertIn("ghcr.io/mrtrickdotorg/rowyn:stable", self.sb.calls.read_text())
+
+    def test_destination_booted_image_uses_upgrade_without_switching(self):
+        r = self.sb.run(BOOTED_IMAGE_REF="ghcr.io/mrtrickdotorg/rowyn:stable")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = self.sb.calls.read_text()
+        self.assertTrue(calls.startswith("upgrade "), calls)
+        self.assertNotIn("switch", calls)
+
+    def test_unrecognized_booted_image_fails_closed(self):
+        r = self.sb.run(BOOTED_IMAGE_REF="ghcr.io/attacker/rowyn:stable")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(self.sb.upgraded())
 
     def test_desktop_without_battery_proceeds(self):
         r = self.sb.run()

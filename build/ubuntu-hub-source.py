@@ -773,7 +773,7 @@ def port_source(root):
         text,
         'const IMAGE_RELEASES_API: &str = "https://api.github.com/repos/kyth-os/kyth/releases?per_page=100";',
         'const IMAGE_RELEASES_API: &str = "https://api.github.com/repos/kyth-os/Rowyn/releases?per_page=100";')
-    text, image_count = replace_all_counted(text, "ghcr.io/kyth-os/kyth@", "ghcr.io/kyth-os/rowyn@")
+    text, image_count = replace_all_counted(text, "ghcr.io/kyth-os/kyth@", "ghcr.io/mrtrickdotorg/rowyn@")
     text, release_count = replace_all_counted(
         text, "github.com/kyth-os/kyth/releases", "github.com/kyth-os/Rowyn/releases")
     # The update actions shell out to fixed helper binaries; Rowyn ships
@@ -801,7 +801,7 @@ def port_source(root):
         "The Rowyn bootc guard helper is not installed on this system.")
     updates.write_text(text)
     changes.append(
-        f"updates.rs: releases API -> kyth-os/Rowyn; image refs -> ghcr.io/kyth-os/rowyn@ "
+        f"updates.rs: releases API -> kyth-os/Rowyn; image refs -> ghcr.io/mrtrickdotorg/rowyn@ "
         f"({image_count} literals incl. fixtures); release URLs -> kyth-os/Rowyn ({release_count}); "
         f"update helpers -> rowyn-safe-upgrade ({stage_path_count} paths + {stage_prose_count} prose), "
         f"rowyn-bootc-guard ({guard_path_count} paths + {guard_prose_count} prose), "
@@ -817,9 +817,9 @@ def port_source(root):
     text = bootc_query.read_text()
     text, query_guard_count = replace_all_counted(
         text, "/usr/bin/kyth-bootc-guard", "/usr/bin/rowyn-bootc-guard")
-    text = replace_once(text, r"ghcr\.io/kyth-os/kyth", r"ghcr\.io/kyth-os/rowyn")
+    text = replace_once(text, r"ghcr\.io/kyth-os/kyth", r"ghcr\.io/mrtrickdotorg/rowyn")
     text, query_ref_count = replace_all_counted(
-        text, "ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
+        text, "ghcr.io/kyth-os/kyth", "ghcr.io/mrtrickdotorg/rowyn")
     text, query_prose_count = replace_all_counted(
         text, "kyth-safe-upgrade", "rowyn-safe-upgrade")
     # bootc's composefs backend (Rowyn's) prints different check output than
@@ -858,7 +858,7 @@ def port_source(root):
     changes.append(
         f"bootc_query.rs: guard -> /usr/bin/rowyn-bootc-guard ({query_guard_count} paths); "
         f"composefs ManifestDiff check output -> available; "
-        f"image-reference fallback -> ghcr.io/kyth-os/rowyn (1 regex + {query_ref_count} literals "
+        f"image-reference fallback -> ghcr.io/mrtrickdotorg/rowyn (1 regex + {query_ref_count} literals "
         f"incl. fixtures); prose ({query_prose_count})")
 
     # --- Feedback issues go to the Rowyn repository ------------------------
@@ -2008,7 +2008,7 @@ mod audit_fix_tests {
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
         "Dashboard/Apps/Updates/VPN plus Rowyn-owned Diagnostics/Play MVP overlays;\n"
         "updates channel repointed to kyth-os/Rowyn releases\n"
-        "and ghcr.io/kyth-os/rowyn images, update helpers repointed to the Rowyn-shipped\n"
+        "and ghcr.io/mrtrickdotorg/rowyn images, update helpers repointed to the Rowyn-shipped\n"
         "rowyn-safe-upgrade / rowyn-bootc-guard / rowyn-finalize-staged, feedback issues\n"
         "filed against kyth-os/Rowyn,\n"
         "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"

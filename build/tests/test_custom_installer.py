@@ -340,12 +340,16 @@ class UbuntuGuardTests(unittest.TestCase):
     def test_installer_declares_distinct_immutable_source_and_stable_target(self):
         adapter = (ROOT / "build/custom-installer-iso.sh").read_text()
         live = (ROOT / "build/configure-live.sh").read_text()
+        workflow = (ROOT / ".github/workflows/installer-iso.yml").read_text()
         self.assertIn('source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"', adapter)
-        self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', adapter)
+        self.assertIn('target_image="ghcr.io/mrtrickdotorg/rowyn:stable"', adapter)
         self.assertIn('INSTALL_TARGET_IMAGE', adapter)
-        self.assertIn('target_image="ghcr.io/kyth-os/rowyn:stable"', live)
+        self.assertIn('target_image="ghcr.io/mrtrickdotorg/rowyn:stable"', live)
         self.assertIn('ROWYN_TARGET_IMAGE=', live)
         self.assertNotIn('target_image:$source', live)
+        self.assertIn("IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn", workflow)
+        self.assertIn('skopeo inspect --no-creds', workflow)
+        self.assertNotIn("podman login ghcr.io", workflow)
 
     def test_iso_metadata_records_source_digest_and_stable_target_separately(self):
         adapter = (ROOT / "build/custom-installer-iso.sh").read_text()

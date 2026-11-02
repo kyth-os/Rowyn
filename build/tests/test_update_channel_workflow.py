@@ -69,17 +69,24 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         self.assertEqual(set(stage["needs"]), {"build", "sign"})
         self.assertEqual(
             stage["permissions"],
-            {"contents": "read", "packages": "write"},
+            {"contents": "read", "packages": "write", "id-token": "write"},
         )
         self.assertEqual(stage["if"], jobs["build"]["if"])
+        build_paths = self.workflow[True]["push"]["paths"]
+        self.assertIn("build/destination-derivative.Containerfile", build_paths)
+        self.assertIn("build/registry-migration-destination-v1", build_paths)
         self.assertIn("ROWYN_DEST_GHCR_TOKEN", self.workflow_text)
         self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["build"]))
         self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["sign"]))
         self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["promote"]))
+        self.assertEqual(
+            stage["outputs"]["destination_digest"],
+            "${{ steps.build_destination.outputs.destination_digest }}",
+        )
 
         stage_names = [step["name"] for step in stage["steps"]]
         self.assertLess(
-            stage_names.index("Copy immutable image to destination GHCR"),
+            stage_names.index("Build and publish unique destination image"),
             stage_names.index("Sign exact destination image with update-channel key"),
         )
         self.assertLess(
@@ -96,14 +103,105 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         )
         stage_text = "\n".join(step.get("run", "") for step in stage["steps"])
         self.assertIn("ghcr.io/mrtrickdotorg/rowyn", stage_text)
+        self.assertIn("destination-derivative.Containerfile", stage_text)
+        self.assertIn("registry-migration-destination-v1", stage_text)
+        self.assertIn("podman run --rm --entrypoint /bin/sh", stage_text)
+        self.assertIn("skopeo inspect --no-creds", stage_text)
         self.assertIn("skopeo copy --preserve-digests", stage_text)
         self.assertIn("cosign sign --yes --key env://ROWYN_UPDATE_SIGNING_KEY", stage_text)
+        self.assertIn("cosign sign -y", stage_text)
         self.assertIn("cosign verify --key keys/update.pub", stage_text)
+        self.assertIn("--certificate-identity-regexp", stage_text)
+        self.assertIn('[[ "${destination_digest}" != "${IMAGE_DIGEST}" ]]', stage_text)
+        self.assertIn("test ! -e \"$1\"", stage_text)
+        self.assertIn("test -s \"$1\"", stage_text)
+        self.assertIn("--entrypoint /usr/bin/bootc", stage_text)
+        self.assertIn(" container lint", stage_text)
+        marker_file = ROOT / "build/registry-migration-destination-v1"
+        self.assertEqual(marker_file.read_text(encoding="utf-8"),
+                         "rowyn-registry-migration-destination-v1\n")
 
         promote = jobs["promote"]
         self.assertEqual(
             set(promote["needs"]), {"build", "sign", "stage_destination"}
         )
+
+    def test_destination_stable_verification_is_anonymous_and_uses_derived_digest(self):
+        stage = self.workflow["jobs"]["stage_destination"]
+        verify = next(
+            step for step in stage["steps"]
+            if step["name"] == "Verify destination stable tag digest"
+        )
+        self.assertEqual(
+            verify["env"]["DESTINATION_DIGEST"],
+            "${{ steps.build_destination.outputs.destination_digest }}",
+        )
+        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", verify["env"])
+        self.assertIn("skopeo inspect --no-creds", verify["run"])
+        self.assertIn('"${stable_digest}" == "${DESTINATION_DIGEST}"', verify["run"])
+
+    def test_destination_keyless_verifier_passes_exact_github_identity_regexp(self):
+        stage = self.workflow["jobs"]["stage_destination"]
+        verify = next(
+            step for step in stage["steps"]
+            if step["name"] == "Verify destination update-channel signature"
+        )
+        identity_line = next(
+            line.strip() for line in verify["run"].splitlines()
+            if "--certificate-identity-regexp" in line
+        )
+        identity_source = identity_line.split(
+            "--certificate-identity-regexp ", 1
+        )[1].split(" ", 1)[0]
+        self.assertEqual(
+            identity_source,
+            r'"^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/build\.yml@refs/heads/main$"',
+        )
+        with tempfile.TemporaryDirectory(prefix="rowyn-destination-cosign-") as temp:
+            temp = Path(temp)
+            fake_bin = temp / "bin"
+            fake_bin.mkdir()
+            log = temp / "cosign-args.bin"
+            cosign = fake_bin / "cosign"
+            cosign.write_text(
+                "#!/bin/sh\n"
+                "printf 'CALL\\\\0' >> \\\"$COSIGN_ARG_LOG\\\"\\n"
+                "printf '%s\\\\0' \\\"$@\\\" >> \\\"$COSIGN_ARG_LOG\\\"\\n",
+                encoding="utf-8",
+            )
+            cosign.chmod(0o755)
+            cosign.unlink()
+            cosign.symlink_to("/bin/echo")
+            env = {
+                "PATH": "/usr/bin:/bin",
+                "COSIGN_ARG_LOG": str(log),
+                "DESTINATION_DIGEST": DIGEST,
+                "ROWYN_DEST_GHCR_TOKEN": "test-token",
+                "GHCR_USERNAME": "test-user",
+                "GITHUB_REPOSITORY": "kyth-os/Rowyn",
+            }
+            capture_cosign = r'''cosign() { printf '%s\n' CALL "$@"; }
+'''
+            result = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", capture_cosign + verify["run"]],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = []
+            for token in result.stdout.splitlines():
+                if token == "CALL":
+                    calls.append([])
+                else:
+                    calls[-1].append(token)
+            self.assertEqual(len(calls), 3)
+            identity_index = calls[2].index("--certificate-identity-regexp") + 1
+            self.assertEqual(
+                calls[2][identity_index],
+                r"^https://github.com/kyth-os/Rowyn/\.github/workflows/build\.yml@refs/heads/main$",
+            )
 
     def test_stale_main_guard_rejects_without_copy_and_current_main_allows_copy(self):
         promote = self.workflow["jobs"]["promote"]
