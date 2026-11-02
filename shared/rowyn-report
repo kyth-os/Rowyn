@@ -18,7 +18,7 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-ISSUE_BASE = "https://github.com/kyth-os/Rowyn/issues/new"
+ISSUE_BASE = "https://github.com/mrtrickdotorg/Rowyn/issues/new"
 URL_CAP = 6000
 GPU_MODULES = ("nvidia", "nouveau", "amdgpu", "i915", "xe")
 

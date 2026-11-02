@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn
+  IMAGE_REPOSITORY: ghcr.io/mrtrickdotorg/rowyn
 
 jobs:
   validate:
@@ -64,7 +64,7 @@ jobs:
 
   build:
     name: Build and publish image
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'mrtrickdotorg/Rowyn'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -419,7 +419,7 @@ jobs:
   # unsigned registry sources are rejected by the live daemon.
   sign:
     name: Sign published image
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'mrtrickdotorg/Rowyn'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -443,7 +443,7 @@ jobs:
           test -n "${IMAGE_REF}"
           [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           IMAGE_NAME="${IMAGE_REF%:*}"
-          [[ "${IMAGE_NAME}" == "ghcr.io/kyth-os/rowyn" ]]
+          [[ "${IMAGE_NAME}" == "ghcr.io/mrtrickdotorg/rowyn" ]]
           echo "${GITHUB_TOKEN}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
           cosign sign -y "${IMAGE_NAME}@${IMAGE_DIGEST}"
 
@@ -454,7 +454,7 @@ jobs:
           IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
         run: |
           IMAGE_NAME="${IMAGE_REF%:*}"
-          [[ "${IMAGE_NAME}" == "ghcr.io/kyth-os/rowyn" ]]
+          [[ "${IMAGE_NAME}" == "ghcr.io/mrtrickdotorg/rowyn" ]]
           cosign verify \
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\.github/workflows/build\.yml@refs/heads/main$" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -463,10 +463,11 @@ jobs:
   # Build a destination-only derivative with a new rootfs marker. bootc 1.17.3
   # refuses `switch` when the target composefs digest is already deployed, so
   # the destination image must differ from both the old bridge and prior images.
-  # This job must succeed before the old stable channel advances to the bridge.
+  # This job must succeed before destination stable advances; the old
+  # ghcr.io/kyth-os/rowyn:stable bridge remains frozen for lagging clients.
   stage_destination:
     name: Sign and stage image in destination registry
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'mrtrickdotorg/Rowyn'
     needs: [build, sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -514,7 +515,7 @@ jobs:
           [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -n "${ROWYN_DEST_GHCR_TOKEN}"
           SOURCE_IMAGE="${IMAGE_REF%:*}"
-          [[ "${SOURCE_IMAGE}" == "ghcr.io/kyth-os/rowyn" ]]
+          [[ "${SOURCE_IMAGE}" == "ghcr.io/mrtrickdotorg/rowyn" ]]
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
           push_digest_file="${RUNNER_TEMP}/rowyn-destination.digest"
           marker="/usr/share/rowyn-registry-migration-destination-v1"
@@ -658,11 +659,11 @@ jobs:
             --format '{{.Digest}}' "docker://${DEST_IMAGE}:stable")"
           [[ "${stable_digest}" == "${DESTINATION_DIGEST}" ]]
 
-  # The stable update channel is a separate promotion boundary. It requires
-  # both the existing keyless attestation and a repository-controlled static
-  # key signature before moving the exact published digest to :stable.
+  # Legacy old-registry promotion guard retained for the bridge history only.
+  # The build/sign/stage jobs above are gated to mrtrickdotorg/Rowyn, so this
+  # old-owner job is skipped after transfer; keep the old stable bridge intact.
   promote:
-    name: Promote verified image to stable
+    name: Legacy bridge promotion (inactive after transfer)
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'kyth-os/Rowyn'
     needs: [build, sign, stage_destination]
     runs-on: ubuntu-24.04

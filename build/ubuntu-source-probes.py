@@ -81,7 +81,7 @@ fn kernel_requires_nonempty_matching_initramfs_in_same_version() {
 }
 #[test]
 fn transport_is_not_duplicated() {
-    let reference = format!("ghcr.io/kyth-os/rowyn@sha256:{}", "b".repeat(64));
+    let reference = format!("ghcr.io/mrtrickdotorg/rowyn@sha256:{}", "b".repeat(64));
     let transported = format!("docker://{reference}");
     assert_eq!(source_reference(&transported).unwrap(), transported);
     assert_eq!(source_reference(&reference).unwrap(), transported);
@@ -93,7 +93,7 @@ fn caller_target_cannot_replace_the_fixed_update_channel() {
     // a mutable destination stable tag rather than a caller-supplied digest.
     assert_eq!(ROWYN_UPDATE_TARGET, "ghcr.io/mrtrickdotorg/rowyn:stable");
     let (source_repo, digest) = ROWYN_RELEASE_SOURCE.rsplit_once('@').unwrap();
-    assert_eq!(source_repo, "ghcr.io/kyth-os/rowyn");
+    assert_eq!(source_repo, "ghcr.io/mrtrickdotorg/rowyn");
     assert!(is_sha256_digest(digest));
     assert!(!ROWYN_UPDATE_TARGET.contains('@'));
 }

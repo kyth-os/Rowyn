@@ -473,8 +473,8 @@ def adapt(root, release_digest=None):
     # synthetic digest. Keep those tests meaningful after the Rowyn source
     # guard by moving only their fixture references to this exact release and
     # the fixed stable update channel.
-    text = text.replace('docker://ghcr.io/kyth-os/kyth@{digest}', 'docker://ghcr.io/kyth-os/rowyn@{digest}')
-    text = text.replace('docker://ghcr.io/kyth-os/kyth@sha256:{digest_hex}', 'docker://ghcr.io/kyth-os/rowyn@sha256:{digest_hex}')
+    text = text.replace('docker://ghcr.io/kyth-os/kyth@{digest}', 'docker://ghcr.io/mrtrickdotorg/rowyn@{digest}')
+    text = text.replace('docker://ghcr.io/kyth-os/kyth@sha256:{digest_hex}', 'docker://ghcr.io/mrtrickdotorg/rowyn@sha256:{digest_hex}')
     text = text.replace(
         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         fixture_digest,

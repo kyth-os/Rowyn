@@ -219,6 +219,10 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             executor = (crate / "src/installer_job_executor.rs").read_text()
             self.assertIn('"/usr/bin/rowyn-cosign"', executor)
             self.assertIn("ROWYN_SOURCE_IMAGE", executor)
+            self.assertIn("ghcr.io/mrtrickdotorg/rowyn@sha256:", executor)
+            self.assertIn("https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main", executor)
+            self.assertNotIn("ghcr.io/kyth-os/rowyn@", executor)
+            self.assertNotIn("https://github.com/kyth-os/Rowyn", executor)
             self.assertNotIn("KYTH_", executor)
             daemon = (crate / "src/installer_daemon.rs").read_text()
             self.assertIn("rowyn_shared::", daemon)
@@ -231,7 +235,7 @@ class PinnedInstallerJunkCutTests(unittest.TestCase):
             self.assertIn("EnvironmentFile=/etc/rowyn-installer.env", service)
             self.assertIn("/run/rowyn-installer", service)
             launcher = (root / "build_files/rowyn-launch-installer").read_text()
-            self.assertIn("ghcr.io/kyth-os/rowyn:stable", launcher)
+            self.assertIn("ghcr.io/mrtrickdotorg/rowyn:stable", launcher)
 
             # No unmasked kyth reference survives anywhere in the
             # export. Deliberate exceptions: the GitHub org in
@@ -281,7 +285,7 @@ class PinnedSourceProbesTests(unittest.TestCase):
             # gate/normalization/kernel functions, by name.
             generated = source_probes.probes(root)
             for marker in (
-                f'const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@{DIGEST}";',
+                f'const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/mrtrickdotorg/rowyn@{DIGEST}";',
                 'const ROWYN_UPDATE_TARGET: &str = "ghcr.io/mrtrickdotorg/rowyn:stable";',
                 "fn is_sha256_digest(", "fn safe_reference(",
                 "fn source_reference(", "fn kernel_detail(",

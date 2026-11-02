@@ -329,7 +329,7 @@ class UbuntuGuardTests(unittest.TestCase):
             port.port_source(Path("/does/not/exist"), "sha256:bad")
 
     def test_legacy_base_rejected_before_container_execution(self):
-        env = dict(os.environ, IMAGE_REF="ghcr.io/kyth-os/rowyn:" + "a"*40,
+        env = dict(os.environ, IMAGE_REF="ghcr.io/mrtrickdotorg/rowyn:" + "a"*40,
                    SOURCE_TAG="a"*40, IMAGE_DIGEST="sha256:" + "b"*64,
                    UPSTREAM_SOURCE_DIR="/never/read", UPSTREAM_INSTALLER_COMMIT=PIN,
                    UBUNTU_LIVE_IMAGE="ghcr.io/kyth-os/kyth@sha256:" + "c"*64)
@@ -341,13 +341,15 @@ class UbuntuGuardTests(unittest.TestCase):
         adapter = (ROOT / "build/custom-installer-iso.sh").read_text()
         live = (ROOT / "build/configure-live.sh").read_text()
         workflow = (ROOT / ".github/workflows/installer-iso.yml").read_text()
-        self.assertIn('source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"', adapter)
+        self.assertIn('source_image="ghcr.io/mrtrickdotorg/rowyn@${IMAGE_DIGEST}"', adapter)
+        self.assertIn('INSTALL_SOURCE_IMAGE" =~ ^ghcr\\.io/mrtrickdotorg/rowyn@sha256:', live)
+        self.assertIn('--certificate-identity https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main', live)
         self.assertIn('target_image="ghcr.io/mrtrickdotorg/rowyn:stable"', adapter)
         self.assertIn('INSTALL_TARGET_IMAGE', adapter)
         self.assertIn('target_image="ghcr.io/mrtrickdotorg/rowyn:stable"', live)
         self.assertIn('ROWYN_TARGET_IMAGE=', live)
         self.assertNotIn('target_image:$source', live)
-        self.assertIn("IMAGE_REPOSITORY: ghcr.io/kyth-os/rowyn", workflow)
+        self.assertIn("IMAGE_REPOSITORY: ghcr.io/mrtrickdotorg/rowyn", workflow)
         self.assertIn('skopeo inspect --no-creds', workflow)
         self.assertNotIn("podman login ghcr.io", workflow)
 

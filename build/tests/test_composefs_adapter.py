@@ -234,7 +234,7 @@ class ComposefsAdapterGenerationTests(unittest.TestCase):
         self.assertFalse(
             (self.root / 'src/rowyn-shared-rs/src/system/installer_source.rs').exists())
         executor = (self.crate / 'installer_job_executor.rs').read_text()
-        self.assertIn('const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/kyth-os/rowyn@sha256:'
+        self.assertIn('const ROWYN_RELEASE_SOURCE: &str = "ghcr.io/mrtrickdotorg/rowyn@sha256:'
                       + 'b' * 64 + '";', executor)
         self.assertIn('const ROWYN_UPDATE_TARGET: &str = "ghcr.io/mrtrickdotorg/rowyn:stable";',
                       executor)

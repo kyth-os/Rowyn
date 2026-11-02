@@ -320,8 +320,8 @@ def sync_cargo_lock(crate, absent_packages):
 # (EXPORT_DIR_RENAMES). Three classes of literal are masked out, each
 # an external name the code must keep matching rather than a name
 # Rowyn chose:
-#   * the GitHub org in registry/repository paths (kyth-os/...):
-#     Patrick's org identity, not product naming;
+#   * upstream dependency paths under kyth-os/... remain external; Rowyn-owned
+#     repository and registry references are repointed to mrtrickdotorg first;
 #   * "KythOS Secure Boot": the certificate name mokutil reports for
 #     an enrolled MOK -- the Dashboard check matches external output;
 #   * "kyth-vpnc-script": a negative regression needle in vpn_saml's
@@ -332,7 +332,7 @@ def sync_cargo_lock(crate, absent_packages):
 # branding regression test allowlists exactly this file).
 RENAME_PROTECTED = (
     "kyth-os/kyth",
-    "kyth-os/Rowyn",
+    "mrtrickdotorg/Rowyn",
     "kyth-os",
     "KythOS Secure Boot",
     "kyth-vpnc-script",
@@ -369,10 +369,11 @@ def repoint_upstream_refs(root):
 
     The feedback issue destination, the shared crate's bootc REGISTRY
     constant, and parser/test-fixture image refs name the upstream
-    tracker's repo and image repository; in Rowyn's tree they must name
-    Rowyn's repo and image. The org segment is Patrick's and stays.
-    Runs immediately before rename_tree, whose protected literals keep
-    the org path itself intact."""
+    tracker's repo and image repository; in Rowyn's tree they must use the
+    destination owner and image. The upstream org remains external only for
+    unrelated dependencies; the main project path follows the move.
+    Runs immediately before rename_tree, which preserves the resulting
+    destination paths while the branding pass runs."""
     files = 0
     refs = 0
     for path in sorted(root.rglob("*")):
@@ -384,9 +385,9 @@ def repoint_upstream_refs(root):
             text = path.read_text()
         except (UnicodeDecodeError, ValueError):
             continue
-        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
-        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/kyth-os/Rowyn")
-        renamed = renamed.replace("kyth-os/kyth", "kyth-os/Rowyn")
+        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/mrtrickdotorg/rowyn")
+        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/mrtrickdotorg/Rowyn")
+        renamed = renamed.replace("kyth-os/kyth", "mrtrickdotorg/Rowyn")
         if renamed != text:
             refs += (text.count("kyth-os/kyth"))
             path.write_text(renamed)
@@ -408,6 +409,13 @@ def rename_tree(root):
             text = path.read_text()
         except (UnicodeDecodeError, ValueError):
             continue
+        # Rowyn moved organizations; update project-owned references before the
+        # generic branding map protects unrelated kyth-os upstream references.
+        text = text.replace("github.com/kyth-os/Rowyn", "github.com/mrtrickdotorg/Rowyn")
+        text = text.replace("github.com/kyth-os/rowyn", "github.com/mrtrickdotorg/Rowyn")
+        text = text.replace("ghcr.io/kyth-os/rowyn", "ghcr.io/mrtrickdotorg/rowyn")
+        text = text.replace("kyth-os/Rowyn", "mrtrickdotorg/Rowyn")
+        text = text.replace("kyth-os/rowyn", "mrtrickdotorg/rowyn")
         masked, slots = _mask_rename_protected(text)
         renamed = masked
         for old, new in RENAME_PAIRS:
@@ -772,10 +780,10 @@ def port_source(root):
     text = replace_once(
         text,
         'const IMAGE_RELEASES_API: &str = "https://api.github.com/repos/kyth-os/kyth/releases?per_page=100";',
-        'const IMAGE_RELEASES_API: &str = "https://api.github.com/repos/kyth-os/Rowyn/releases?per_page=100";')
+        'const IMAGE_RELEASES_API: &str = "https://api.github.com/repos/mrtrickdotorg/Rowyn/releases?per_page=100";')
     text, image_count = replace_all_counted(text, "ghcr.io/kyth-os/kyth@", "ghcr.io/mrtrickdotorg/rowyn@")
     text, release_count = replace_all_counted(
-        text, "github.com/kyth-os/kyth/releases", "github.com/kyth-os/Rowyn/releases")
+        text, "github.com/kyth-os/kyth/releases", "github.com/mrtrickdotorg/Rowyn/releases")
     # The update actions shell out to fixed helper binaries; Rowyn ships
     # its own implementations under its own name (see shared/), so every
     # reference — launch argv, require_binary prechecks, and the prose
@@ -801,8 +809,8 @@ def port_source(root):
         "The Rowyn bootc guard helper is not installed on this system.")
     updates.write_text(text)
     changes.append(
-        f"updates.rs: releases API -> kyth-os/Rowyn; image refs -> ghcr.io/mrtrickdotorg/rowyn@ "
-        f"({image_count} literals incl. fixtures); release URLs -> kyth-os/Rowyn ({release_count}); "
+        f"updates.rs: releases API -> mrtrickdotorg/Rowyn; image refs -> ghcr.io/mrtrickdotorg/rowyn@ "
+        f"({image_count} literals incl. fixtures); release URLs -> mrtrickdotorg/Rowyn ({release_count}); "
         f"update helpers -> rowyn-safe-upgrade ({stage_path_count} paths + {stage_prose_count} prose), "
         f"rowyn-bootc-guard ({guard_path_count} paths + {guard_prose_count} prose), "
         f"rowyn-finalize-staged ({finalize_count} paths)")
@@ -865,11 +873,11 @@ def port_source(root):
     main_rs = crate / "src/main.rs"
     text = main_rs.read_text()
     text = replace_once(text, "/// Opens a prefilled `kyth-os/kyth` issue",
-                        "/// Opens a prefilled `kyth-os/Rowyn` issue")
+                        "/// Opens a prefilled `mrtrickdotorg/Rowyn` issue")
     text = replace_once(text, '        "https://github.com/kyth-os/kyth",',
-                        '        "https://github.com/kyth-os/Rowyn",')
+                        '        "https://github.com/mrtrickdotorg/Rowyn",')
     main_rs.write_text(text)
-    changes.append("main.rs: feedback issue URL -> kyth-os/Rowyn")
+    changes.append("main.rs: feedback issue URL -> mrtrickdotorg/Rowyn")
 
     # --- VPN: on-disk paths take the Rowyn name ---------------------------
     # The backend logic (openconnect argv, SAML flow, askpass gate, the one
@@ -1188,7 +1196,7 @@ def port_source(root):
         "(HeroCard is unreferenced upstream; Sidebar/search have no Guardian entry)")
 
     # --- D3: no release notes / update history; "stable" channel name -------
-    # The channel is `stable` and kyth-os/Rowyn has no GitHub releases, so the
+    # The channel is `stable` and mrtrickdotorg/Rowyn has no GitHub releases, so the
     # release-notes block and the Update history card were always empty.
     # Cut both (state, effects, helpers, imports go with them) and map the
     # raw channel for display. No network call is added.
@@ -2007,10 +2015,10 @@ mod audit_fix_tests {
         f"Pinned upstream System Hub source {PIN}, Apache-2.0 (LICENSE).\n"
         "Modified by Rowyn: Rowyn Hub identity (com.rowyn.hub), destinations cut to\n"
         "Dashboard/Apps/Updates/VPN plus Rowyn-owned Diagnostics/Play MVP overlays;\n"
-        "updates channel repointed to kyth-os/Rowyn releases\n"
+        "updates channel repointed to mrtrickdotorg/Rowyn releases\n"
         "and ghcr.io/mrtrickdotorg/rowyn images, update helpers repointed to the Rowyn-shipped\n"
         "rowyn-safe-upgrade / rowyn-bootc-guard / rowyn-finalize-staged, feedback issues\n"
-        "filed against kyth-os/Rowyn,\n"
+        "filed against mrtrickdotorg/Rowyn,\n"
         "VPN saved-profile path renamed to ~/.config/rowyn-vpn-connect and the network\n"
         "preset path to /etc/rowyn/network.toml.\n"
         "A branding sweep rewrites all remaining upstream brand display copy to Rowyn\n"

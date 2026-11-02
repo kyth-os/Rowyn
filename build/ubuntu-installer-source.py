@@ -16,7 +16,7 @@ PIN = "2baf8496b5aa904c0784f4290df743ee17edae48"
 PATHS = ("src/kyth-installer-web", "src/kyth-shared-rs",
          "third_party/gtk-glib-0.18.5", "build_files/exe-handler-apps.json",
          "build_files/kyth-launch-installer", "build_files/kyth-installerd.service", "LICENSE")
-IDENTITY = "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main"
+IDENTITY = "https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main"
 # The PATHS allowlist above names the upstream layout (the pinned
 # repo's own names, needed to address git archive). On the way into
 # the export the directories — and the two build_files whose names
@@ -256,8 +256,9 @@ def sync_cargo_lock(crate, absent_packages):
 # installed build_files already took the Rowyn name at extraction
 # (EXPORT_DIR_RENAMES). Masked out, as external names the code must
 # keep matching rather than names Rowyn chose:
-#   * the GitHub org in registry/repository paths (kyth-os/...):
-#     Patrick's org identity, not product naming;
+#   * the upstream GitHub org in dependency paths (kyth-os/...): those
+#     references still belong to the upstream project; Rowyn-owned repo and
+#     registry paths are repointed to mrtrickdotorg before this mask;
 #   * "KythOS Secure Boot": the certificate name mokutil reports for
 #     an enrolled MOK -- the shared crate matches external output;
 #   * "kyth-vpnc-script": a negative regression needle in vpn_saml's
@@ -266,7 +267,7 @@ def sync_cargo_lock(crate, absent_packages):
 #     the ported configuration tests assert in an installed target.
 RENAME_PROTECTED = (
     "kyth-os/kyth",
-    "kyth-os/Rowyn",
+    "mrtrickdotorg/Rowyn",
     "kyth-os",
     "KythOS Secure Boot",
     "kyth-vpnc-script",
@@ -316,9 +317,9 @@ def repoint_upstream_refs(root):
             text = path.read_text()
         except (UnicodeDecodeError, ValueError):
             continue
-        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/kyth-os/rowyn")
-        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/kyth-os/Rowyn")
-        renamed = renamed.replace("kyth-os/kyth", "kyth-os/Rowyn")
+        renamed = text.replace("ghcr.io/kyth-os/kyth", "ghcr.io/mrtrickdotorg/rowyn")
+        renamed = renamed.replace("github.com/kyth-os/kyth", "github.com/mrtrickdotorg/Rowyn")
+        renamed = renamed.replace("kyth-os/kyth", "mrtrickdotorg/Rowyn")
         if renamed != text:
             refs += (text.count("kyth-os/kyth"))
             path.write_text(renamed)
@@ -338,6 +339,14 @@ def rename_tree(root):
             text = path.read_text()
         except (UnicodeDecodeError, ValueError):
             continue
+        # Any stale Rowyn-owned source path in the upstream tree follows the
+        # project to its destination organization. Preserve unrelated kyth-os
+        # references (for example, upstream dependency URLs) below.
+        text = text.replace("github.com/kyth-os/Rowyn", "github.com/mrtrickdotorg/Rowyn")
+        text = text.replace("github.com/kyth-os/rowyn", "github.com/mrtrickdotorg/Rowyn")
+        text = text.replace("ghcr.io/kyth-os/rowyn", "ghcr.io/mrtrickdotorg/rowyn")
+        text = text.replace("kyth-os/Rowyn", "mrtrickdotorg/Rowyn")
+        text = text.replace("kyth-os/rowyn", "mrtrickdotorg/rowyn")
         masked, slots = _mask_rename_protected(text)
         renamed = masked
         for old, new in RENAME_PAIRS:
@@ -437,7 +446,7 @@ def port_source(root, digest):
     crate = root / "src/rowyn-installer-web/src-tauri"
     executor = crate / "src/installer_job_executor.rs"
     text = executor.read_text()
-    source = "ghcr.io/kyth-os/rowyn@" + digest
+    source = "ghcr.io/mrtrickdotorg/rowyn@" + digest
     target = "ghcr.io/mrtrickdotorg/rowyn:stable"
     anchor = 'const FILESYSTEM_STAGING_MOUNTPOINT: &str = "/run/kyth-installer/alongside-target";\n'
     text = replace_once(text, anchor, anchor + f'const ROWYN_RELEASE_SOURCE: &str = "{source}";\n'
@@ -454,7 +463,7 @@ def port_source(root, digest):
     text = replace_once(text, anchor, '''        let mut cosign = Command::new("/usr/bin/rowyn-cosign");
         cosign.args([
             "verify", "--certificate-identity",
-            "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main",
+            "https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main",
             "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
             ROWYN_RELEASE_SOURCE,
         ]).env("TUF_ROOT", "/run/rowyn-installer/sigstore-tuf");
@@ -1502,14 +1511,14 @@ pub(crate) fn run_output_timeout_capture(
     # Rowyn's only channel is its own stable one (the ISO's env file
     # normally pins the exact release digest instead).
     text = replace_once(text, "ghcr.io/kyth-os/kyth:latest",
-                        "ghcr.io/kyth-os/rowyn:stable")
+                        "ghcr.io/mrtrickdotorg/rowyn:stable")
     launcher.write_text(text.replace('KythOS', 'Rowyn'))
     service = root / "build_files/rowyn-installerd.service"
     text = adapt_installer_service(service.read_text())
     # The unit's documentation pointer is shipped metadata for the
     # renamed daemon; it names Rowyn's repository, not the upstream's.
     text = replace_once(text, "Documentation=https://github.com/kyth-os/kyth\n",
-                        "Documentation=https://github.com/kyth-os/Rowyn\n")
+                        "Documentation=https://github.com/mrtrickdotorg/Rowyn\n")
     service.write_text(text)
     (root / 'ROWYN-PORT-NOTICE').write_text(
         f'Pinned upstream installer source {PIN}, Apache-2.0 (LICENSE).\n'

@@ -207,7 +207,7 @@ def apply(source: Path) -> None:
         "        let digest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\";\n"
         "        let source = ostree_container::ImageReference {\n"
         "            transport: ostree_container::Transport::Registry,\n"
-        "            name: format!(\"ghcr.io/kyth-os/rowyn@{digest}\"),\n"
+        "            name: format!(\"ghcr.io/mrtrickdotorg/rowyn@{digest}\"),\n"
         "        };\n"
         "        let target = ostree_container::OstreeImageReference {\n"
         "            sigverify: ostree_container::SignatureSource::ContainerPolicy,\n"
@@ -220,7 +220,7 @@ def apply(source: Path) -> None:
         "        assert_eq!(actual.transport, \"registry\");\n"
         "        assert_eq!(actual.image, source.name);\n"
         "        assert!(matches!(actual.signature, Some(crate::spec::ImageSignature::ContainerPolicy)));\n"
-        "        assert_eq!(actual.to_image_proxy_ref().unwrap().to_string(), format!(\"docker://ghcr.io/kyth-os/rowyn@{digest}\"));\n"
+        "        assert_eq!(actual.to_image_proxy_ref().unwrap().to_string(), format!(\"docker://ghcr.io/mrtrickdotorg/rowyn@{digest}\"));\n"
         "    }\n"
         "}\n\n"
         "async fn install_to_filesystem_impl(\n",

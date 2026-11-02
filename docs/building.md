@@ -49,7 +49,7 @@ export TMPDIR="$HOME/.cache/rowyn"
 mkdir -p "$TMPDIR"
 export SOURCE_TAG='REPLACE_WITH_PAYLOAD_SOURCE_COMMIT'
 export IMAGE_DIGEST='sha256:REPLACE_WITH_VERIFIED_PAYLOAD_DIGEST'
-export IMAGE_REF="ghcr.io/kyth-os/rowyn:${SOURCE_TAG}"
+export IMAGE_REF="ghcr.io/mrtrickdotorg/rowyn:${SOURCE_TAG}"
 export UPSTREAM_SOURCE_DIR=/path/to/upstream
 export UPSTREAM_INSTALLER_COMMIT=2baf8496b5aa904c0784f4290df743ee17edae48
 export UBUNTU_LIVE_IMAGE=docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719
@@ -93,7 +93,7 @@ Extract the ISO, checksum, and signature bundle into the same directory. Set `IS
 ISO='rowyn-custom-installer-REPLACE_WITH_SOURCE_COMMIT.iso'
 cosign verify-blob \
   --bundle "${ISO}.sigstore.json" \
-  --certificate-identity-regexp '^https://github.com/kyth-os/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
+  --certificate-identity-regexp '^https://github.com/mrtrickdotorg/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "${ISO}.sha256"
 sha256sum -c "${ISO}.sha256"
@@ -109,7 +109,7 @@ When the R2 secrets are configured, every ISO build is also uploaded to Cloudfla
 ISO='rowyn-live-stable.iso'   # or the immutable rowyn-live-stable-...-....iso name
 cosign verify-blob \
   --bundle "${ISO}.sigstore.json" \
-  --certificate-identity-regexp '^https://github.com/kyth-os/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
+  --certificate-identity-regexp '^https://github.com/mrtrickdotorg/Rowyn/\.github/workflows/installer-iso\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "${ISO}.sha256"
 sha256sum -c "${ISO}.sha256"
@@ -133,14 +133,14 @@ The assembler emits the ISO, source metadata, El Torito/system-area report, and 
 The fixed payload signing identity is:
 
 ```text
-https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main
+https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main
 ```
 
-`installer-iso.yml` runs after a successful trusted main image release. It checks the upstream run through the GitHub API, reads only that run's image metadata artifact, checks its SHA/run binding, and verifies the image signer before privileged work. Until the repository transfer, the installation source is the immutable source digest at `ghcr.io/kyth-os/rowyn@sha256:…`; the installed updater targets `ghcr.io/mrtrickdotorg/rowyn:stable`. Tags are provenance labels, not installation-source selectors.
+`installer-iso.yml` runs after a successful trusted main image release. It checks the upstream run through the GitHub API, reads only that run's image metadata artifact, checks its SHA/run binding, and verifies the image signer before privileged work. After repository transfer, the installation source is the immutable digest at `ghcr.io/mrtrickdotorg/rowyn@sha256:…`; the installed updater targets `ghcr.io/mrtrickdotorg/rowyn:stable`. Tags are provenance labels, not installation-source selectors. Existing systems on the old registry continue using the signed bridge path described below.
 
 ### Registry migration collision guard
 
-During the transition, the old source image and the new update target intentionally differ. The bridge is delivered through old `ghcr.io/kyth-os/rowyn:stable`; only after the destination image is publicly pullable and signed does the old stable promotion proceed. The destination stable image is a derivative with `/usr/share/rowyn-registry-migration-destination-v1`, a new rootfs file absent from the old image. CI verifies the marker is absent in the source and present in the destination, verifies both destination signatures and an anonymous pull, then checks the destination stable digest before old stable advances.
+The old source image and the new update target intentionally differed while the bridge was being prepared. The old `ghcr.io/kyth-os/rowyn:stable` tag remains publicly pullable for systems that have not migrated; do not move it to an image that removes the bridge before lagging clients have switched. The destination stable image is a derivative with `/usr/share/rowyn-registry-migration-destination-v1`, a new rootfs file absent from the old image. CI verifies the marker is absent in the source and present in the destination, verifies both destination signatures and an anonymous pull, then checks the destination stable digest.
 
 This unique rootfs content is required: the pinned bootc 1.17.3 implementation rejects `bootc switch` when the target composefs fs-verity digest matches any booted, staged, rollback, or pinned deployment. A tag, repository path, signature, or OCI manifest digest change alone does not make a switch safe. The automatic and manual helpers use `bootc switch` only from the old registry and ordinary `bootc upgrade` after the system is already on the destination, avoiding repeated switch collisions on the current deployment. Keep both package paths public during rollout. Rollback/re-switch behavior remains a separate runtime qualification; do not claim it has been exercised by source tests.
 

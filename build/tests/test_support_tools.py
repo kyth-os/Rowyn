@@ -114,7 +114,7 @@ class ReportTests(unittest.TestCase):
     def test_url_cap(self):
         url = report.build_issue_url("t", "x y\n" * 20000)
         self.assertLessEqual(len(url), report.URL_CAP)
-        self.assertTrue(url.startswith("https://github.com/kyth-os/Rowyn/issues/new?title="))
+        self.assertTrue(url.startswith("https://github.com/mrtrickdotorg/Rowyn/issues/new?title="))
 
     def test_url_encoded_summary(self):
         url = report.build_issue_url("Rowyn: a b", report.summary_body({"os": "Rowyn 26.10"}))

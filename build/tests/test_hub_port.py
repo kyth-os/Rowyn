@@ -332,7 +332,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertNotIn("KythOS", dashboard)
 
                 updates = (crate / "src/commands/updates.rs").read_text()
-                self.assertIn("https://api.github.com/repos/kyth-os/Rowyn/releases?per_page=100", updates)
+                self.assertIn("https://api.github.com/repos/mrtrickdotorg/Rowyn/releases?per_page=100", updates)
                 self.assertIn("ghcr.io/mrtrickdotorg/rowyn@", updates)
                 self.assertNotIn("ghcr.io/kyth-os/kyth@", updates)
                 self.assertNotIn("kyth-os/kyth/releases", updates)
@@ -362,7 +362,7 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertIn("ghcr.io/mrtrickdotorg/rowyn", bootc_query)
                 main = (crate / "src/main.rs").read_text()
                 self.assertIn("commands::updates::bootc_switch_branch", main)
-                self.assertIn('"https://github.com/kyth-os/Rowyn",', main)
+                self.assertIn('"https://github.com/mrtrickdotorg/Rowyn",', main)
 
                 # VPN: the Rust backend was never cut — its commands stay
                 # registered — and its on-disk paths take the Rowyn name.

@@ -108,7 +108,7 @@ class SourceTests(unittest.TestCase):
                 patch.object(source.urllib.request, "urlopen", return_value=response) as download:
             self.assertEqual(source.download_artifact(7), b"zip bytes")
             request = opener.open.call_args.args[0]
-            self.assertEqual(request.full_url, "https://api.github.com/repos/kyth-os/Rowyn/actions/artifacts/7/zip")
+            self.assertEqual(request.full_url, "https://api.github.com/repos/mrtrickdotorg/Rowyn/actions/artifacts/7/zip")
             self.assertEqual(request.get_header("Authorization"), "Bearer test-not-a-real-token")
             # Follow-up receives only a URL, not the authenticated Request object.
             self.assertEqual(download.call_args.args, ("https://blob.example.test/metadata.zip",))
@@ -186,12 +186,13 @@ class WorkflowTests(unittest.TestCase):
             binary.chmod(0o755)
             for status in (0, 21):
                 env = dict(os.environ, PATH=str(temp), TEST_LOG=str(log), TEST_EXIT=str(status),
-                           SOURCE_IMAGE=source.IMAGE + "@" + DIGEST)
+                           SOURCE_IMAGE=source.IMAGE + "@" + DIGEST,
+                           GITHUB_REPOSITORY="mrtrickdotorg/Rowyn")
                 result = subprocess.run(["/bin/bash", "-euo", "pipefail", "-c", step["run"]], env=env)
                 self.assertEqual(result.returncode, status)
                 self.assertEqual(json.loads(log.read_text()), [
                     "verify", "--certificate-identity",
-                    "https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main",
+                    "https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main",
                     "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
                     source.IMAGE + "@" + DIGEST])
 
@@ -204,7 +205,7 @@ class WorkflowTests(unittest.TestCase):
         for job in ("build", "sign"):
             gate = image["jobs"][job]["if"]
             for token in ("github.event_name == 'push'", "github.event_name == 'workflow_dispatch'",
-                          "github.ref == 'refs/heads/main'", "github.repository == 'kyth-os/Rowyn'"):
+                          "github.ref == 'refs/heads/main'", "github.repository == 'mrtrickdotorg/Rowyn'"):
                 self.assertIn(token, gate)
         self.assertEqual(image["permissions"], {"contents": "read"})
         self.assertNotIn("id-token", image["jobs"]["build"]["permissions"])
@@ -224,7 +225,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("needs.build", text)
         self.assertNotIn("podman build", text)
         self.assertNotIn("fetch-assets.sh", text)
-        self.assertIn("workflows/build.yml@refs/heads/main'", text)
+        self.assertIn('--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build.yml@refs/heads/main"', text)
         self.assertIn(r"workflows/installer-iso\.yml@refs/heads/main$", text)
         for step in steps:
             if step["name"] in ("Build custom installer ISO", "Preflight pinned custom installer adapter"):

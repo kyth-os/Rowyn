@@ -9,8 +9,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
-REPO = "kyth-os/Rowyn"
-IMAGE = "ghcr.io/kyth-os/rowyn"
+REPO = "mrtrickdotorg/Rowyn"
+IMAGE = "ghcr.io/mrtrickdotorg/rowyn"
 
 
 def api(path):

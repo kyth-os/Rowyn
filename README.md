@@ -6,10 +6,10 @@
 
 **An Ubuntu desktop with KDE Plasma and image-based system updates.**
 
-[Try Rowyn](#try-rowyn) · [Installer builds](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml) · [Report a bug](https://github.com/kyth-os/Rowyn/issues)
+[Try Rowyn](#try-rowyn) · [Installer builds](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/installer-iso.yml) · [Report a bug](https://github.com/mrtrickdotorg/Rowyn/issues)
 
-[![Build](https://github.com/kyth-os/Rowyn/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/kyth-os/Rowyn/actions/workflows/build.yml)
-[![Installer ISO](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml/badge.svg?branch=main)](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml)
+[![Build](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/build.yml)
+[![Installer ISO](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/installer-iso.yml/badge.svg?branch=main)](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/installer-iso.yml)
 
 </div>
 
@@ -42,7 +42,7 @@ The current installer supports **x86-64 UEFI with Secure Boot disabled**, using 
 
 **Installation erases the selected disk.** Dual boot, manual partitioning, disk encryption, BIOS/CSM boot, and Secure Boot are not supported by the current installer.
 
-1. Open a successful run in [Installer builds](https://github.com/kyth-os/Rowyn/actions/workflows/installer-iso.yml).
+1. Open a successful run in [Installer builds](https://github.com/mrtrickdotorg/Rowyn/actions/workflows/installer-iso.yml).
 2. Download and extract its `rowyn-custom-installer-iso-…` artifact. GitHub may require you to sign in; artifacts expire after seven days.
 3. [Verify the signature and checksum](docs/building.md#verify-an-iso) before booting the ISO.
 4. Attach the ISO to a UEFI virtual machine with a spare virtual disk, then follow the installer.
@@ -52,7 +52,7 @@ The current installer supports **x86-64 UEFI with Secure Boot disabled**, using 
 
 VM checks cover installation, networking, the read-only OS, Flatpak apps, rootless Ubuntu containers, and persistence across reboot. That is a starting point, not a claim that every PC or workflow has been tested.
 
-Report problems in [GitHub Issues](https://github.com/kyth-os/Rowyn/issues). Include the ISO build or image digest, whether you are using a VM or physical hardware, and the steps needed to reproduce the problem. Remove passwords and other private information from logs before sharing them.
+Report problems in [GitHub Issues](https://github.com/mrtrickdotorg/Rowyn/issues). Include the ISO build or image digest, whether you are using a VM or physical hardware, and the steps needed to reproduce the problem. Remove passwords and other private information from logs before sharing them.
 
 Rowyn uses an Ubuntu port of the custom installer it shares lineage with. Rowyn is licensed under [Apache 2.0](LICENSE); upstream components retain their own licenses. It is an independent project, not an official Ubuntu or KDE edition.
 

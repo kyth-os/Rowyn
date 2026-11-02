@@ -9,14 +9,14 @@ cd "$repo_root"
 : "${UPSTREAM_SOURCE_DIR:?UPSTREAM_SOURCE_DIR is required}"
 : "${UPSTREAM_INSTALLER_COMMIT:?UPSTREAM_INSTALLER_COMMIT is required}"
 : "${UBUNTU_LIVE_IMAGE:?UBUNTU_LIVE_IMAGE is required}"
-[[ "$IMAGE_REF" =~ ^ghcr\.io/kyth-os/rowyn:[0-9a-f]{40}$ ]] || { echo 'Invalid immutable Rowyn ref' >&2; exit 1; }
+[[ "$IMAGE_REF" =~ ^ghcr\.io/mrtrickdotorg/rowyn:[0-9a-f]{40}$ ]] || { echo 'Invalid immutable Rowyn ref' >&2; exit 1; }
 [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Invalid release digest' >&2; exit 1; }
 [[ "$SOURCE_TAG" == "${IMAGE_REF##*:}" ]] || { echo 'Source tag mismatch' >&2; exit 1; }
 [[ "$UPSTREAM_INSTALLER_COMMIT" == 2baf8496b5aa904c0784f4290df743ee17edae48 ]] || { echo 'Unreviewed installer source' >&2; exit 1; }
 # Fail before any container command if an OS other than digest-pinned Ubuntu is supplied.
 [[ "$UBUNTU_LIVE_IMAGE" =~ ^docker\.io/library/ubuntu@sha256:[0-9a-f]{64}$ ]] || { echo 'Live and compiler base must be digest-pinned official Ubuntu' >&2; exit 1; }
 [[ -z "${UPSTREAM_INSTALLER_BASE_IMAGE:-}" ]] || { echo 'Legacy live-base override is forbidden' >&2; exit 1; }
-source_image="ghcr.io/kyth-os/rowyn@${IMAGE_DIGEST}"
+source_image="ghcr.io/mrtrickdotorg/rowyn@${IMAGE_DIGEST}"
 target_image="ghcr.io/mrtrickdotorg/rowyn:stable"
 export INSTALL_SOURCE_IMAGE="$source_image"
 export INSTALL_TARGET_IMAGE="$target_image"
@@ -69,7 +69,7 @@ iso.with_suffix('.json').write_text(json.dumps(dict(
     installer_source_commit=os.environ['UPSTREAM_INSTALLER_COMMIT'],
     ubuntu_live_image=os.environ['UBUNTU_LIVE_IMAGE'], live_os='ubuntu', build_os='ubuntu',
     firmware='x86_64 UEFI; Secure Boot disabled', supported_modes=['wipe-plaintext'],
-    signing_identity='https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main',
+    signing_identity='https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main',
 ), indent=2) + '\n')
 PY
 printf 'Ubuntu live installer ISO: %s\nBuild workspace: %s\n' "$iso" "$work"

@@ -5,7 +5,7 @@ set -euo pipefail
 . /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 26.10 ]] || exit 1
 : "${INSTALL_SOURCE_IMAGE:?}"
-[[ "$INSTALL_SOURCE_IMAGE" =~ ^ghcr\.io/kyth-os/rowyn@sha256:[0-9a-f]{64}$ ]] || exit 1
+[[ "$INSTALL_SOURCE_IMAGE" =~ ^ghcr\.io/mrtrickdotorg/rowyn@sha256:[0-9a-f]{64}$ ]] || exit 1
 digest="${INSTALL_SOURCE_IMAGE##*@}"
 target_image="ghcr.io/mrtrickdotorg/rowyn:stable"
 export INSTALL_TARGET_IMAGE="$target_image"
@@ -19,7 +19,7 @@ chmod 755 /usr/bin/rowyn-cosign
 export TUF_ROOT=/var/tmp/rowyn-build-tuf
 mkdir -p "$TUF_ROOT" /usr/share/rowyn
 /usr/bin/rowyn-cosign verify \
-    --certificate-identity https://github.com/kyth-os/Rowyn/.github/workflows/build.yml@refs/heads/main \
+    --certificate-identity https://github.com/mrtrickdotorg/Rowyn/.github/workflows/build.yml@refs/heads/main \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com "$INSTALL_SOURCE_IMAGE"
 /usr/bin/rowyn-cosign download signature "$INSTALL_SOURCE_IMAGE" > /var/tmp/rowyn-signatures.json
 jq -cs --arg digest "$digest" '{digest:$digest, signatures:.}' /var/tmp/rowyn-signatures.json \

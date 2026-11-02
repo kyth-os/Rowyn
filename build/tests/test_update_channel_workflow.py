@@ -19,6 +19,19 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         cls.workflow_text = WORKFLOW.read_text(encoding="utf-8")
         cls.workflow = yaml.safe_load(cls.workflow_text)
 
+    def test_release_publishes_to_new_owner_and_old_bridge_promotion_stays_legacy_only(self):
+        jobs = self.workflow["jobs"]
+        self.assertEqual(
+            self.workflow["env"]["IMAGE_REPOSITORY"], "ghcr.io/mrtrickdotorg/rowyn"
+        )
+        for job_name in ("build", "sign", "stage_destination"):
+            self.assertIn("github.repository == 'mrtrickdotorg/Rowyn'", jobs[job_name]["if"])
+        self.assertIn("github.repository == 'kyth-os/Rowyn'", jobs["promote"]["if"])
+        self.assertIn(
+            '[[ "${IMAGE_NAME}" == "ghcr.io/mrtrickdotorg/rowyn" ]]',
+            "\\n".join(step.get("run", "") for step in jobs["sign"]["steps"]),
+        )
+
     def test_stable_promotion_is_gated_by_key_signature_and_digest_verification(self):
         jobs = self.workflow["jobs"]
         self.assertIn("promote", jobs)
@@ -178,7 +191,7 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
                 "DESTINATION_DIGEST": DIGEST,
                 "ROWYN_DEST_GHCR_TOKEN": "test-token",
                 "GHCR_USERNAME": "test-user",
-                "GITHUB_REPOSITORY": "kyth-os/Rowyn",
+                "GITHUB_REPOSITORY": "mrtrickdotorg/Rowyn",
             }
             capture_cosign = r'''cosign() { printf '%s\n' CALL "$@"; }
 '''
@@ -200,7 +213,7 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
             identity_index = calls[2].index("--certificate-identity-regexp") + 1
             self.assertEqual(
                 calls[2][identity_index],
-                r"^https://github.com/kyth-os/Rowyn/\.github/workflows/build\.yml@refs/heads/main$",
+                r"^https://github.com/mrtrickdotorg/Rowyn/\.github/workflows/build\.yml@refs/heads/main$",
             )
 
     def test_stale_main_guard_rejects_without_copy_and_current_main_allows_copy(self):
