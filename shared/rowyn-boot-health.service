@@ -1,0 +1,17 @@
+[Unit]
+Description=Rowyn boot health check
+ConditionPathExists=/usr/lib/os-release
+
+[Service]
+Type=oneshot
+StateDirectory=rowyn
+StateDirectoryMode=0755
+ExecStart=/usr/libexec/rowyn-boot-health boot
+SyslogIdentifier=rowyn-boot-health
+# The helper waits for the desktop with its own bound; this is the outer one.
+TimeoutStartSec=300
+Nice=10
+IOSchedulingClass=idle
+# Deliberately no mount-namespace or filesystem hardening: a rollback writes
+# the boot and sysroot mounts, and the update watcher already learned that
+# ProtectSystem/PrivateTmp break bootc's namespace probes.

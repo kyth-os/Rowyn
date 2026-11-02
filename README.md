@@ -31,7 +31,7 @@ The base system stays focused on the desktop. Your apps, development environment
 
 Rowyn uses bootc to manage complete system images. This gives OS changes their own update path, separate from the apps you install through Discover.
 
-Bootc also provides upgrade and rollback mechanisms. Cross-version upgrade and rollback testing is still in progress; those recovery paths are not yet qualified for daily-driver use.
+Bootc also provides upgrade and rollback mechanisms. Each staged image is checked the first time it boots, and an image that cannot reach a working desktop is rolled back automatically after three failed boots — see [how update health works](docs/boot-health.md). Cross-version upgrade and rollback testing is still in progress; those recovery paths are not yet qualified for daily-driver use.
 
 ## Try Rowyn
 

@@ -16,6 +16,8 @@ log() { echo "rowyn-update-watcher: $*"; }
 AutoStage=yes
 AllowOnBattery=no
 AllowMetered=no
+Channel=stable
+AllowDowngrade=no
 
 # Strict line-by-line parse; never source/eval the file. Returns 1 with a
 # reason in $policy_error on any problem.
@@ -35,15 +37,26 @@ parse_policy() {
         fi
         key=${BASH_REMATCH[1]}
         val=${BASH_REMATCH[2]}
-        case "$val" in
-            yes|no) ;;
-            *) policy_error="$file:$n: bad value for $key (expected yes or no)"; return 1 ;;
+        case "$key" in
+            AutoStage|AllowOnBattery|AllowMetered|AllowDowngrade)
+                case "$val" in
+                    yes|no) ;;
+                    *) policy_error="$file:$n: bad value for $key (expected yes or no)"; return 1 ;;
+                esac
+                ;;
+            Channel)
+                case "$val" in
+                    stable) ;;
+                    *) policy_error="$file:$n: unsupported channel $val"; return 1 ;;
+                esac
+                ;;
+            *) policy_error="$file:$n: unknown key $key"; return 1 ;;
         esac
         case "$key" in
             AutoStage) AutoStage=$val ;;
             AllowOnBattery) AllowOnBattery=$val ;;
             AllowMetered) AllowMetered=$val ;;
-            *) policy_error="$file:$n: unknown key $key"; return 1 ;;
+            AllowDowngrade) AllowDowngrade=$val ;;
         esac
     done <"$file"
     return 0
@@ -66,6 +79,7 @@ main() {
     export ROWYN_UPDATE_AUTO=1
     [[ "$AllowOnBattery" == yes ]] && export ROWYN_ALLOW_BATTERY=1
     [[ "$AllowMetered" == yes ]] && export ROWYN_ALLOW_METERED=1
+    [[ "$AllowDowngrade" == yes ]] && export ROWYN_ALLOW_DOWNGRADE=1
 
     log "checking for an update"
     local out rc

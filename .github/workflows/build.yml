@@ -204,6 +204,11 @@ jobs:
             test -s /usr/lib/systemd/system/rowyn-update-watcher.timer
             test -s /usr/share/rowyn/update-policy.conf
             test -e /etc/systemd/system/timers.target.wants/rowyn-update-watcher.timer
+            test -x /usr/libexec/rowyn-boot-health
+            test -s /usr/lib/systemd/system/rowyn-boot-health.service
+            test -s /usr/lib/systemd/system/rowyn-boot-health.timer
+            test -e /etc/systemd/system/timers.target.wants/rowyn-boot-health.timer
+            /usr/libexec/rowyn-boot-health status | python3 -m json.tool > /dev/null
             # New accounts are seeded a permissive per-user containers
             # policy (rootless podman/distrobox pulls from any registry);
             # the strict system policy in /etc/containers stays untouched

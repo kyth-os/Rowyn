@@ -375,6 +375,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm644 /ctx/shared/rowyn-update-watcher.timer /usr/lib/systemd/system/rowyn-update-watcher.timer && \
     systemctl enable rowyn-update-watcher.timer
 
+# Boot health: a deployment that has never been confirmed healthy runs bounded
+# local checks once per boot; three failures quarantine the digest and roll the
+# machine back. Rowyn's own systemd + bootc implementation, not greenboot.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/rowyn-boot-health /usr/libexec/rowyn-boot-health && \
+    python3 -c "import py_compile,sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)" /usr/libexec/rowyn-boot-health /tmp/rowyn-boot-health.pyc && \
+    rm -f /tmp/rowyn-boot-health.pyc && \
+    install -Dm644 /ctx/shared/rowyn-boot-health.service /usr/lib/systemd/system/rowyn-boot-health.service && \
+    install -Dm644 /ctx/shared/rowyn-boot-health.timer /usr/lib/systemd/system/rowyn-boot-health.timer && \
+    systemctl enable rowyn-boot-health.timer
+
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
 

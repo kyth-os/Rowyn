@@ -2,10 +2,15 @@
 # rowyn-safe-upgrade — stage a Rowyn system update for the Hub.
 #
 # The Rowyn-side counterpart of the upstream safe-upgrade helper, reduced
-# to the contract the Hub actually exercises (the upstream rollout-ring,
-# battery, and
-# boot-health quarantine policy has no Rowyn equivalent and is not
-# ported):
+# to the contract the Hub actually exercises, plus Rowyn's own update
+# policy:
+#
+#   * the update policy (channel and downgrade permission) is the same
+#     update-policy.conf the watcher reads, parsed with the same strict,
+#     fail-closed rules; only the stable channel exists today, and a staged
+#     image older than the booted one is refused unless AllowDowngrade=yes
+#   * a refused downgrade is quarantined through rowyn-boot-health, so it
+#     can never be treated as a healthy boot even if it still boots
 #
 #   * automatic staging (rowyn-update-watcher) sets ROWYN_UPDATE_AUTO=1:
 #     then, and only then, the stage is deferred (exit 0, a "Deferred: ..."
@@ -36,6 +41,14 @@ readonly UPDATE_REF=ghcr.io/mrtrickdotorg/rowyn:stable
 readonly BOOTC_TIMEOUT_SECS=3600
 readonly TERM_GRACE_SECS=10
 readonly SYSROOT_FREE_MIN_BYTES=$((2 * 1024 * 1024 * 1024))
+readonly BOOT_HEALTH=/usr/libexec/rowyn-boot-health
+
+# Update policy, read with the watcher's rules; the /etc file wins.
+POLICY_ETC=${ROWYN_POLICY_ETC:-/etc/rowyn/update-policy.conf}
+POLICY_DEFAULT=${ROWYN_POLICY_DEFAULT:-/usr/share/rowyn/update-policy.conf}
+policy_channel=stable
+policy_allow_downgrade=no
+policy_error=
 
 # Sysfs root and NetworkManager lookups are overridable for tests only.
 POWER_SUPPLY_DIR=${ROWYN_POWER_SUPPLY_DIR:-/sys/class/power_supply}
@@ -148,6 +161,64 @@ on_metered_connection() {
         [[ "$out" == "u 1" || "$out" == "u 3" ]] && return 0
     fi
     return 1
+}
+
+# Same strict parser as rowyn-update-watcher: line-based key=value, never
+# sourced or eval'd, and an unknown key, a bad value or a malformed line is
+# a hard error. safe-upgrade reads it for the policy a manual Hub run would
+# otherwise skip (the downgrade guard); AutoStage and the battery/metered
+# gates stay the watcher's job.
+parse_policy() {
+    local file=$POLICY_DEFAULT line n=0 key val
+    local re='^[[:space:]]*([A-Za-z]+)[[:space:]]*=[[:space:]]*([A-Za-z]+)[[:space:]]*$'
+    [[ -e "$POLICY_ETC" ]] && file=$POLICY_ETC
+    [[ -e "$file" ]] || return 0
+    if [[ ! -r "$file" ]]; then
+        policy_error="unreadable: $file"
+        return 1
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        line=${line%$'\r'}
+        if [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]]; then
+            continue
+        fi
+        if [[ ! "$line" =~ $re ]]; then
+            policy_error="$file:$n: malformed line"
+            return 1
+        fi
+        key=${BASH_REMATCH[1]}
+        val=${BASH_REMATCH[2]}
+        case "$key" in
+            AutoStage|AllowOnBattery|AllowMetered|AllowDowngrade)
+                case "$val" in
+                    yes|no) ;;
+                    *)
+                        policy_error="$file:$n: bad value for $key (expected yes or no)"
+                        return 1
+                        ;;
+                esac
+                ;;
+            Channel)
+                case "$val" in
+                    stable) ;;
+                    *)
+                        policy_error="$file:$n: unsupported channel $val"
+                        return 1
+                        ;;
+                esac
+                ;;
+            *)
+                policy_error="$file:$n: unknown key $key"
+                return 1
+                ;;
+        esac
+        case "$key" in
+            AllowDowngrade) policy_allow_downgrade=$val ;;
+            Channel) policy_channel=$val ;;
+        esac
+    done <"$file"
+    return 0
 }
 
 auto_gates() {
@@ -432,6 +503,12 @@ main() {
     if [[ ! -x /usr/bin/bootc ]]; then
         fail "bootc is not installed on this system"
     fi
+    if ! parse_policy; then
+        fail "refusing to stage: invalid update policy (${policy_error:-unreadable})"
+    fi
+    if [[ "$policy_channel" != "stable" ]]; then
+        fail "update-policy.conf selects channel '$policy_channel'; Rowyn publishes only the stable channel"
+    fi
 
     if [[ "${ROWYN_UPDATE_AUTO:-0}" == 1 ]]; then
         auto_gates
@@ -508,6 +585,18 @@ main() {
     fi
 
     emit_marker 99 verify "Verifying the staged image and checking its safety policy"
+    # A staged image older than the booted one is a policy failure, not a
+    # health one. Refuse it before the deployment is finalized for the next
+    # boot, and quarantine the digest so a boot into it is rolled back.
+    if [[ -x "$BOOT_HEALTH" ]]; then
+        local -a downgrade_args=()
+        if [[ "$policy_allow_downgrade" == "yes" || "${ROWYN_ALLOW_DOWNGRADE:-0}" == "1" ]]; then
+            downgrade_args=(--allow)
+        fi
+        if ! "$BOOT_HEALTH" refuse-downgrade "${downgrade_args[@]}"; then
+            fail "The available image is older than the booted one and AllowDowngrade is not enabled; nothing was finalized"
+        fi
+    fi
     emit_marker 99 finalize "Preparing the staged deployment for the next boot"
     if [[ -x /usr/libexec/rowyn-finalize-staged ]]; then
         if ! /usr/libexec/rowyn-finalize-staged; then

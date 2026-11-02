@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+"""Rowyn boot-health gating for image updates.
+
+Rowyn replaces the whole operating system with a staged image, then reboots
+into it. Nothing else verifies that the image it just booted can reach a
+usable desktop, so a bad build could otherwise reboot forever. This helper is
+that gate, written for Rowyn's own stack: systemd, bootc, and Ubuntu. It
+deliberately contains no greenboot, no ostree boot counter, and no upstream
+paths or state.
+
+Model
+-----
+The first boot of a deployment that has never been confirmed healthy runs a
+small, bounded set of local checks. A deployment that passes is recorded as
+known good and is never judged again: a later failure on a known-good image is
+environmental, not the image, so it must not count against it.
+
+A deployment that fails accumulates one failure per boot. At the third
+failure it is quarantined and the machine is moved back with
+``bootc rollback`` and rebooted. Both the quarantine and the rollback attempt
+are recorded per digest, and a quarantined digest is never a rollback
+destination, so two broken deployments cannot bounce the machine back and
+forth. Each digest gets at most two rollback attempts, the second only after a
+cooldown.
+
+Checks cover only invariants the image owns. They never fail because a user
+stopped a service, unplugged a cable, or edited /etc: such a failure would
+survive a rollback and could only create a reboot loop.
+
+State lives in ``/var/lib/rowyn/boot-health.json`` (mode 0644: image digests,
+timestamps and reasons, never credentials) so the Hub and ``rowyn-report`` can
+read it unprivileged. Writes are atomic, and only root ever writes.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import json
+import os
+import platform
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+SCHEMA_VERSION = 1
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+DIGEST_SEARCH = re.compile(r"sha256:[0-9a-f]{64}")
+VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+FAILURE_THRESHOLD = 3
+MAX_ROLLBACK_ATTEMPTS = 2
+ROLLBACK_RETRY_SECONDS = 600
+STATUS_TIMEOUT_SECONDS = 60
+ROLLBACK_TIMEOUT_SECONDS = 300
+QUARANTINE_REASONS = ("unhealthy-boot", "downgrade", "manual")
+
+
+def log(message: str) -> None:
+    print(f"rowyn-boot-health: {message}", file=sys.stderr)
+
+
+def _int_env(name: str, default: int, maximum: int = 3600) -> int:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(0, min(value, maximum))
+
+
+class Config:
+    """Runtime paths and bounds. Every path is overridable for tests."""
+
+    def __init__(self) -> None:
+        self.state_dir = os.environ.get("ROWYN_BOOT_HEALTH_DIR", "/var/lib/rowyn")
+        self.state_file = os.path.join(self.state_dir, "boot-health.json")
+        self.bootc = os.environ.get("ROWYN_BOOTC", "/usr/bin/bootc")
+        self.systemctl = os.environ.get("ROWYN_SYSTEMCTL", "/usr/bin/systemctl")
+        self.os_release = os.environ.get("ROWYN_BOOT_HEALTH_OS_RELEASE",
+                                         "/usr/lib/os-release")
+        self.modules_dir = os.environ.get(
+            "ROWYN_BOOT_HEALTH_MODULES_DIR", "/usr/lib/modules")
+        self.kernel_release = (
+            os.environ.get("ROWYN_BOOT_HEALTH_KERNEL_RELEASE") or platform.release())
+        self.desktop_grace = _int_env("ROWYN_BOOT_HEALTH_DESKTOP_GRACE", 90, 600)
+        self.no_reboot = os.environ.get("ROWYN_BOOT_HEALTH_NO_REBOOT", "") == "1"
+        reboot = os.environ.get("ROWYN_BOOT_HEALTH_REBOOT_CMD", "")
+        self.reboot_cmd = shlex.split(reboot) if reboot else [self.systemctl, "reboot"]
+
+
+def utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def iso(moment: dt.datetime) -> str:
+    return moment.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_timestamp(value: object) -> dt.datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
+
+
+def empty_state() -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "known_good": {},
+        "failures": {},
+        "quarantined": {},
+        "rollback": {},
+        "last_boot": {},
+    }
+
+
+def _preserve_corrupt(cfg: Config) -> None:
+    """Keep a corrupt state file instead of silently resetting it."""
+    try:
+        os.replace(cfg.state_file, cfg.state_file + ".corrupt")
+    except OSError:
+        return
+    log("state file was unreadable; preserved as boot-health.json.corrupt")
+
+
+def _dict_entries(value: object, digits_only: bool) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    kept = {}
+    for key, entry in value.items():
+        if not isinstance(key, str) or not DIGEST_RE.fullmatch(key):
+            continue
+        if digits_only:
+            if isinstance(entry, int) and entry >= 0:
+                kept[key] = entry
+            continue
+        if isinstance(entry, dict):
+            kept[key] = entry
+    return kept
+
+
+def load_state(cfg: Config) -> dict:
+    try:
+        with open(cfg.state_file, encoding="utf-8") as handle:
+            doc = json.load(handle)
+    except FileNotFoundError:
+        return empty_state()
+    except (OSError, ValueError, UnicodeDecodeError):
+        _preserve_corrupt(cfg)
+        return empty_state()
+    if not isinstance(doc, dict) or doc.get("schema_version") != SCHEMA_VERSION:
+        _preserve_corrupt(cfg)
+        return empty_state()
+    state = empty_state()
+    state["known_good"] = _dict_entries(doc.get("known_good"), False)
+    state["quarantined"] = _dict_entries(doc.get("quarantined"), False)
+    state["rollback"] = _dict_entries(doc.get("rollback"), False)
+    state["failures"] = _dict_entries(doc.get("failures"), True)
+    last_boot = doc.get("last_boot")
+    if isinstance(last_boot, dict):
+        state["last_boot"] = last_boot
+    return state
+
+
+def save_state(cfg: Config, state: dict) -> None:
+    """Write the state atomically: temp file, fsync, rename, fsync parent."""
+    os.makedirs(cfg.state_dir, mode=0o755, exist_ok=True)
+    state["updated_at"] = iso(utc_now())
+    payload = json.dumps(state, indent=2, sort_keys=True) + "\n"
+    handle_fd, temporary = tempfile.mkstemp(
+        prefix=".boot-health-", dir=cfg.state_dir)
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, cfg.state_file)
+        directory_fd = os.open(cfg.state_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+@contextlib.contextmanager
+def state_lock(directory: str):
+    """Serialize state writers; critical sections are short and local."""
+    os.makedirs(directory, mode=0o755, exist_ok=True)
+    fd = os.open(os.path.join(directory, ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def bootc_status(cfg: Config) -> dict | None:
+    """The ``status`` object from ``bootc status --json``, or None.
+
+    None means Rowyn cannot judge this boot at all (bootc missing, broken, or
+    answering in an unknown shape). That is not treated as an unhealthy image:
+    rolling a working desktop back because a CLI broke is worse than waiting
+    for the next boot.
+    """
+    try:
+        result = subprocess.run(
+            [cfg.bootc, "status", "--json"],
+            capture_output=True, text=True, timeout=STATUS_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        doc = json.loads(result.stdout)
+    except ValueError:
+        return None
+    status = doc.get("status") if isinstance(doc, dict) else None
+    return status if isinstance(status, dict) else None
+
+
+def deployment_digest(deployment: object) -> str | None:
+    """Best-effort digest of a bootc deployment, tolerant of schema drift."""
+    if not isinstance(deployment, dict):
+        return None
+    image = deployment.get("image")
+    if isinstance(image, dict):
+        for key in ("digest", "imageDigest"):
+            candidate = image.get(key)
+            if isinstance(candidate, str) and DIGEST_RE.fullmatch(candidate):
+                return candidate
+        inner = image.get("image")
+        if isinstance(inner, dict):
+            for key in ("digest", "imageDigest"):
+                candidate = inner.get(key)
+                if isinstance(candidate, str) and DIGEST_RE.fullmatch(candidate):
+                    return candidate
+            reference = inner.get("image")
+            if isinstance(reference, str) and "@" in reference:
+                candidate = reference.rsplit("@", 1)[1]
+                if DIGEST_RE.fullmatch(candidate):
+                    return candidate
+    match = DIGEST_SEARCH.search(json.dumps(deployment, sort_keys=True))
+    return match.group(0) if match else None
+
+
+def deployment_info(deployment: object) -> dict:
+    info: dict[str, str | None] = {
+        "digest": None, "reference": None, "version": None, "timestamp": None}
+    if not isinstance(deployment, dict):
+        return info
+    image = deployment.get("image")
+    if not isinstance(image, dict):
+        return info
+    for key in ("version", "timestamp"):
+        value = image.get(key)
+        if isinstance(value, str) and value.strip():
+            info[key] = value.strip()
+    info["digest"] = deployment_digest(deployment)
+    inner = image.get("image")
+    if isinstance(inner, dict):
+        reference = inner.get("image")
+        if isinstance(reference, str):
+            info["reference"] = reference
+    return info
+
+
+def compare_deployments(staged: dict, booted: dict) -> int | None:
+    """-1 when staged is older, 1 when newer, 0 when equal, None when unknown.
+
+    Image versions are compared first when both parse as dotted numbers;
+    otherwise the image build timestamps are compared. Anything unorderable is
+    None: an unknown ordering never blocks an update.
+    """
+    versions = []
+    for info in (staged, booted):
+        value = info.get("version")
+        versions.append(
+            tuple(int(part) for part in value.split("."))
+            if isinstance(value, str) and VERSION_RE.fullmatch(value) else None)
+    if versions[0] is not None and versions[1] is not None:
+        left, right = versions
+        width = max(len(left), len(right))
+        left = left + (0,) * (width - len(left))
+        right = right + (0,) * (width - len(right))
+        return (left > right) - (left < right)
+    staged_time = parse_timestamp(staged.get("timestamp"))
+    booted_time = parse_timestamp(booted.get("timestamp"))
+    if staged_time is not None and booted_time is not None:
+        return (staged_time > booted_time) - (staged_time < booted_time)
+    return None
+
+
+def _unit_active(cfg: Config, unit: str) -> bool:
+    try:
+        result = subprocess.run(
+            [cfg.systemctl, "is-active", "--quiet", unit],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def check_identity(cfg: Config) -> tuple[bool, str]:
+    fields = {}
+    try:
+        with open(cfg.os_release, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                fields[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError as error:
+        return False, f"cannot read {cfg.os_release}: {error.strerror or error}"
+    if fields.get("ID") != "rowyn":
+        return False, f"os-release ID is {fields.get('ID')!r}, expected 'rowyn'"
+    if fields.get("NAME") != "Rowyn":
+        return False, f"os-release NAME is {fields.get('NAME')!r}, expected 'Rowyn'"
+    return True, "os-release identity is Rowyn"
+
+
+def check_kernel_modules(cfg: Config) -> tuple[bool, str]:
+    path = os.path.join(cfg.modules_dir, cfg.kernel_release)
+    try:
+        entries = os.listdir(path)
+    except OSError:
+        return False, (f"no module tree for running kernel {cfg.kernel_release} "
+                       f"in {cfg.modules_dir}")
+    if not entries:
+        return False, f"module tree for {cfg.kernel_release} is empty"
+    return True, f"module tree for {cfg.kernel_release} is present"
+
+
+def check_desktop(cfg: Config) -> tuple[bool, str]:
+    """Wait a bounded time for the desktop, then judge it.
+
+    This is the regression class that matters for an image-based desktop: a
+    build whose display manager or Plasma session cannot start.
+    """
+    deadline = time.monotonic() + cfg.desktop_grace
+    while True:
+        graphical = _unit_active(cfg, "graphical.target")
+        manager = _unit_active(cfg, "display-manager.service")
+        if graphical and manager:
+            return True, "graphical.target and display-manager are active"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            missing = []
+            if not graphical:
+                missing.append("graphical.target")
+            if not manager:
+                missing.append("display-manager")
+            return False, "not active: " + ", ".join(missing)
+        time.sleep(min(2.0, remaining))
+
+
+def run_checks(cfg: Config) -> list[dict]:
+    checks = []
+    for name, function in (("identity", check_identity),
+                           ("kernel-modules", check_kernel_modules),
+                           ("desktop", check_desktop)):
+        ok, detail = function(cfg)
+        checks.append({"name": name, "ok": ok, "detail": detail})
+    return checks
+
+
+def quarantine(state: dict, digest: str, reason: str, detail: str) -> None:
+    if reason not in QUARANTINE_REASONS:
+        raise ValueError(f"unsupported quarantine reason: {reason}")
+    state["quarantined"][digest] = {
+        "quarantined_at": iso(utc_now()),
+        "reason": reason,
+        "detail": detail[:500],
+    }
+
+
+def request_reboot(cfg: Config) -> None:
+    if cfg.no_reboot:
+        log("reboot suppressed by ROWYN_BOOT_HEALTH_NO_REBOOT=1")
+        return
+    try:
+        subprocess.run(cfg.reboot_cmd, timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as error:
+        log(f"could not request a reboot: {error}")
+
+
+def attempt_recovery(cfg: Config, state: dict, digest: str, status: dict) -> None:
+    """Move back to the previous deployment, at most twice per digest."""
+    record = state["rollback"].get(digest)
+    if not isinstance(record, dict):
+        record = {"attempts": 0, "last_attempt_at": None,
+                  "last_error": None, "succeeded_at": None}
+        state["rollback"][digest] = record
+    attempts = record.get("attempts")
+    if not isinstance(attempts, int) or attempts < 0:
+        attempts = 0
+    if attempts >= MAX_ROLLBACK_ATTEMPTS:
+        log(f"rollback for {digest} already attempted {attempts} times; not retrying")
+        return
+    last_attempt = parse_timestamp(record.get("last_attempt_at"))
+    if (last_attempt is not None
+            and (utc_now() - last_attempt).total_seconds() < ROLLBACK_RETRY_SECONDS):
+        log("the last rollback attempt is still in its cooldown; not retrying yet")
+        return
+    target = deployment_digest(status.get("rollback"))
+    if target is not None and target in state["quarantined"]:
+        record["last_error"] = "the only rollback deployment is quarantined"
+        save_state(cfg, state)
+        log("not rolling back: the only rollback deployment is quarantined")
+        return
+    record["attempts"] = attempts + 1
+    record["last_attempt_at"] = iso(utc_now())
+    try:
+        result = subprocess.run(
+            [cfg.bootc, "rollback"],
+            capture_output=True, text=True, timeout=ROLLBACK_TIMEOUT_SECONDS)
+        ok = result.returncode == 0
+        error = None if ok else (
+            result.stderr.strip() or f"bootc rollback exited {result.returncode}")
+    except (OSError, subprocess.SubprocessError) as failure:
+        ok = False
+        error = str(failure) or failure.__class__.__name__
+    if not ok:
+        record["last_error"] = str(error)[:500]
+        save_state(cfg, state)
+        log(f"bootc rollback failed: {record['last_error']}")
+        return
+    record["succeeded_at"] = iso(utc_now())
+    record["last_error"] = None
+    save_state(cfg, state)
+    log("rolled back to the previous deployment; rebooting")
+    request_reboot(cfg)
+
+
+def record_last_boot(state: dict, digest: str | None, healthy: bool | None,
+                     reason: str, checks: list[dict] | None = None) -> None:
+    entry = {
+        "digest": digest,
+        "healthy": healthy,
+        "reason": reason,
+        "checked_at": iso(utc_now()),
+    }
+    if checks is not None:
+        entry["checks"] = checks
+    state["last_boot"] = entry
+
+
+def cmd_boot(cfg: Config) -> int:
+    with state_lock(cfg.state_dir):
+        state = load_state(cfg)
+        status = bootc_status(cfg)
+        if status is None:
+            log("bootc status is unavailable; this boot is not judged")
+            record_last_boot(state, None, None, "bootc status unavailable")
+            save_state(cfg, state)
+            return 0
+        booted = status.get("booted")
+        digest = deployment_digest(booted)
+        if digest is None:
+            log("the booted deployment has no readable digest; not judging this boot")
+            record_last_boot(state, None, None, "booted deployment digest unavailable")
+            save_state(cfg, state)
+            return 0
+        if digest in state["quarantined"]:
+            log(f"the booted deployment {digest} is quarantined")
+            attempt_recovery(cfg, state, digest, status)
+            record_last_boot(state, digest, False, "quarantined")
+            save_state(cfg, state)
+            return 0
+        if digest in state["known_good"]:
+            record_last_boot(state, digest, True, "known good")
+            save_state(cfg, state)
+            return 0
+        checks = run_checks(cfg)
+        failed = [check for check in checks if not check["ok"]]
+        if not failed:
+            state["known_good"][digest] = {
+                "recorded_at": iso(utc_now()),
+                "version": deployment_info(booted).get("version"),
+            }
+            state["failures"].pop(digest, None)
+            record_last_boot(state, digest, True, "checks passed", checks)
+            save_state(cfg, state)
+            log(f"{digest} passed its checks and is recorded as known good")
+            return 0
+        count = state["failures"].get(digest, 0)
+        if not isinstance(count, int) or count < 0:
+            count = 0
+        count += 1
+        state["failures"][digest] = count
+        detail = "; ".join(f"{check['name']}: {check['detail']}" for check in failed)
+        record_last_boot(state, digest, False, detail, checks)
+        log(f"boot {count} of {FAILURE_THRESHOLD} failed its checks: {detail}")
+        if count >= FAILURE_THRESHOLD:
+            quarantine(state, digest, "unhealthy-boot", detail)
+            save_state(cfg, state)
+            log(f"quarantined {digest} after {count} unhealthy boots")
+            attempt_recovery(cfg, state, digest, status)
+        else:
+            save_state(cfg, state)
+        return 0
+
+
+def cmd_check(cfg: Config) -> int:
+    checks = run_checks(cfg)
+    print(json.dumps({"healthy": all(c["ok"] for c in checks), "checks": checks},
+                     indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_status(cfg: Config) -> int:
+    print(json.dumps(load_state(cfg), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_refuse_downgrade(cfg: Config, allow: bool) -> int:
+    status = bootc_status(cfg)
+    if status is None:
+        log("bootc status is unavailable; the downgrade check is skipped")
+        return 0
+    staged = status.get("staged")
+    if not isinstance(staged, dict):
+        return 0
+    verdict = compare_deployments(
+        deployment_info(staged), deployment_info(status.get("booted")))
+    if verdict is None or verdict >= 0:
+        return 0
+    digest = deployment_digest(staged)
+    subject = digest or "the staged deployment"
+    if allow:
+        log(f"warning: {subject} is older than the booted image; "
+            "AllowDowngrade permits it")
+        return 0
+    with state_lock(cfg.state_dir):
+        state = load_state(cfg)
+        if digest is not None:
+            quarantine(state, digest, "downgrade",
+                       "the staged image is older than the booted image")
+            save_state(cfg, state)
+    log(f"{subject} is older than the booted image and downgrades are not "
+        "allowed; it is quarantined and will be rolled back if it still boots")
+    return 3
+
+
+def cmd_quarantine(cfg: Config, digest: str, reason: str) -> int:
+    if not DIGEST_RE.fullmatch(digest):
+        log(f"not a sha256 image digest: {digest!r}")
+        return 2
+    if reason not in QUARANTINE_REASONS:
+        log(f"unsupported reason {reason!r}; expected one of: "
+            + ", ".join(QUARANTINE_REASONS))
+        return 2
+    with state_lock(cfg.state_dir):
+        state = load_state(cfg)
+        quarantine(state, digest, reason, "recorded by rowyn-boot-health")
+        save_state(cfg, state)
+    print(f"quarantined {digest} ({reason})")
+    return 0
+
+
+def cmd_clear_quarantine(cfg: Config, digest: str) -> int:
+    if not DIGEST_RE.fullmatch(digest):
+        log(f"not a sha256 image digest: {digest!r}")
+        return 2
+    with state_lock(cfg.state_dir):
+        state = load_state(cfg)
+        if digest not in state["quarantined"]:
+            log(f"{digest} is not quarantined")
+            return 1
+        del state["quarantined"][digest]
+        state["failures"].pop(digest, None)
+        state["rollback"].pop(digest, None)
+        save_state(cfg, state)
+    print(f"cleared quarantine for {digest}")
+    return 0
+
+
+def require_root() -> bool:
+    if os.geteuid() != 0:
+        log("must run as root")
+        return False
+    return True
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rowyn-boot-health")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("boot", help="judge this boot and record the result")
+    commands.add_parser("check", help="run the checks without recording anything")
+    commands.add_parser("status", help="print the recorded state as JSON")
+    downgrade = commands.add_parser(
+        "refuse-downgrade", help="refuse and quarantine a staged downgrade")
+    downgrade.add_argument("--allow", action="store_true",
+                           help="warn instead of refusing")
+    record = commands.add_parser("quarantine", help="quarantine a digest")
+    record.add_argument("digest")
+    record.add_argument("reason", nargs="?", default="manual")
+    clear = commands.add_parser("clear-quarantine",
+                                help="allow a quarantined digest again")
+    clear.add_argument("digest")
+    args = parser.parse_args(argv)
+    cfg = Config()
+    if args.command == "status":
+        return cmd_status(cfg)
+    if args.command == "check":
+        return cmd_check(cfg)
+    if not require_root():
+        return 1
+    if args.command == "boot":
+        return cmd_boot(cfg)
+    if args.command == "refuse-downgrade":
+        return cmd_refuse_downgrade(cfg, args.allow)
+    if args.command == "quarantine":
+        return cmd_quarantine(cfg, args.digest, args.reason)
+    return cmd_clear_quarantine(cfg, args.digest)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
