@@ -89,8 +89,14 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         self.assertIn("build/destination-derivative.Containerfile", build_paths)
         self.assertIn("build/registry-migration-destination-v1", build_paths)
         self.assertIn("ROWYN_DEST_GHCR_TOKEN", self.workflow_text)
-        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["build"]))
-        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["sign"]))
+        build_push = next(step for step in jobs["build"]["steps"] if step["name"] == "Push immutable image and spike alias to GHCR")
+        sign_image = next(step for step in jobs["sign"]["steps"] if step["name"] == "Sign exact image digest")
+        self.assertIn("ROWYN_DEST_GHCR_TOKEN", build_push["env"])
+        self.assertIn("ROWYN_DEST_GHCR_TOKEN", sign_image["env"])
+        self.assertNotIn("GITHUB_TOKEN", build_push["env"])
+        self.assertNotIn("GITHUB_TOKEN", sign_image["env"])
+        self.assertEqual(build_push["env"]["GHCR_USERNAME"], "mrtrick37")
+        self.assertEqual(sign_image["env"]["GHCR_USERNAME"], "mrtrick37")
         self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["promote"]))
         self.assertEqual(
             stage["outputs"]["destination_digest"],
