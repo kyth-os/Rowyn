@@ -128,7 +128,7 @@ The assembler emits the ISO, source metadata, El Torito/system-area report, and 
 
 ## CI and release flow
 
-`build.yml` (Rowyn CI) validates, builds, smoke-tests, publishes, and signs the payload on trusted main pushes affecting payload inputs, or manual main dispatch. Pull requests validate only; they cannot publish images or request ISO releases. The GHCR package is currently organization-scoped and unlinked to a repository, so trusted main-only publish/sign jobs use the repository Actions secret `ROWYN_DEST_GHCR_TOKEN` (classic PAT limited to `write:packages`); do not replace it with `GITHUB_TOKEN` until package access is linked and verified.
+`build.yml` (Rowyn CI) validates, builds, smoke-tests, publishes, and signs the payload on trusted main pushes affecting payload inputs, or manual main dispatch. Pull requests validate only; they cannot publish images or request ISO releases. The GHCR package is linked to `mrtrickdotorg/Rowyn`, and that repository has `write` under the package's Manage Actions access. Trusted publishing/signing jobs use the workflow-scoped `GITHUB_TOKEN` with `packages: write`; no PAT is needed. The Containerfile also declares `org.opencontainers.image.source` for this repository.
 
 The fixed payload signing identity is:
 

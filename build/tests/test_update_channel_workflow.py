@@ -88,15 +88,21 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         build_paths = self.workflow[True]["push"]["paths"]
         self.assertIn("build/destination-derivative.Containerfile", build_paths)
         self.assertIn("build/registry-migration-destination-v1", build_paths)
-        self.assertIn("ROWYN_DEST_GHCR_TOKEN", self.workflow_text)
-        build_push = next(step for step in jobs["build"]["steps"] if step["name"] == "Push immutable image and spike alias to GHCR")
-        sign_image = next(step for step in jobs["sign"]["steps"] if step["name"] == "Sign exact image digest")
-        self.assertIn("ROWYN_DEST_GHCR_TOKEN", build_push["env"])
-        self.assertIn("ROWYN_DEST_GHCR_TOKEN", sign_image["env"])
-        self.assertNotIn("GITHUB_TOKEN", build_push["env"])
-        self.assertNotIn("GITHUB_TOKEN", sign_image["env"])
-        self.assertEqual(build_push["env"]["GHCR_USERNAME"], "mrtrick37")
-        self.assertEqual(sign_image["env"]["GHCR_USERNAME"], "mrtrick37")
+        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", self.workflow_text)
+        publishing_jobs = ("build", "sign", "stage_destination")
+        auth_steps = 0
+        for job_name in publishing_jobs:
+            self.assertEqual(jobs[job_name]["permissions"]["packages"], "write")
+            for step in jobs[job_name]["steps"]:
+                if "login" in step.get("run", "") and "ghcr.io" in step.get("run", ""):
+                    auth_steps += 1
+                    self.assertEqual(
+                        step["env"]["GHCR_TOKEN"], "${{ secrets.GITHUB_TOKEN }}"
+                    )
+                    self.assertEqual(
+                        step["env"]["GHCR_USERNAME"], "${{ github.actor }}"
+                    )
+        self.assertEqual(auth_steps, 7)
         self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["promote"]))
         self.assertEqual(
             stage["outputs"]["destination_digest"],
@@ -143,6 +149,13 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         promote = jobs["promote"]
         self.assertEqual(
             set(promote["needs"]), {"build", "sign", "stage_destination"}
+        )
+
+    def test_container_image_declares_its_destination_source_repository(self):
+        containerfile = (ROOT / "Containerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            'LABEL org.opencontainers.image.source="https://github.com/mrtrickdotorg/Rowyn"',
+            containerfile,
         )
 
     def test_destination_stable_verification_is_anonymous_and_uses_derived_digest(self):
@@ -195,7 +208,7 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
                 "PATH": "/usr/bin:/bin",
                 "COSIGN_ARG_LOG": str(log),
                 "DESTINATION_DIGEST": DIGEST,
-                "ROWYN_DEST_GHCR_TOKEN": "test-token",
+                "GHCR_TOKEN": "test-token",
                 "GHCR_USERNAME": "test-user",
                 "GITHUB_REPOSITORY": "mrtrickdotorg/Rowyn",
             }

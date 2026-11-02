@@ -75,6 +75,7 @@ RUN cargo build --release --locked && \
 
 # --- system: assemble the bootable image ------------------------------------
 FROM base AS system
+LABEL org.opencontainers.image.source="https://github.com/mrtrickdotorg/Rowyn"
 COPY --from=builder /output /
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,dst=/boot apt update -y && \

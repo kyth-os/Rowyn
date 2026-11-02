@@ -363,14 +363,14 @@ jobs:
         id: publish
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
-          test -n "${ROWYN_DEST_GHCR_TOKEN}"
+          test -n "${GHCR_TOKEN}"
           image_ref="${IMAGE_REPOSITORY}:${GITHUB_SHA}"
           digest_file="${RUNNER_TEMP}/rowyn-image.digest"
 
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | sudo podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          printf '%s' "${GHCR_TOKEN}" | sudo podman login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           sudo podman tag rowyn:ci "${image_ref}"
           sudo podman tag rowyn:ci "${IMAGE_REPOSITORY}:spike"
 
@@ -440,15 +440,15 @@ jobs:
         env:
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
           IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           test -n "${IMAGE_REF}"
           [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test -n "${ROWYN_DEST_GHCR_TOKEN}"
+          test -n "${GHCR_TOKEN}"
           IMAGE_NAME="${IMAGE_REF%:*}"
           [[ "${IMAGE_NAME}" == "ghcr.io/mrtrickdotorg/rowyn" ]]
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          printf '%s' "${GHCR_TOKEN}" | cosign login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           cosign sign -y "${IMAGE_NAME}@${IMAGE_DIGEST}"
 
       - name: Verify image signature
@@ -512,12 +512,12 @@ jobs:
         env:
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
           IMAGE_DIGEST: ${{ needs.build.outputs.image_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           test -n "${IMAGE_REF}"
           [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test -n "${ROWYN_DEST_GHCR_TOKEN}"
+          test -n "${GHCR_TOKEN}"
           SOURCE_IMAGE="${IMAGE_REF%:*}"
           [[ "${SOURCE_IMAGE}" == "ghcr.io/mrtrickdotorg/rowyn" ]]
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
@@ -526,7 +526,7 @@ jobs:
           source_digest="$(skopeo inspect --no-creds --format '{{.Digest}}' \
             "docker://${SOURCE_IMAGE}@${IMAGE_DIGEST}")"
           [[ "${source_digest}" == "${IMAGE_DIGEST}" ]]
-          echo "${ROWYN_DEST_GHCR_TOKEN}" | sudo podman login ghcr.io \
+          echo "${GHCR_TOKEN}" | sudo podman login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           sudo podman build --pull=always --format oci \
             --build-arg "ROWYN_BASE_IMAGE=${SOURCE_IMAGE}@${IMAGE_DIGEST}" \
@@ -554,18 +554,18 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
           DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ROWYN_UPDATE_SIGNING_KEY: ${{ secrets.ROWYN_UPDATE_SIGNING_KEY }}
           COSIGN_PASSWORD: ${{ secrets.ROWYN_UPDATE_SIGNING_PASSWORD }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -s "keys/update.pub"
-          test -n "${ROWYN_DEST_GHCR_TOKEN}"
+          test -n "${GHCR_TOKEN}"
           test -n "${ROWYN_UPDATE_SIGNING_KEY}"
           test -n "${COSIGN_PASSWORD}"
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
+          printf '%s' "${GHCR_TOKEN}" | cosign login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           cosign sign --yes --key env://ROWYN_UPDATE_SIGNING_KEY \
             "${DEST_IMAGE}@${DESTINATION_DIGEST}"
@@ -574,12 +574,12 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
           DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
+          printf '%s' "${GHCR_TOKEN}" | cosign login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           cosign sign -y "${DEST_IMAGE}@${DESTINATION_DIGEST}"
 
@@ -587,13 +587,13 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
           DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           test -s "keys/update.pub"
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | cosign login ghcr.io \
+          printf '%s' "${GHCR_TOKEN}" | cosign login ghcr.io \
             -u "${GHCR_USERNAME}" --password-stdin
           cosign verify --key keys/update.pub \
             "${DEST_IMAGE}@${DESTINATION_DIGEST}"
@@ -631,16 +631,16 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         env:
           DESTINATION_DIGEST: ${{ steps.build_destination.outputs.destination_digest }}
-          ROWYN_DEST_GHCR_TOKEN: ${{ secrets.ROWYN_DEST_GHCR_TOKEN }}
-          GHCR_USERNAME: mrtrick37
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           [[ "${DESTINATION_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test -n "${ROWYN_DEST_GHCR_TOKEN}"
+          test -n "${GHCR_TOKEN}"
           DEST_IMAGE="ghcr.io/mrtrickdotorg/rowyn"
           auth_file="${RUNNER_TEMP}/rowyn-destination-auth.json"
           umask 077
           trap 'rm -f "${auth_file}"' EXIT
-          printf '%s' "${ROWYN_DEST_GHCR_TOKEN}" | skopeo login \
+          printf '%s' "${GHCR_TOKEN}" | skopeo login \
             --authfile "${auth_file}" \
             --username "${GHCR_USERNAME}" \
             --password-stdin ghcr.io
