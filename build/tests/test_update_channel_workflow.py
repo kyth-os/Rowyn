@@ -23,7 +23,9 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         jobs = self.workflow["jobs"]
         self.assertIn("promote", jobs)
         promote = jobs["promote"]
-        self.assertEqual(set(promote["needs"]), {"build", "sign"})
+        self.assertEqual(
+            set(promote["needs"]), {"build", "sign", "stage_destination"}
+        )
         self.assertEqual(
             promote["permissions"],
             {"contents": "read", "packages": "write"},
@@ -59,6 +61,49 @@ class UpdateChannelWorkflowTests(unittest.TestCase):
         self.assertIn("skopeo copy --preserve-digests", self.workflow_text)
         self.assertIn("IMAGE_NAME}@${IMAGE_DIGEST}", self.workflow_text)
         self.assertIn('IMAGE_NAME}:stable', self.workflow_text)
+
+    def test_destination_stable_is_signed_and_verified_before_old_stable(self):
+        jobs = self.workflow["jobs"]
+        self.assertIn("stage_destination", jobs)
+        stage = jobs["stage_destination"]
+        self.assertEqual(set(stage["needs"]), {"build", "sign"})
+        self.assertEqual(
+            stage["permissions"],
+            {"contents": "read", "packages": "write"},
+        )
+        self.assertEqual(stage["if"], jobs["build"]["if"])
+        self.assertIn("ROWYN_DEST_GHCR_TOKEN", self.workflow_text)
+        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["build"]))
+        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["sign"]))
+        self.assertNotIn("ROWYN_DEST_GHCR_TOKEN", str(jobs["promote"]))
+
+        stage_names = [step["name"] for step in stage["steps"]]
+        self.assertLess(
+            stage_names.index("Copy immutable image to destination GHCR"),
+            stage_names.index("Sign exact destination image with update-channel key"),
+        )
+        self.assertLess(
+            stage_names.index("Sign exact destination image with update-channel key"),
+            stage_names.index("Verify destination update-channel signature"),
+        )
+        self.assertLess(
+            stage_names.index("Verify destination update-channel signature"),
+            stage_names.index("Promote exact digest to destination stable"),
+        )
+        self.assertLess(
+            stage_names.index("Promote exact digest to destination stable"),
+            stage_names.index("Verify destination stable tag digest"),
+        )
+        stage_text = "\n".join(step.get("run", "") for step in stage["steps"])
+        self.assertIn("ghcr.io/mrtrickdotorg/rowyn", stage_text)
+        self.assertIn("skopeo copy --preserve-digests", stage_text)
+        self.assertIn("cosign sign --yes --key env://ROWYN_UPDATE_SIGNING_KEY", stage_text)
+        self.assertIn("cosign verify --key keys/update.pub", stage_text)
+
+        promote = jobs["promote"]
+        self.assertEqual(
+            set(promote["needs"]), {"build", "sign", "stage_destination"}
+        )
 
     def test_stale_main_guard_rejects_without_copy_and_current_main_allows_copy(self):
         promote = self.workflow["jobs"]["promote"]
