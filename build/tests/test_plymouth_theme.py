@@ -2,7 +2,7 @@
 """Contracts for the Rowyn Plymouth boot splash.
 
 The installed system must boot behind a splash: the Rowyn theme
-(script module, pulsing berry mark on deep navy, modeled on the upstream script) is
+(script module, black background, compact Rowyn mark and rotating loading indicator) is
 the plymouth daemon's default, dracut folds it into the initramfs at
 image build (verified there by shared/initramfs.sh), and bootc kargs
 give deployments `quiet splash` — without the kargs the theme never
@@ -35,17 +35,41 @@ class PlymouthThemeTests(unittest.TestCase):
         self.assertIn("ImageDir=/usr/share/plymouth/themes/rowyn", text)
         self.assertIn("ScriptFile=/usr/share/plymouth/themes/rowyn/rowyn.script", text)
 
-    def test_script_pulses_the_logo_and_handles_messages(self):
+    def test_script_uses_black_background_and_scaled_static_logo(self):
         text = (THEME / "rowyn.script").read_text(encoding="utf-8")
         self.assertIn('Image ("rowyn-logo.png")', text)
-        # The upstream-shaped animation: fade in, then a sine pulse.
+        self.assertIn("Window.SetBackgroundTopColor (0, 0, 0)", text)
+        self.assertIn("Window.SetBackgroundBottomColor (0, 0, 0)", text)
+        self.assertIn("max_size = 160", text)
+        self.assertIn("logo.source.Scale", text)
+        self.assertIn("spinner.source.Scale", text)
+        self.assertIn("last_screen_w != screen_w", text)
+        self.assertIn("last_screen_h != screen_h", text)
+        self.assertNotIn("Math.Sin", text)
+        self.assertNotIn("logo.sprite.SetOpacity", text)
+
+    def test_script_retries_scaling_when_window_dimensions_become_positive(self):
+        text = (THEME / "rowyn.script").read_text(encoding="utf-8")
+        self.assertIn("logo.source = Image (\"rowyn-logo.png\")", text)
+        self.assertIn("spinner.source = Image (\"rowyn-logo.png\")", text)
+        self.assertIn("fun resize_splash ()", text)
+        self.assertIn("last_screen_w != screen_w", text)
+        self.assertIn("last_screen_h != screen_h", text)
+        self.assertIn("resize_splash ();", text)
+        self.assertIn("logo.source.Scale", text)
+        self.assertIn("spinner.source.Scale", text)
+
+    def test_script_animates_centered_loading_spinner_and_handles_messages(self):
+        text = (THEME / "rowyn.script").read_text(encoding="utf-8")
         self.assertIn("Plymouth.SetRefreshFunction", text)
-        self.assertIn("Math.Sin", text)
-        self.assertIn("SetOpacity", text)
+        self.assertIn("spinner.image", text)
+        self.assertIn("spinner.image.Rotate", text)
+        self.assertIn("frame * 0.20944", text)
+        self.assertIn("spinner_size = 24", text)
+        self.assertIn("Window.GetWidth ()", text)
+        self.assertIn("Window.GetHeight ()", text)
         self.assertIn("Plymouth.SetMessageFunction", text)
-        # Deep navy background at both gradient stops.
-        self.assertIn("Window.SetBackgroundTopColor", text)
-        self.assertIn("Window.SetBackgroundBottomColor", text)
+        self.assertIn('Image.Text (text, 0.85, 0.86, 0.95, 1)', text)
 
     def test_kargs_dropin_suppresses_scrolling_boot_and_shutdown_status(self):
         with (THEME / "99-rowyn-splash.toml").open("rb") as handle:
