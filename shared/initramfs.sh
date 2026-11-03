@@ -16,9 +16,9 @@ dracut --force "${kernel_dir}/initramfs.img"
 
 # The boot splash lives or dies here: Plymouth can only draw the Rowyn
 # theme at boot if dracut's plymouth module actually folded the daemon,
-# the theme, and its logo into this initramfs (it reads the theme from
-# /etc/plymouth/plymouthd.conf, installed by plymouth-theme.sh earlier in
-# the build). Fail the build rather than ship a silently splashless boot.
+# the theme, its logo, and the Pango label renderer/font into this initramfs
+# (the script plugin's redraw path crashes if text rendering is unavailable).
+# Fail the build rather than ship a silently splashless boot.
 initrd_listing="$(lsinitrd "${kernel_dir}/initramfs.img")"
 for required in \
     "usr/sbin/plymouthd" \
@@ -30,6 +30,19 @@ for required in \
         exit 1
     fi
 done
+
+# Ubuntu's Plymouth initramfs hook includes the label renderer and Ubuntu
+# fonts only when plymouth-label is installed. Require both: without them
+# ply_console_viewer_preferred() disables the script plugin's console viewer,
+# whose redraw path dereferences a null viewer while drawing the splash.
+if ! grep -Fq '/plymouth/label-pango.so' <<<"${initrd_listing}"; then
+    echo "initramfs is missing Plymouth's Pango label renderer (plymouth-label):" >&2
+    exit 1
+fi
+if ! grep -Eq 'usr/share/fonts/truetype/ubuntu/[^[:space:]]+\.ttf' <<<"${initrd_listing}"; then
+    echo "initramfs is missing Ubuntu fonts required by Plymouth's Pango label renderer:" >&2
+    exit 1
+fi
 
 # Same contract for the GPU drivers: the build fails if nouveau or any
 # nvidia module made it into the initramfs despite omit_drivers.

@@ -103,6 +103,14 @@ class PlymouthThemeTests(unittest.TestCase):
         self.assertLess(logo, theme)
         self.assertLess(theme, initramfs)
 
+    def test_containerfile_installs_plymouth_text_renderer(self):
+        text = CONTAINERFILE.read_text(encoding="utf-8")
+        package_line = next(
+            line for line in text.splitlines()
+            if "network-manager pipewire wireplumber upower udisks2 plymouth" in line
+        )
+        self.assertIn("plymouth-label", package_line.split())
+
     def test_initramfs_includes_and_verifies_plymouth(self):
         text = INITRAMFS.read_text(encoding="utf-8")
         self.assertIn('add_dracutmodules+=" bootc plymouth "', text)
@@ -111,6 +119,11 @@ class PlymouthThemeTests(unittest.TestCase):
                          "usr/share/plymouth/themes/rowyn/rowyn.script",
                          "usr/share/plymouth/themes/rowyn/rowyn-logo.png"):
             self.assertIn(required, text)
+
+    def test_initramfs_verifies_text_renderer_plugin_and_font(self):
+        text = INITRAMFS.read_text(encoding="utf-8")
+        self.assertIn("/plymouth/label-pango.so", text)
+        self.assertIn("usr/share/fonts/truetype/ubuntu/", text)
 
     def test_image_smoke_checks_cover_the_splash(self):
         workflow = BUILD_WORKFLOW.read_text(encoding="utf-8")
