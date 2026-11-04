@@ -35,6 +35,7 @@ function StatusCard({ icon, label, value, detail, tone = 'neutral' }: {
 }
 
 const destinations = [
+  { label: 'Development', description: 'Create and manage a dedicated Ubuntu development environment.', route: '/development', icon: '⌘', accent: 'violet' },
   { label: 'Play', description: 'Launchers, local game discovery, and controller checks.', route: '/play', icon: '✦', accent: 'berry' },
   { label: 'Apps', description: 'Browse and manage the apps available on this system.', route: '/apps', icon: '▦', accent: 'blue' },
   { label: 'Updates', description: 'Review system updates and available rollback options.', route: '/updates', icon: '↻', accent: 'amber' },

@@ -120,12 +120,12 @@ def adapt(web, replace_once):
         text = replace_once(text, line, '')
     text = replace_once(text, '      "Apps.tsx": sectionsModule.APPS_SECTIONS,',
         '      "Apps.tsx": sectionsModule.APPS_SECTIONS,\n      "Vpn.tsx": sectionsModule.VPN_SECTIONS,')
-    text = replace_once(text, '    assert.equal(failures.length, 0,', '''    for (const [page, name] of [["RowynDiagnostics.tsx", "Diagnostics"], ["RowynPlay.tsx", "Play"]]) {
+    text = replace_once(text, '    assert.equal(failures.length, 0,', '''    for (const [page, name] of [["RowynDiagnostics.tsx", "Diagnostics"], ["RowynPlay.tsx", "Play"], ["RowynDevelopment.tsx", "Development"]]) {
       const mod = await server.ssrLoadModule(`/src/pages/${page}`);
       const markup = renderToStaticMarkup(React.createElement(mod[name]));
       assert.match(markup, /Rowyn/);
       rendered += 1;
     }
     assert.equal(failures.length, 0,''')
-    text = replace_once(text, 'assert.ok(rendered >= 21,', 'assert.equal(rendered, 7,')
+    text = replace_once(text, 'assert.ok(rendered >= 21,', 'assert.equal(rendered, 8,')
     path.write_text(text)

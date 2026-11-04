@@ -4,7 +4,7 @@
 The port is deliberately scoped: Home/Dashboard, Apps, Updates and VPN
 survive upstream. This PC, Move In, the legacy Play and shell-only Dev Tools
 surfaces are cut. Small checked-in build/hub overlays add Rowyn-owned
-read-only Diagnostics and Play MVP routes without restoring legacy helpers;
+read-only Diagnostics and Play MVP routes plus a dedicated Development workspace without restoring legacy helpers;
 unreferenced upstream page files remain typecheckable. The Updates channel is repointed at
 Rowyn's own releases and GHCR repository, and the update helpers the Hub
 shells out to are repointed at the Rowyn implementations the payload
@@ -480,6 +480,8 @@ def apply_rowyn_mvp(root):
     manifest = json.loads(manifest_path.read_text())
     manifest["destinations"] = [d for d in manifest["destinations"] if d["key"] != "Play"]
     manifest["destinations"] += [
+        {"key": "Development", "route": "/development", "sections": [
+            {"key": "Development", "title": "Development", "description": "Create and manage a dedicated Ubuntu development environment."}]},
         {"key": "Diagnostics", "route": "/diagnostics", "sections": [
             {"key": "Diagnostics", "title": "Diagnostics", "description": "Read-only OS, kernel, image, graphics, controller, memory and disk checks; preview a local report."}]},
         {"key": "Play", "route": "/play", "sections": [
@@ -497,26 +499,32 @@ def apply_rowyn_mvp(root):
         text = replace_once(text, 'const Apps = lazy(', 'const Play = lazy(() => import("./pages/RowynPlay").then(({ Play: page }) => ({ default: page })));\nconst Apps = lazy(')
         text = replace_once(text, '  "/apps": "Apps",', '  "/play": "Play",\n  "/apps": "Apps",')
         text = replace_once(text, '              <Route path="/apps"', '              <Route path="/play" element={<Play />} />\n              <Route path="/apps"')
-    text = replace_once(text, 'const Apps = lazy(', 'const Diagnostics = lazy(() => import("./pages/RowynDiagnostics").then(({ Diagnostics: page }) => ({ default: page })));\nconst Apps = lazy(')
-    text = replace_once(text, '  "/apps": "Apps",', '  "/diagnostics": "Diagnostics",\n  "/apps": "Apps",')
-    text = replace_once(text, '              <Route path="/apps"', '              <Route path="/diagnostics" element={<Diagnostics />} />\n              <Route path="/apps"')
+    text = replace_once(text, 'const Apps = lazy(', 'const Development = lazy(() => import("./pages/RowynDevelopment").then(({ Development: page }) => ({ default: page })));\nconst Diagnostics = lazy(() => import("./pages/RowynDiagnostics").then(({ Diagnostics: page }) => ({ default: page })));\nconst Apps = lazy(')
+    text = replace_once(text, '  "/apps": "Apps",', '  "/development": "Development",\n  "/diagnostics": "Diagnostics",\n  "/apps": "Apps",')
+    text = replace_once(text, '              <Route path="/apps"', '              <Route path="/development" element={<Development />} />\n              <Route path="/diagnostics" element={<Diagnostics />} />\n              <Route path="/apps"')
     app.write_text(text)
     sidebar = web / "src/components/Sidebar.tsx"
     text = sidebar.read_text()
     old_play = '  Play: { hint: "Games, boost, controllers", Icon: IconPlay },\n'
     if old_play in text:
         text = replace_once(text, old_play, '')
-    text = replace_once(text, '  Apps: { hint:', '  Diagnostics: { hint: "Read-only system report", Icon: IconShield },\n  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n  Apps: { hint:')
+    text = replace_once(text, '  Apps: { hint:', '  Development: { hint: "Dedicated Ubuntu development environment", Icon: IconTerminal },\n  Diagnostics: { hint: "Read-only system report", Icon: IconShield },\n  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n  Apps: { hint:')
     sidebar.write_text(text)
     sections = web / "src/data/hubSections.ts"
     sections.write_text(replace_once(sections.read_text(),
         '  if (!destination) {',
         '  if (!destination && ["This PC", "Move In"].includes(destinationKey)) return [];\n  if (!destination) {')
-        + '\nexport const DIAGNOSTICS_SECTIONS = sectionsFor("Diagnostics");\n')
+        + '\nexport const DIAGNOSTICS_SECTIONS = sectionsFor("Diagnostics");\n'
+        + 'export const DEVELOPMENT_SECTIONS = sectionsFor("Development");\n')
     destinations = web / "src/data/destinations.ts"
-    text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  DIAGNOSTICS_SECTIONS,\n  APPS_SECTIONS,')
-    text = replace_once(text, '  Apps: APPS_SECTIONS,', '  Diagnostics: DIAGNOSTICS_SECTIONS,\n  Apps: APPS_SECTIONS,')
+    text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  DIAGNOSTICS_SECTIONS,\n  DEVELOPMENT_SECTIONS,\n  APPS_SECTIONS,')
+    text = replace_once(text, '  Apps: APPS_SECTIONS,', '  Development: DEVELOPMENT_SECTIONS,\n  Diagnostics: DIAGNOSTICS_SECTIONS,\n  Apps: APPS_SECTIONS,')
     destinations.write_text(text)
+    package = web / "package.json"
+    package_json = json.loads(package.read_text())
+    scripts = package_json.setdefault("scripts", {})
+    scripts["test:rowyn-mvp"] = "node --test tests/rowyn-mvp.test.mjs tests/rowyn-development.test.mjs"
+    package.write_text(json.dumps(package_json, indent=2) + "\n")
     overlay = Path(__file__).resolve().parent / "hub"
     for source in sorted(overlay.rglob("*")):
         if source.is_file() and source.relative_to(overlay).parts[0] in {"src", "src-tauri", "tests"}:
@@ -524,7 +532,7 @@ def apply_rowyn_mvp(root):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
     commands_mod = web / "src-tauri/src/commands/mod.rs"
-    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\npub(crate) mod rowyn_steam;\n')
+    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\npub(crate) mod rowyn_steam;\npub(crate) mod rowyn_development;\n')
     main = web / "src-tauri/src/main.rs"
     main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
@@ -532,7 +540,12 @@ def apply_rowyn_mvp(root):
         '            commands::rowyn_diagnostics::rowyn_controller_scan,\n'
         '            commands::rowyn_diagnostics::rowyn_export_report,\n'
         '            commands::rowyn_play::rowyn_launcher_open,\n'
-        '            commands::rowyn_steam::rowyn_steam_games_scan,'))
+        '            commands::rowyn_steam::rowyn_steam_games_scan,\n'
+        '            commands::rowyn_development::rowyn_development_list,\n'
+        '            commands::rowyn_development::rowyn_development_start,\n'
+        '            commands::rowyn_development::rowyn_development_job,\n'
+        '            commands::rowyn_development::rowyn_development_cancel,\n'
+        '            commands::rowyn_development::rowyn_development_open,'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
     assert spec is not None and spec.loader is not None
@@ -643,7 +656,7 @@ def port_source(root):
     text = replace_once(
         text,
         'import { IconHome, IconPlay, IconGrid, IconLock, IconMonitor, IconRefresh, IconShield, IconTerminal, IconTransfer } from "./icons";',
-        'import { IconHome, IconGrid, IconLock, IconRefresh, IconShield } from "./icons";')
+        'import { IconHome, IconGrid, IconLock, IconRefresh, IconShield, IconTerminal } from "./icons";')
     text = replace_once(
         text,
         "// in the rail automatically. Home and Dev Tools are shell-only routes\n"

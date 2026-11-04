@@ -40,6 +40,41 @@ class MvpRoutes(unittest.TestCase):
                 self.assertNotIn('setInterval', page)
 
 
+class MvpDevelopment(unittest.TestCase):
+    @unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO")
+    def test_development_is_registered_as_a_rowyn_owned_overlay(self):
+        with tempfile.TemporaryDirectory(prefix="rowyn-development-") as temp:
+            root = Path(temp) / "export"
+            hub.export_source(_pinned_repo(), root)
+            hub.apply_rowyn_mvp(root)
+            web = root / "src/rowyn-hub-web"
+            manifest = json.loads((web / "src/data/hubRoutes.json").read_text())
+            destinations = {d["key"]: d for d in manifest["destinations"]}
+            self.assertEqual(destinations["Development"]["route"], "/development")
+            self.assertEqual([s["key"] for s in destinations["Development"]["sections"]], ["Development"])
+            self.assertIn('Development: DEVELOPMENT_SECTIONS',
+                          (web / "src/data/destinations.ts").read_text())
+            self.assertTrue((web / "src/pages/RowynDevelopment.tsx").is_file())
+            page = (web / "src/pages/RowynDevelopment.tsx").read_text()
+            self.assertIn('id="hub-section-development"', page)
+            app = (web / "src/App.tsx").read_text()
+            self.assertIn('path="/development"', app)
+            self.assertIn('./pages/RowynDevelopment', app)
+            self.assertEqual((web / "src/components/Sidebar.tsx").read_text().count('Development: { hint:'), 1)
+            self.assertIn('Development: { hint: "Dedicated Ubuntu development environment", Icon: IconTerminal }',
+                          (web / "src/components/Sidebar.tsx").read_text())
+            handlers = (web / "src-tauri/src/main.rs").read_text()
+            for command in ("list", "start", "job", "cancel", "open"):
+                self.assertIn(f"commands::rowyn_development::rowyn_development_{command}", handlers)
+            self.assertIn("pub(crate) mod rowyn_development;",
+                          (web / "src-tauri/src/commands/mod.rs").read_text())
+            self.assertTrue((web / "src/services/rowynDevelopment.ts").is_file())
+            package = json.loads((web / "package.json").read_text())
+            self.assertIn("rowyn-development.test.mjs",
+                          package["scripts"]["test:rowyn-mvp"])
+            self.assertIn("Development", (web / "src/pages/Dashboard.tsx").read_text())
+
+
 class MvpHomeDashboard(unittest.TestCase):
     @unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO")
     def test_control_room_overlay_replaces_pinned_dashboard_with_safe_navigation(self):
@@ -140,6 +175,7 @@ class MvpExportTests(unittest.TestCase):
             smoke = (web / "tests/hub-shell-smoke.test.mjs").read_text()
             self.assertIn('RowynDiagnostics.tsx', smoke)
             self.assertIn('RowynPlay.tsx', smoke)
+            self.assertIn('RowynDevelopment.tsx', smoke)
             self.assertNotIn('"ThisPc.tsx":', smoke)
 
 

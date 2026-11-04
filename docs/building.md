@@ -17,6 +17,18 @@ Images contain no login accounts; the installer creates the only one. SSH is ins
 
 The Containerfile builds bootc from the fetched source with offline Cargo dependencies. KDE Plasma and native OS dependencies are image content. Flatpak apps and rootless Ubuntu development containers are separate from the read-only host.
 
+### Development workspace
+
+Hub's Development page manages one dedicated rootless Distrobox named
+`rowyn-ubuntu-dev`, based on Ubuntu 26.10. It refuses to take ownership of an
+existing box with that name rather than modifying a box the user already
+owns. Distrobox shares the user's home directory, so it is a development
+environment, not a security sandbox. Creating or deleting the box requires an
+explicit user action; deleting it removes the container and its installed
+packages, not files in the shared home directory. The feature does not install
+packages or otherwise change the native host. No live container operations
+are part of source validation.
+
 ## Validate source changes
 
 Requirements include Git, Python 3 with PyYAML, Bash, and ShellCheck. Run from the repository root:

@@ -290,7 +290,7 @@ class PinnedHubSourceTests(unittest.TestCase):
 
                 manifest = json.loads((web / "src/data/hubRoutes.json").read_text())
                 self.assertEqual([d["key"] for d in manifest["destinations"]],
-                                 ["Apps", "VPN", "Updates", "Diagnostics", "Play"])
+                                 ["Apps", "VPN", "Updates", "Development", "Diagnostics", "Play"])
 
                 app = (web / "src/App.tsx").read_text()
                 for route in ("/dev-tools", "/this-pc", "/move-in"):
@@ -312,7 +312,9 @@ class PinnedHubSourceTests(unittest.TestCase):
                 self.assertIn("System tools", sidebar)
                 self.assertNotIn("Kyth Hub", sidebar)
                 self.assertNotIn("/dev-tools", sidebar)
-                self.assertNotIn("IconTerminal", sidebar)
+                self.assertNotIn('label: "Dev Tools"', sidebar)
+                self.assertEqual(sidebar.count('Development: { hint:'), 1)
+                self.assertIn('Development: { hint: "Dedicated Ubuntu development environment", Icon: IconTerminal }', sidebar)
                 for key in ('"This PC"', '"Move In"'):
                     self.assertNotIn(f"{key}: {{ hint:", sidebar)
                 self.assertIn('VPN: { hint: "Secure work connections", Icon: IconLock },', sidebar)
