@@ -102,6 +102,11 @@ class SystemdDropIns(InstalledTree):
             "LowBattery][Performance": {"PowerProfile": "power-saver"},
         })
 
+    def test_bluetooth_is_enabled_at_login_as_immutable_bluedevil_policy(self):
+        self.assertEqual(ini(self.root / "etc/xdg/bluedevilglobalrc"), {
+            "General": {"launchState[$i]": "enable"},
+        })
+
     def test_all_new_files_commented_and_vendor_located(self):
         for rel in [
             "usr/lib/systemd/oomd.conf.d/90-rowyn.conf",
@@ -110,6 +115,7 @@ class SystemdDropIns(InstalledTree):
             "usr/lib/systemd/sleep.conf.d/90-rowyn.conf",
             "usr/lib/systemd/system/user.slice.d/90-rowyn-weights.conf",
             "etc/xdg/powerdevilrc",
+            "etc/xdg/bluedevilglobalrc",
             "usr/lib/systemd/system/rowyn-wifi-regdom.service",
         ]:
             path = self.root / rel
@@ -118,7 +124,10 @@ class SystemdDropIns(InstalledTree):
         self.assertFalse((self.root / "var").exists())
         # Nothing under /etc except the documented GameMode and KDE defaults.
         etc = {str(p.relative_to(self.root)) for p in (self.root / "etc").rglob("*") if p.is_file()}
-        self.assertEqual(etc, {"etc/xdg/baloofilerc", "etc/gamemode.ini", "etc/xdg/powerdevilrc"})
+        self.assertEqual(etc, {
+            "etc/xdg/baloofilerc", "etc/gamemode.ini", "etc/xdg/powerdevilrc",
+            "etc/xdg/bluedevilglobalrc",
+        })
 
     def test_idempotent(self):
         def snap():

@@ -251,6 +251,16 @@ PowerProfile=power-saver
 PowerProfile=power-saver
 EOF2
 
+# BlueDevil's KConfigXT launchState controls its initial-state restoration.
+# Make Enable immutable so an old per-user Remember setting (and saved
+# adapter _powered=false entries) cannot override Rowyn's startup policy.
+# This affects only launch; users can still disable Bluetooth for the session.
+write_file /etc/xdg/bluedevilglobalrc 0644 <<'EOF2'
+# Rowyn: BlueDevil enables Bluetooth at desktop launch; session toggles remain usable.
+[General]
+launchState[$i]=enable
+EOF2
+
 # Wi-Fi regulatory domain from the timezone (script and unit live beside this
 # helper; the unit is enabled by the Containerfile).
 src_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
