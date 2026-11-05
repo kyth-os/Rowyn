@@ -303,6 +303,11 @@ class UbuntuGuardTests(unittest.TestCase):
                 target = root / file
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / file).read_bytes())
+            digest_ref = next(
+                line.split()[1]
+                for line in (ROOT / "Containerfile").read_text().splitlines()
+                if line.startswith("FROM docker.io/library/ubuntu@sha256:")
+            )
             for file, old, new in [
                 ("build/ubuntu-live.Containerfile", "FROM ${UBUNTU_IMAGE}", "FROM registry.fedoraproject.org/fedora:45"),
                 ("build/configure-live.sh", "set -euo pipefail", "set -euo pipefail\ndnf install -y rust"),
@@ -310,7 +315,7 @@ class UbuntuGuardTests(unittest.TestCase):
                 ("build/assemble-iso.sh", "set -euo pipefail", "set -euo pipefail\nbash build_files/build-live-iso.sh"),
                 (".github/workflows/installer-iso.yml", "docker.io/library/ubuntu@sha256:", "ghcr.io/kyth-os/kyth@sha256:"),
                 ("Containerfile", "FROM docker.io/library/ubuntu@sha256:", "FROM docker.io/library/ubuntu:26.10 # "),
-                ("Containerfile", "ubuntu@sha256:262df65c", "ubuntu@sha256:00000000"),
+                ("Containerfile", digest_ref, "docker.io/library/ubuntu@sha256:" + "0" * 64),
             ]:
                 path = root / file
                 text = path.read_text()

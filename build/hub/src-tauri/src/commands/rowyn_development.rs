@@ -19,6 +19,11 @@ const IMAGE_TAG_ALIAS: &str = "docker.io/library/ubuntu:26.10";
 // USN-8996-1 (CVE-2026-109518): no published Ubuntu image carries this fix yet,
 // so the managed container installs the fixed apt itself before any preset.
 const APT_FLOOR: &str = "3.3.3ubuntu0.1";
+// A container carrying the Rowyn labels stays ours even when it still runs a
+// digest the pin has since moved past; only the tag and other images differ.
+fn managed_image(image: &str) -> bool {
+    image == IMAGE_TAG_ALIAS || image.starts_with("docker.io/library/ubuntu@sha256:")
+}
 const LABEL: &str = "io.rowyn.development";
 const LABEL_VALUE: &str = "ubuntu-v1";
 const MAX_OUTPUT: usize = 512 * 1024;
@@ -199,7 +204,7 @@ fn validate_name(n: &str) -> Result<(), String> {
 }
 fn ownership(c: &ContainerIdentity) -> bool {
     c.name == NAME
-        && (c.image == IMAGE || c.image == IMAGE_TAG_ALIAS)
+        && managed_image(&c.image)
         && c.labels.get(LABEL).map(String::as_str) == Some(LABEL_VALUE)
         && c.labels.get("manager").map(String::as_str) == Some("distrobox")
 }

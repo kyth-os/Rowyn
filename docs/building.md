@@ -4,6 +4,14 @@ Rowyn has two build products: an Ubuntu bootc desktop image and an Ubuntu live I
 
 ## Build the OS image
 
+The Ubuntu base image is pinned by digest in `Containerfile` and in
+`.github/workflows/installer-iso.yml`; `build/ubuntu-pin-bump.py` resolves the
+`ubuntu:26.10` tag and moves both pins together. `.github/workflows/ubuntu-pin.yml`
+runs that daily, validates the result and commits it to `main`, so the normal
+main-branch runs rebuild, smoke-test and sign a freshly pinned payload. To bump
+it by hand, run `python3 build/ubuntu-pin-bump.py --apply "$(python3
+build/ubuntu-pin-bump.py --resolve)"` and then `./build/validate.sh`.
+
 From the repository root, fetch the pinned offline inputs and build with Podman:
 
 ```bash

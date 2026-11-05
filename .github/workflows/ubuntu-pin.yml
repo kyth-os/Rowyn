@@ -1,0 +1,95 @@
+name: Rowyn Ubuntu digest pin
+
+# The payload and the live ISO start from one digest-pinned Ubuntu image
+# (build/ubuntu-only-check.py enforces that they agree). Canonical replaces
+# that image behind the tag, so resolve it on a schedule, move every pin
+# together, validate, and commit to main: the normal main-branch runs then
+# build, smoke-test and sign the result. The repository takes no pull
+# requests, so this never opens one.
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rowyn-ubuntu-pin
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: >-
+      github.repository == 'mrtrickdotorg/Rowyn' &&
+      github.ref == 'refs/heads/main'
+    name: Move the Ubuntu digest pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+
+      - name: Install validation tools
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15; then
+              break
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying" >&2
+            sleep 5
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::apt-get update failed after three attempts" >&2
+              exit 1
+            fi
+          done
+          sudo apt-get install -y --no-install-recommends python3-yaml shellcheck
+
+      - name: Resolve the published Ubuntu image
+        id: resolve
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          pinned="$(python3 build/ubuntu-pin-bump.py --pinned)"
+          newest="$(python3 build/ubuntu-pin-bump.py --resolve)"
+          echo "pinned=${pinned}" >> "${GITHUB_OUTPUT}"
+          echo "newest=${newest}" >> "${GITHUB_OUTPUT}"
+          if [ "${pinned}" = "${newest}" ]; then
+            echo "::notice::Ubuntu pin is current: ${pinned}"
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::Ubuntu pin moves ${pinned} to ${newest}"
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Move both pins and validate
+        if: steps.resolve.outputs.changed == 'true'
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          ROWYN_MOUNT_FIXTURE_PRIVILEGED: "1"
+        run: |
+          python3 build/ubuntu-pin-bump.py --apply "${{ steps.resolve.outputs.newest }}"
+          ./build/validate.sh
+
+      - name: Commit the pin to main
+        if: steps.resolve.outputs.changed == 'true'
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          NEWEST: ${{ steps.resolve.outputs.newest }}
+          PINNED: ${{ steps.resolve.outputs.pinned }}
+        run: |
+          if git diff --quiet; then
+            echo "::notice::pin already matched; nothing to commit"
+            exit 0
+          fi
+          git config user.name "rowyn-ci"
+          git config user.email "rowyn-ci@users.noreply.github.com"
+          git add Containerfile .github/workflows/installer-iso.yml \
+            build/hub/src-tauri/src/commands/rowyn_development.rs \
+            build/hub/src/services/rowynDevelopmentModel.ts \
+            docs/building.md
+          git commit -m "$(printf 'chore(image): pin Ubuntu to %s\n\nScheduled digest bump: %s -> %s.\n' \
+            "${NEWEST#*@}" "${PINNED#*@}" "${NEWEST#*@}")"
+          git push origin main

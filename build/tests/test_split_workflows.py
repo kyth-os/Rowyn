@@ -256,11 +256,13 @@ class WorkflowTests(unittest.TestCase):
             workflow = yaml.safe_load(workflow_path.read_text())
             for job_name, job in workflow["jobs"].items():
                 for step in job["steps"]:
-                    if step.get("run") == "./build/validate.sh":
+                    run = (step.get("run") or "").strip()
+                    if run.split()[-1:] == ["./build/validate.sh"]:
                         callers.append((workflow_path.name, job_name, step))
         self.assertEqual(
             [(workflow, job) for workflow, job, _ in callers],
-            [("build.yml", "validate"), ("installer-iso.yml", "validate")],
+            [("build.yml", "validate"), ("installer-iso.yml", "validate"),
+             ("ubuntu-pin.yml", "bump")],
         )
         for _, _, step in callers:
             self.assertEqual(step["env"].get("ROWYN_MOUNT_FIXTURE_PRIVILEGED"), "1")

@@ -248,6 +248,11 @@ fn managed_image_is_digest_pinned_and_legacy_tag_containers_stay_owned() {
     let mut foreign = owned();
     foreign.image = "docker.io/library/ubuntu:latest".into();
     assert!(!ownership(&foreign));
+    // A scheduled digest bump must not orphan containers created on the pin
+    // the build used before it moved.
+    let mut previous = owned();
+    previous.image = format!("docker.io/library/ubuntu@sha256:{}", "a".repeat(64));
+    assert!(ownership(&previous));
 }
 
 #[test]
