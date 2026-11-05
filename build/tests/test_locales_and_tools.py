@@ -57,10 +57,13 @@ class ToolTests(unittest.TestCase):
 class AptSecurityFloorTests(unittest.TestCase):
     """USN-8996-1 (CVE-2026-109518) must be closed where packages are installed."""
 
-    def test_smoke_asserts_the_fixed_apt(self):
+    def test_smoke_does_not_read_a_dpkg_database_the_payload_lacks(self):
+        # bootc-rootfs.sh deletes /var, so the payload has no dpkg database;
+        # the fixed APT itself is gated in the Containerfile base stage.
         block = smoke_block()
-        self.assertIn("dpkg --compare-versions", block)
-        self.assertIn("3.3.3ubuntu0.1", block)
+        self.assertNotIn("dpkg -s", block)
+        self.assertNotIn("dpkg-query", block)
+        self.assertIn("test -x /usr/bin/apt-get", block)
 
     def test_base_stage_takes_the_fixed_apt_before_other_installs(self):
         self.assertIn("--only-upgrade apt", CONTAINERFILE)

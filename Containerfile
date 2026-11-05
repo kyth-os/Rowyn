@@ -184,6 +184,15 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
     apt-get purge -y plasma-discover-backend-snap snapd plasma-welcome && \
     rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/*
 
+# bootc-rootfs.sh deletes /var, so the payload carries no dpkg database: the
+# KCM packages the Hub opens can only be asserted here, while it exists.
+RUN set -eux; \
+    for package in bluedevil kscreen powerdevil plasma-nm plasma-pa kde-config-flatpak kup-backup; do \
+        test "$(dpkg-query -W -f='${db:Status-Status}' "$package")" = installed; \
+    done; \
+    test -s /usr/share/applications/kcm_kup.desktop; \
+    test -s /usr/share/applications/kcm_app-permissions.desktop
+
 # NVIDIA build gate. The image must carry exactly one kernel and the
 # Canonical-signed nvidia modules built for it; a mismatch (the archive
 # publishing a new kernel before its nvidia modules) fails the build here

@@ -124,14 +124,17 @@ class SettingsCoverage(unittest.TestCase):
         for package in KCM_PACKAGES:
             self.assertIn(package, packages, f"{package} must be explicit, not a recommend")
 
-    def test_image_smoke_checks_providers_and_probe_binaries(self):
+    def test_image_smoke_checks_probe_binaries(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(
-            "for package in bluedevil kscreen powerdevil plasma-nm plasma-pa "
-            "kde-config-flatpak kup-backup; do", workflow)
         for binary in ("/usr/bin/nmcli", "/usr/bin/rfkill", "/usr/bin/kscreen-doctor",
                        "/usr/bin/df"):
             self.assertIn(f"test -x {binary}", workflow)
+        # bootc-rootfs.sh deletes /var, so the payload has no dpkg database:
+        # package presence is asserted in the Containerfile instead.
+        self.assertNotIn('dpkg -s "$package"', workflow)
+        self.assertIn(
+            "for package in bluedevil kscreen powerdevil plasma-nm plasma-pa "
+            "kde-config-flatpak kup-backup; do", CONTAINER.read_text(encoding="utf-8"))
 
 
 class HubTestJob(unittest.TestCase):
