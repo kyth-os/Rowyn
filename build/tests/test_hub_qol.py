@@ -45,6 +45,22 @@ class QolBootHealthTests(unittest.TestCase):
             self.assertNotIn(forbidden, bridge)
 
 
+class QolHomeStatusRow(unittest.TestCase):
+    """Home must not open on two permanent failure cards off a Rowyn image."""
+
+    def test_home_hides_the_status_row_when_neither_source_exists(self):
+        root = ROOT / "build/hub/src"
+        dashboard = (root / "pages/Dashboard.tsx").read_text()
+        self.assertIn("hidden={!statusRowVisible}", dashboard)
+        self.assertIn("<BootHealthPanel compact />", dashboard)
+        self.assertIn("<UpdateStatusBanner />", dashboard)
+        for path, source in (("components/UpdateStatusBanner.tsx", "updates"),
+                             ("components/BootHealthPanel.tsx", "bootHealth")):
+            self.assertIn(f"reportStatusSource('{source}'", (root / path).read_text())
+        # `hidden` has to beat the section's own display rule.
+        self.assertIn(".rowyn-home-section[hidden]", (root / "styles/rowynMvp.css").read_text())
+
+
 class QolIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO")
     def test_backup_workspace_is_registered_once_with_native_handlers(self):

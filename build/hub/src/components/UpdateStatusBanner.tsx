@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchUpdatesSnapshot, invalidateSharedReads, type UpdatesSnapshot } from '../services/liveData';
-import { projectUpdateBanner } from '../services/rowynUpdateStatusModel';
+import { projectUpdateBanner, type UpdateBannerState } from '../services/rowynUpdateStatusModel';
+import { reportStatusSource } from '../services/rowynStatusSources';
+
+// States only a readable bootc can produce. A failed read reports "blocked",
+// so that state must not count as the source existing on this host.
+const UPDATE_SOURCE_STATES: UpdateBannerState[] = ['current', 'available', 'staged', 'restartready', 'staging'];
 
 /** Passive read model shared by Home and Updates. No reboot or staging actions. */
 export function UpdateStatusBanner() {
@@ -35,6 +40,9 @@ export function UpdateStatusBanner() {
     return () => { mounted.current = false; generation.current++; };
   }, []);
   const view = projectUpdateBanner(snapshot, failed);
+  useEffect(() => {
+    reportStatusSource('updates', UPDATE_SOURCE_STATES.includes(view.state));
+  }, [view.state]);
   return <section aria-label="System update status" data-state={view.state} className="glass dashboard-card rowyn-update-status-banner">
     <strong>{view.label}</strong><p className="card-copy">{view.guidance}</p>
     <div className="home-actions">

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { rowynBootHealthSnapshot } from '../services/rowynBootHealth';
 import type { BootHealthSnapshot } from '../services/rowynBootHealthModel';
+import { reportStatusSource } from '../services/rowynStatusSources';
 import '../styles/rowynMvp.css';
 
 /**
@@ -37,6 +38,12 @@ export function BootHealthPanel({ compact = false }: { compact?: boolean }) {
     void read();
     return () => { mounted.current = false; generation.current++; };
   }, []);
+
+  // Absence of the record is not a failure, but it does mean this host has no
+  // boot-health source to show.
+  useEffect(() => {
+    reportStatusSource('bootHealth', snapshot?.available === true);
+  }, [snapshot]);
 
   const state = error ? 'unavailable' : snapshot?.state ?? 'pending';
   const label = error ? 'Boot health unavailable' : snapshot?.label ?? 'Reading boot-health record…';

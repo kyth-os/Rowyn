@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupChecklist } from './SetupChecklist';
+import { useStatusRow } from '../services/useStatusRow';
 import { BootHealthPanel } from '../components/BootHealthPanel';
 import { UpdateStatusBanner } from '../components/UpdateStatusBanner';
 import { degradedDashboardAcceptance, recordHubAcceptance } from '../services/acceptance';
@@ -66,6 +67,7 @@ export function Dashboard() {
   const [storageFree, setStorageFree] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const statusRowVisible = useStatusRow();
 
   useEffect(() => {
     let cancelled = false;
@@ -143,7 +145,7 @@ export function Dashboard() {
         <span className="rowyn-home-orbit rowyn-home-orbit-two" aria-hidden="true" />
       </section>
 
-      <section className="rowyn-home-section" aria-labelledby="rowyn-home-status-title">
+      <section className="rowyn-home-section" aria-labelledby="rowyn-home-status-title" hidden={!statusRowVisible}>
         <div className="rowyn-home-section-heading">
           <div><span className="home-eyebrow">READ-ONLY CHECKS</span><h2 id="rowyn-home-status-title">System status</h2></div>
           <span className="rowyn-home-section-aside">Refresh a reading here; changes belong in Updates and Diagnostics</span>
