@@ -45,6 +45,37 @@ class QolBootHealthTests(unittest.TestCase):
             self.assertNotIn(forbidden, bridge)
 
 
+class QolUpdateChannel(unittest.TestCase):
+    """The channel the device follows must be named, never invented.
+
+    `current_update_channel` resolves the tag from the probe cache or bootc's
+    image reference; the UI maps that tag to a display name. Rowyn's channels
+    are `stable` today and `test` when it is published, so both need a label
+    or a real system reads as a bare tag.
+    """
+
+    def test_rowyn_channels_are_named_and_unknown_tags_stay_raw(self):
+        port = (ROOT / "build/ubuntu-hub-source.py").read_text()
+        self.assertIn('stable: "Stable"', port)
+        self.assertIn('test: "Test"', port)
+        dashboard = (ROOT / "build/hub/src/pages/Dashboard.tsx").read_text()
+        # An unreadable channel says so rather than defaulting to a channel name.
+        self.assertIn("updateChannel ?? 'Unavailable'", dashboard)
+        self.assertIn('label="Update channel"', dashboard)
+
+    def test_channel_resolution_reads_bootc_probe_then_image_reference(self):
+        bootc = (ROOT / "hub-source/src/rowyn-shared-rs/src/system/bootc.rs")
+        policy = (ROOT / "hub-source/src/rowyn-shared-rs/src/system/bootc_policy.rs")
+        if not bootc.exists() or not policy.exists():
+            self.skipTest("ported tree is not present; run the port first")
+        resolution = bootc.read_text()
+        self.assertIn('read_section("bootc-branch")', resolution)
+        self.assertIn("image_reference()", resolution)
+        self.assertIn("branch_from_ref", resolution)
+        # A digest-only reference has no tag, so it must not guess a channel.
+        self.assertIn("pub fn branch_from_ref", policy.read_text())
+
+
 class QolHomeStatusRow(unittest.TestCase):
     """Home must not open on two permanent failure cards off a Rowyn image."""
 

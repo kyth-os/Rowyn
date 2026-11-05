@@ -1318,12 +1318,16 @@ def port_source(root):
 
     live_data = web / "src/services/liveData.ts"
     text = live_data.read_text()
+    # Rowyn's own channels are `stable` (the current update target) and `test`
+    # (planned). Name both here so a future `:test` image reads as "Test"
+    # instead of falling through to the raw tag; unknown tags still fall back
+    # to the tag itself rather than being given an invented name.
     text = replace_once(text, '  latest: "Stable (latest)",\n',
-                        '  stable: "Stable",\n  latest: "Stable (latest)",\n')
+                        '  stable: "Stable",\n  test: "Test",\n  latest: "Stable (latest)",\n')
     live_data.write_text(text)
     audit_notes.append(
         "D3: release-notes block + Update history card cut from UpdatesOverview; "
-        "CHANNEL_DISPLAY maps stable -> Stable")
+        "CHANNEL_DISPLAY maps stable -> Stable and test -> Test")
 
     # --- B2: system Flatpak update/uninstall without the Kyth daemon ---------
     # commands::privilege::flatpak_update / flatpak_uninstall talk to
