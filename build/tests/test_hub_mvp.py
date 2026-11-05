@@ -41,6 +41,54 @@ class MvpRoutes(unittest.TestCase):
                 self.assertNotIn('setInterval', page)
 
 
+class HubSectionLayout(unittest.TestCase):
+    """A section must never inherit a page root's centring margins.
+
+    `.rowyn-mvp`/`.rowyn-home` centre themselves with `margin: 0 auto`, and auto
+    side margins cancel a flex child's stretch. The pages that host Rowyn
+    sections are flex columns (`.apps-page`, `.updates-page`, `.play-page`), so
+    a section picking up one of those classes collapses to the width of its
+    longest sentence and floats in the middle of the workspace.
+    """
+    PAGE_ROOTS = {".rowyn-mvp", ".rowyn-home"}
+
+    @staticmethod
+    def _has_auto_side_margin(body):
+        for side, value in re.findall(r"margin(-[a-z]+)?\s*:\s*([^;]+);", body):
+            if side in ("-left", "-right", "-inline"):
+                return "auto" in value.split()
+            if not side:
+                parts = value.split()
+                if len(parts) >= 2 and "auto" in (parts[1], parts[-1]):
+                    return True
+        return False
+
+    def test_auto_side_margins_belong_to_page_roots_only(self):
+        raw = (ROOT / "build/hub/src/styles/rowynMvp.css").read_text()
+        css = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+        centred = {
+            selector.strip()
+            for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+            if self._has_auto_side_margin(rule.group(2))
+            for selector in rule.group(1).split(",")
+        }
+        self.assertTrue(centred, "the page roots still centre themselves")
+        self.assertLessEqual(centred, self.PAGE_ROOTS)
+
+    def test_page_root_classes_are_only_used_on_page_roots(self):
+        for path in sorted((ROOT / "build/hub/src").rglob("*.tsx")):
+            for match in re.finditer(
+                    r'className="([^"]*\browyn-(?:mvp|home)(?![\w-])[^"]*)"',
+                    path.read_text()):
+                self.assertIn("page-content", match.group(1),
+                              f"{path.name} uses a page-root class on an embedded section")
+
+    def test_apps_defaults_section_owns_its_layout(self):
+        apps = (ROOT / "build/hub/src/pages/AppsDefaultsAccess.tsx").read_text()
+        self.assertIn("rowyn-apps-defaults", apps)
+        self.assertNotIn("rowyn-mvp", apps)
+
+
 class DevelopmentImagePin(unittest.TestCase):
     """The managed box must pin its image and raise apt before presets."""
 
