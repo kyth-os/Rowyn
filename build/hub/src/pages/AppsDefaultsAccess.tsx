@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
+import '../styles/rowynMvp.css';
 
 type Action = { id: SettingTarget; title: string; description: string };
 const actions: Action[] = [
@@ -26,20 +27,24 @@ export function AppsDefaultsAccess() {
   }
 
   return (
-    <section className="glass dashboard-card rowyn-mvp" aria-label="Defaults and access">
-      <h2>Defaults &amp; Access</h2>
-      <p>Portal-mediated file selection can grant access, and users may choose persistent portal permissions. Review broad persistent overrides separately.</p>
-      <div>
+    <section className="glass dashboard-card rowyn-apps-defaults" aria-label="Defaults and access">
+      <header className="rowyn-apps-defaults-head">
+        <h2>Defaults &amp; Access</h2>
+        <p>Portal-mediated file selection can grant access, and users may choose persistent portal permissions. Review broad persistent overrides separately.</p>
+      </header>
+      <div className="rowyn-apps-defaults-grid">
         {actions.map(({ id, title, description }) => (
-          <article key={id}>
+          <article key={id} className="rowyn-apps-default">
             <h3>{title}</h3>
             <p>{description}</p>
-            <button className="action-button" disabled={pending !== null} onClick={() => void launch(id)}>
-              {pending === id ? 'Opening…' : 'Open system settings'}
-            </button>
-            {result?.target === id && (
-              <p role={result.error ? 'alert' : 'status'}>{result.text}</p>
-            )}
+            <div className="rowyn-apps-default-actions">
+              <button className="action-button" disabled={pending !== null} onClick={() => void launch(id)}>
+                {pending === id ? 'Opening…' : 'Open system settings'}
+              </button>
+              {result?.target === id && (
+                <p className="rowyn-apps-default-status" data-error={result.error} role={result.error ? 'alert' : 'status'}>{result.text}</p>
+              )}
+            </div>
           </article>
         ))}
       </div>

@@ -70,6 +70,20 @@
   .rowyn-mvp .dashboard-card { padding: 18px; }
   .rowyn-launchers { grid-template-columns: 1fr; }
 }
+/* Apps: this card spans the workspace like the hero and the App Store below it.
+   It cannot use `.rowyn-mvp`, whose auto side margins shrink a flex child to fit. */
+.rowyn-apps-defaults { width: 100%; margin: 0; padding: 20px 22px; }
+.rowyn-apps-defaults-head { max-width: 78ch; }
+.rowyn-apps-defaults-head h2 { margin: 0; font-size: 15px; letter-spacing: -.2px; }
+.rowyn-apps-defaults-head p { margin: 6px 0 0; color: var(--text-muted, #a7adb9); font-size: 12px; line-height: 1.55; }
+.rowyn-apps-defaults-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 11px; margin-top: 16px; }
+.rowyn-apps-default { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--hairline, rgba(255,255,255,.1)); border-radius: 12px; background: linear-gradient(145deg, rgba(255,255,255,.035), rgba(255,255,255,.012)); }
+.rowyn-apps-default h3 { margin: 0; font-size: 12.5px; font-weight: 700; }
+.rowyn-apps-default p { margin: 0; color: var(--text-muted, #a7adb9); font-size: 12px; line-height: 1.5; }
+.rowyn-apps-default-actions { display: grid; justify-items: start; gap: 7px; margin-top: auto; padding-top: 10px; }
+.rowyn-apps-default p.rowyn-apps-default-status { padding-left: 8px; border-left: 2px solid var(--accent-end, #78b7ff); color: var(--text, #f1f3f7); }
+.rowyn-apps-default p.rowyn-apps-default-status[data-error="true"] { border-left-color: var(--status-warn, #efb65a); color: var(--status-warn, #efb65a); }
+
 @media (prefers-reduced-motion: reduce) {
   .rowyn-launcher, .home-destination, .home-destination-arrow { transition: none; }
   .rowyn-launcher:hover, .home-destination:hover, .home-destination:active { transform: none; }
