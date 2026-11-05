@@ -114,7 +114,10 @@ class QolIntegrationTests(unittest.TestCase):
             self.assertIn("handle_development_cli", handlers)
             self.assertIn("SetupChecklist", (web / "src/pages/Dashboard.tsx").read_text())
             self.assertIn("AppsDefaultsAccess", (web / "src/pages/Apps.tsx").read_text())
-            self.assertIn("UpdateStatusBanner", (web / "src/pages/Updates.tsx").read_text())
+            updates_page = (web / "src/pages/Updates.tsx").read_text()
+            self.assertNotIn("UpdateStatusBanner", updates_page)
+            self.assertLess(updates_page.index("<UpdatesOverview />"),
+                            updates_page.index("rowyn-updates-panels"))
             self.assertIn("RecoveryClarity", (web / "src/pages/Updates.tsx").read_text())
             diagnostics_page = (web / "src/pages/RowynDiagnostics.tsx").read_text()
             self.assertIn("<StorageCare />", diagnostics_page)

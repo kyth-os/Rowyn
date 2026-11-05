@@ -107,11 +107,10 @@
 .rowyn-apps-default p.rowyn-apps-default-status { padding-left: 8px; border-left: 2px solid var(--accent-end, #78b7ff); color: var(--text, #f1f3f7); }
 .rowyn-apps-default p.rowyn-apps-default-status[data-error="true"] { border-left-color: var(--status-warn, #efb65a); color: var(--status-warn, #efb65a); }
 
-/* Updates: the three read-only panels share one compact group above the hero
-   instead of stacking as three full-width cards that restate each other. */
-.rowyn-updates-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); align-items: start; gap: 13px; }
+/* Updates: the read-only panels share one compact row below the update flow,
+   so the hero leads the page and both cards keep the same width. */
+.rowyn-updates-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); align-items: stretch; gap: 13px; }
 .rowyn-updates-panels > .dashboard-card { display: flex; min-width: 0; flex-direction: column; gap: 4px; margin: 0; padding: 18px 20px; border-radius: 16px; }
-.rowyn-updates-panels > #hub-section-recovery { grid-column: 1 / -1; }
 .rowyn-updates-panels h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
 .rowyn-updates-panels h3 { margin: 10px 0 0; font-size: .86rem; }
 .rowyn-updates-panels p { margin: 4px 0 0; color: var(--text-muted, #a7adb9); font-size: .78rem; line-height: 1.5; }

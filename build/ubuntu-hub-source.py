@@ -501,14 +501,22 @@ def apply_rowyn_qol(root):
     text = 'import { AppsDefaultsAccess } from "./AppsDefaultsAccess";\n' + apps.read_text()
     apps.write_text(replace_once(text, '      <HubPage', '      <AppsDefaultsAccess />\n      <HubPage'))
     updates = web / "src/pages/Updates.tsx"
-    text = ('import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\n'
-            'import { RecoveryClarity } from "../components/RecoveryClarity";\n'
+    text = ('import { RecoveryClarity } from "../components/RecoveryClarity";\n'
             'import { BootHealthPanel } from "../components/BootHealthPanel";\n') + updates.read_text()
-    # One compact group for the three read-only panels: as three full-width
-    # cards above the hero they restated the same failure three times.
+    # The update flow leads the page: hero, guidance, next step, details. The two
+    # read-only panels follow it in one row instead of pushing the hero down.
     updates.write_text(replace_once(text, '<UpdatesOverview />',
-        '<section className="rowyn-updates-panels"><UpdateStatusBanner />'
-        '<RecoveryClarity /><BootHealthPanel /></section><UpdatesOverview />'))
+        '<UpdatesOverview /><section className="rowyn-updates-panels">'
+        '<RecoveryClarity /><BootHealthPanel /></section>'))
+    overview = web / "src/components/UpdatesOverview.tsx"
+    text = overview.read_text()
+    # The hero chip and the guidance block already name the update state, so this
+    # card restated it a third time between them and the next-step actions.
+    text = cut_between(text, "  const systemStatusLabel = !loaded\n",
+                       "  const guidance: UpdateGuidance = (() => {")
+    text = cut_between(text, '      <div className="updates-status-grid updates-status-grid-single"',
+                       '      <div className="updates-actions-card updates-primary-actions">')
+    overview.write_text(text)
     app_store = web / "src/components/AppStoreSection.tsx"
     text = 'import { AppRemovalConfirmation } from "./AppRemovalConfirmation";\n' + app_store.read_text()
     text = replace_once(text,
