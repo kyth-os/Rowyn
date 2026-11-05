@@ -27,8 +27,52 @@ fn managed_image(image: &str) -> bool {
 const LABEL: &str = "io.rowyn.development";
 const LABEL_VALUE: &str = "ubuntu-v1";
 const MAX_OUTPUT: usize = 512 * 1024;
-const PODMAN: &str = "/usr/bin/podman";
-const DISTROBOX: &str = "/usr/bin/distrobox";
+// Resolve the container tooling instead of assuming /usr/bin. A hardcoded path
+// meant a host that installs distrobox through its own installer
+// (/usr/local/bin) or podman from a non-package location reported the whole
+// environment as unavailable, disabling every action even with a box present.
+// Package locations are tried first so a user-writable PATH entry cannot stand
+// in for the reviewed binaries; PATH itself is the last resort.
+const PODMAN_FALLBACKS: &[&str] = &["/usr/bin/podman", "/usr/local/bin/podman", "/usr/sbin/podman"];
+const DISTROBOX_FALLBACKS: &[&str] = &["/usr/bin/distrobox", "/usr/local/bin/distrobox"];
+const TERMINAL_FALLBACKS: &[&str] = &["/usr/bin/konsole", "/usr/local/bin/konsole"];
+fn resolve_tool(name: &str, fallbacks: &[&str]) -> Option<std::path::PathBuf> {
+    fallbacks
+        .iter()
+        .map(std::path::PathBuf::from)
+        .chain(
+            std::env::var_os("PATH")
+                .map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|dir| dir.join(name)),
+        )
+        .find(|candidate| candidate.is_file())
+}
+fn tool(name: &str, fallbacks: &[&str], missing: &str) -> Result<String, String> {
+    resolve_tool(name, fallbacks)
+        .map(|path| path.to_string_lossy().into_owned())
+        .ok_or_else(|| missing.to_string())
+}
+fn podman() -> Result<String, String> {
+    tool(
+        "podman",
+        PODMAN_FALLBACKS,
+        "podman is not installed, so the development environment cannot be read. Install podman and distrobox to use it.",
+    )
+}
+fn distrobox() -> Result<String, String> {
+    tool(
+        "distrobox",
+        DISTROBOX_FALLBACKS,
+        "distrobox is not installed, so the development environment cannot be created or entered.",
+    )
+}
+fn terminal() -> String {
+    resolve_tool("konsole", TERMINAL_FALLBACKS)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/usr/bin/konsole".into())
+}
 const MAX_JOBS: usize = 64;
 const PRESETS: &[(&str, &[&str])] = &[
     (
@@ -255,7 +299,7 @@ fn create_args() -> Vec<&'static str> {
 fn run(exe: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
     let mut c = Command::new(exe);
     c.args(args).env("LC_ALL", "C");
-    if exe == DISTROBOX {
+    if exe.ends_with("distrobox") {
         c.env("DBX_CONTAINER_MANAGER", "podman");
     }
     let o = run_bounded_command(c, timeout)
@@ -270,7 +314,7 @@ fn run(exe: &str, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
 }
 fn inspect_all() -> Result<Vec<ContainerIdentity>, String> {
     parse_list(&run(
-        PODMAN,
+        &podman()?,
         &[
             "ps",
             "-a",
@@ -497,7 +541,7 @@ fn perform(
                 };
                 job_detail(job_id, step.into());
                 let args = distrobox_command_args(command, &container_id);
-                let mut c = Command::new(DISTROBOX);
+                let mut c = Command::new(distrobox()?);
                 c.args(&args)
                     .env("DBX_CONTAINER_MANAGER", "podman")
                     .env("LC_ALL", "C");
@@ -545,7 +589,7 @@ fn perform(
             if state_inner()?.state != "absent" {
                 return Err("Reserved name is occupied.".into());
             }
-            let mut c = Command::new(DISTROBOX);
+            let mut c = Command::new(distrobox()?);
             c.args(create_args())
                 .env("DBX_CONTAINER_MANAGER", "podman")
                 .env("LC_ALL", "C");
@@ -572,7 +616,7 @@ fn perform(
                     .into(),
                 );
                 let args = distrobox_command_args(command, &container_id);
-                let mut c = Command::new(DISTROBOX);
+                let mut c = Command::new(distrobox()?);
                 c.args(&args)
                     .env("DBX_CONTAINER_MANAGER", "podman")
                     .env("LC_ALL", "C");
@@ -597,7 +641,7 @@ fn perform(
             }
             if c.status.to_lowercase().contains("running") {
                 run(
-                    PODMAN,
+                    &podman()?,
                     &["stop", "--time", "10", &c.id],
                     Duration::from_secs(20),
                 )?;
@@ -612,7 +656,7 @@ fn perform(
             if !ownership(&c) || c.name != NAME || c.status.to_lowercase().contains("running") {
                 return Err("Container changed; removal refused.".into());
             }
-            run(PODMAN, &["rm", &c.id], Duration::from_secs(30))?;
+            run(&podman()?, &["rm", &c.id], Duration::from_secs(30))?;
             if inspect_all()?.iter().any(|r| r.id == c.id) {
                 return Err("Removal command finished, but container still exists.".into());
             }
@@ -792,11 +836,11 @@ pub fn handle_development_cli(args: &[std::ffi::OsString]) -> Option<Result<(), 
             return Err("Managed environment unavailable.".into());
         }
         let container_id = validate_owned_container()?;
-        let mut c = Command::new("/usr/bin/konsole");
+        let mut c = Command::new(terminal());
         c.args(["--separate", "--workdir"])
             .arg(&path)
             .arg("-e")
-            .arg(DISTROBOX)
+            .arg(distrobox()?)
             .args(["enter", "--name", &container_id, "--", "/bin/sh", "-l"])
             .env("DBX_CONTAINER_MANAGER", "podman");
         spawn_detached(&mut c).map_err(|_| "Could not request terminal window.".to_string())
@@ -814,11 +858,11 @@ pub(crate) async fn rowyn_development_open() -> Result<String, String> {
             return Err("Managed environment unavailable.".into());
         }
         let container_id = validate_owned_container()?;
-        let mut c = Command::new("/usr/bin/konsole");
+        let mut c = Command::new(terminal());
         c.args([
             "--separate",
             "-e",
-            DISTROBOX,
+            &distrobox()?,
             "enter",
             "--name",
             &container_id,

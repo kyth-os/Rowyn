@@ -112,24 +112,14 @@ export function Development() {
         <span className="home-eyebrow">Rowyn Development</span>
         <h1>Ubuntu development environment</h1>
         <p className="card-copy">
-          Creates one dedicated Distrobox named <code>{DEVELOPMENT_NAME}</code> from{' '}
-          <code>{DEVELOPMENT_IMAGE_LABEL}</code>. Developer tools stay in the container rather than the immutable
-          host OS. Distrobox shares your home directory and is <strong>not a sandbox</strong>; software
-          inside can access your home files.
+          One dedicated Distrobox named <code>{DEVELOPMENT_NAME}</code> from{' '}
+          <code>{DEVELOPMENT_IMAGE_LABEL}</code>. Tools stay in the container rather than the immutable host
+          OS. Distrobox shares your home directory and is <strong>not a sandbox</strong>.
         </p>
         <p className="card-copy">
-          This page only manages that fixed environment. It does not accept shell commands or create
-          arbitrary containers. Missing tooling and permission errors are reported as unavailable, not as
-          absence. The first terminal open may initialize the container and download packages.
-        </p>
-        <p className="card-copy">
-          Creating the container installs the fixed APT (USN-8996-1) inside it, and every preset
-          refreshes apt again before it installs packages, so the shared home directory is never
-          served by a package client carrying CVE-2026-109518.
-        </p>
-        <p className="card-copy">
-          Cancelling stops the operation where possible; it does not roll back packages or files already
-          changed. Your home directory is shared with the container.
+          Only this fixed environment is managed: no shell commands, no arbitrary containers. Creating it
+          and every preset install the fixed APT (USN-8996-1) first; cancelling does not roll back changes
+          already made. The first terminal open may initialize the container and download packages.
         </p>
         <div className="home-actions">
           {DEVELOPMENT_PRESETS.map(item => (

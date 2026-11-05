@@ -256,6 +256,34 @@ fn managed_image_is_digest_pinned_and_legacy_tag_containers_stay_owned() {
 }
 
 #[test]
+fn tool_resolution_prefers_installed_locations_then_path_and_ignores_gaps() {
+    let dir = std::env::temp_dir().join(format!("rowyn-dev-tools-{}", id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let fallback = dir.join("rowyn-test-tool");
+    std::fs::write(&fallback, b"#!/bin/sh\n").unwrap();
+    // Fallbacks are full binary paths, not directories to search.
+    assert_eq!(
+        resolve_tool("rowyn-test-tool", &[fallback.to_str().unwrap()]),
+        Some(fallback.clone())
+    );
+    assert!(resolve_tool("rowyn-test-tool", &[]).is_none());
+    assert!(resolve_tool("rowyn-test-tool", &[dir.to_str().unwrap()]).is_none());
+    assert!(resolve_tool("rowyn-absent-tool", &[dir.join("rowyn-absent-tool").to_str().unwrap()]).is_none());
+    let sh = resolve_tool("sh", &[]).expect("PATH resolves sh");
+    assert!(sh.is_absolute() && sh.is_file());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn container_tool_fallbacks_cover_package_and_local_install_locations() {
+    assert!(PODMAN_FALLBACKS.contains(&"/usr/bin/podman"));
+    assert!(PODMAN_FALLBACKS.contains(&"/usr/local/bin/podman"));
+    assert!(DISTROBOX_FALLBACKS.contains(&"/usr/bin/distrobox"));
+    assert!(DISTROBOX_FALLBACKS.contains(&"/usr/local/bin/distrobox"));
+    assert!(TERMINAL_FALLBACKS.contains(&"/usr/bin/konsole"));
+}
+
+#[test]
 fn create_manager_label_matches_distrobox_ownership_contract() {
     assert_eq!(
         owned().labels.get("manager").map(String::as_str),
