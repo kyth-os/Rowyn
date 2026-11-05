@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { confirmUserAction } from '../services/liveData';
 import {
   getDevelopmentActiveJobId,
   rowynDevelopmentList,
@@ -33,6 +32,38 @@ type PageState = DevelopmentState & {
   image?: string;
 };
 
+// Confirmation happens in the page, not through a script dialog: a webview
+// that does not implement one answers false, which made every lifecycle
+// button look dead.
+type PendingAction =
+  | { kind: 'create' }
+  | { kind: 'delete' }
+  | { kind: 'preset'; preset: string; target: string; packages: string[] };
+
+function presetLabel(id: string): string {
+  return DEVELOPMENT_PRESETS.find(item => item.id === id)?.label ?? id;
+}
+
+function pendingTitle(pending: PendingAction): string {
+  if (pending.kind === 'create') return `Create ${DEVELOPMENT_NAME}?`;
+  if (pending.kind === 'delete') return `Delete ${DEVELOPMENT_NAME}?`;
+  return `Install ${presetLabel(pending.preset)}?`;
+}
+
+function pendingCopy(pending: PendingAction): string {
+  if (pending.kind === 'create') {
+    return `Creates the digest-pinned ${DEVELOPMENT_IMAGE_LABEL} container and installs the fixed APT (USN-8996-1) first. The first run pulls the image, so it can take several minutes.`;
+  }
+  if (pending.kind === 'delete') return DELETE_WARNING;
+  return `Installs ${pending.packages.join(', ')} in ${pending.target}. Cancelling stops the process group where possible, but package and apt changes already made are not rolled back.`;
+}
+
+function pendingConfirmLabel(pending: PendingAction): string {
+  if (pending.kind === 'create') return 'Create environment';
+  if (pending.kind === 'delete') return 'Delete environment';
+  return 'Install packages';
+}
+
 export function Development() {
   useSectionFollow(SECTIONS);
   const [status, setStatus] = useState<PageState | null>(null);
@@ -41,6 +72,7 @@ export function Development() {
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [preset, setPreset] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingAction | null>(null);
   const [plan, setPlan] = useState<{ preset: string; target: string; packages: string[]; commands: string[][] } | null>(null);
   const mounted = useRef(false);
   const lock = useRef(false);
@@ -106,6 +138,25 @@ export function Development() {
   const running = job?.status === 'running';
   const lockedActions = busy || running;
 
+  async function confirmPending() {
+    const action = pending;
+    if (!action) return;
+    setPending(null);
+    if (action.kind === 'create') {
+      void act(() => controller.current?.start('create') ?? Promise.resolve());
+      return;
+    }
+    if (action.kind === 'delete') {
+      void act(async () => {
+        await controller.current?.start('delete', confirmation);
+        if (mounted.current && controller.current?.job?.status !== 'failed') setConfirmation('');
+      });
+      return;
+    }
+    const operation = presetOperation(action.preset);
+    if (operation) void act(() => controller.current?.start(operation, `install:${action.preset}`) ?? Promise.resolve());
+  }
+
   return (
     <div id="hub-section-development" className="page-content rowyn-mvp">
       <section className="glass dashboard-card">
@@ -118,7 +169,8 @@ export function Development() {
         </p>
         <p className="card-copy">
           Only this fixed environment is managed: no shell commands, no arbitrary containers. Creating it
-          and every preset install the fixed APT (USN-8996-1) first; cancelling does not roll back changes
+          and every preset install the fixed APT (USN-8996-1) first, because no published image carries
+the CVE-2026-109518 fix yet; cancelling does not roll back changes
           already made. The first terminal open may initialize the container and download packages.
         </p>
         <div className="home-actions">
@@ -135,16 +187,13 @@ export function Development() {
         </div>
         {plan && preset === plan.preset && (
           <section aria-label="Package installation plan">
-            <h2>Install {DEVELOPMENT_PRESETS.find(item => item.id === plan.preset)?.label}</h2>
+            <h2>Install {presetLabel(plan.preset)}</h2>
             <p>Target: <code>{plan.target}</code> (managed, digest-pinned Ubuntu 26.10 container)</p>
             <p>Packages: {plan.packages.map(pkg => <code key={pkg}>{pkg} </code>)}</p>
             <ol>{plan.commands.map((argv, index) => <li key={index}><code>{argv.join(' ')}</code></li>)}</ol>
             <p>Cancellation stops the process group where possible; packages and apt state may be partially changed and are not rolled back.</p>
             <button className="action-button" disabled={lockedActions} onClick={() => {
-              if (confirmUserAction(`Install ${plan.packages.join(', ')} in ${plan.target}? Package and apt state may be partially changed if cancelled.`)) {
-                const operation = presetOperation(plan.preset);
-                if (operation) void act(() => controller.current?.start(operation, `install:${plan.preset}`) ?? Promise.resolve());
-              }
+              setPending({ kind: 'preset', preset: plan.preset, target: plan.target, packages: plan.packages });
             }}>Install this preset</button>
           </section>
         )}
@@ -155,11 +204,7 @@ export function Development() {
           <button
             className="action-button"
             disabled={lockedActions || !caps.canCreate}
-            onClick={() => {
-              if (confirmUserAction(`Create the dedicated ${DEVELOPMENT_NAME} Ubuntu environment?`)) {
-                void act(() => controller.current?.start('create') ?? Promise.resolve());
-              }
-            }}
+            onClick={() => setPending({ kind: 'create' })}
           >
             Create Ubuntu environment
           </button>
@@ -176,6 +221,18 @@ export function Development() {
             </button>
           )}
         </div>
+        {pending && (
+          <section className="glass dashboard-card" role="alertdialog" aria-labelledby="rowyn-development-confirm">
+            <h2 id="rowyn-development-confirm">{pendingTitle(pending)}</h2>
+            <p className="card-copy">{pendingCopy(pending)}</p>
+            <div className="home-actions">
+              <button className="action-button" disabled={lockedActions} onClick={() => setPending(null)}>Cancel</button>
+              <button className="action-button" disabled={lockedActions} onClick={() => void confirmPending()}>
+                {pendingConfirmLabel(pending)}
+              </button>
+            </div>
+          </section>
+        )}
         {caps.canDelete && (
           <>
             <p className="card-copy">{DELETE_WARNING}</p>
@@ -186,14 +243,7 @@ export function Development() {
             <button
               className="action-button"
               disabled={lockedActions || !!deleteConfirmation(confirmation)}
-              onClick={() => {
-                if (confirmUserAction(`Delete ${DEVELOPMENT_NAME}? ${DELETE_WARNING}`)) {
-                  void act(async () => {
-                    await controller.current?.start('delete', confirmation);
-                    if (mounted.current && controller.current?.job?.status !== 'failed') setConfirmation('');
-                  });
-                }
-              }}
+              onClick={() => setPending({ kind: 'delete' })}
             >
               Delete environment
             </button>

@@ -36,7 +36,9 @@ test('fixed presets expose their pinned package plans and disallow arbitrary pac
 test('page presents concrete plan, confirmation, phases, cancellation and partial-state warning', async () => {
   const page = await readFile(resolve(root, 'src/pages/RowynDevelopment.tsx'), 'utf8');
   assert.match(page, /plan\.commands\.map/);
-  assert.match(page, /confirmUserAction/);
+  assert.match(page, /role="alertdialog"/);
+  assert.match(page, /confirmPending/);
+  assert.doesNotMatch(page, /confirmUserAction|window\.confirm/);
   assert.match(page, /partial.*package|package.*partial/i);
 });
 
@@ -163,6 +165,7 @@ test('page requires explicit refresh and documents Distrobox boundary without ar
   assert.match(page, /Refresh status/);
   assert.match(page, /not a sandbox/i);
   assert.match(page, /shares your home/i);
-  assert.match(page, /confirmUserAction/);
+  assert.match(page, /role="alertdialog"/);
+  assert.doesNotMatch(page, /confirmUserAction|window\.confirm/);
   assert.doesNotMatch(page, /setInterval|setTimeout|type .*command|shell input/i);
 });
