@@ -16,6 +16,106 @@ const MAX_OUTPUT: usize = 512 * 1024;
 const PODMAN: &str = "/usr/bin/podman";
 const DISTROBOX: &str = "/usr/bin/distrobox";
 const MAX_JOBS: usize = 64;
+const PRESETS: &[(&str, &[&str])] = &[
+    (
+        "git-build",
+        &["git", "build-essential", "pkg-config", "cmake"],
+    ),
+    ("python", &["python3", "python3-pip", "python3-venv"]),
+    ("node", &["nodejs", "npm"]),
+    ("rust", &["rustc", "cargo"]),
+];
+fn preset_packages(name: &str) -> Result<&'static [&'static str], String> {
+    PRESETS
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, packages)| *packages)
+        .ok_or_else(|| "Unsupported development preset.".into())
+}
+fn preset_commands(preset: &str) -> Result<Vec<Vec<String>>, String> {
+    let packages = preset_packages(preset)?;
+    let mut install = vec![
+        "/usr/bin/sudo".into(),
+        "-n".into(),
+        "/usr/bin/env".into(),
+        "DEBIAN_FRONTEND=noninteractive".into(),
+        "/usr/bin/apt-get".into(),
+        "install".into(),
+        "-y".into(),
+        "--no-install-recommends".into(),
+    ];
+    install.extend(packages.iter().map(|p| (*p).into()));
+    let mut verify = vec![
+        "/usr/bin/dpkg-query".into(),
+        "-W".into(),
+        "-f=${db:Status-Status}\\n".into(),
+    ];
+    verify.extend(packages.iter().map(|p| (*p).into()));
+    Ok(vec![
+        vec![
+            "/usr/bin/sudo".into(),
+            "-n".into(),
+            "/usr/bin/env".into(),
+            "DEBIAN_FRONTEND=noninteractive".into(),
+            "/usr/bin/apt-get".into(),
+            "update".into(),
+        ],
+        install,
+        verify,
+    ])
+}
+fn distrobox_command_args(command: &[String], container_id: &str) -> Vec<String> {
+    let mut args = vec![
+        "enter".into(),
+        "--name".into(),
+        container_id.into(),
+        "--".into(),
+    ];
+    args.extend(command.iter().cloned());
+    args
+}
+fn validate_owned_identity(
+    containers: &[ContainerIdentity],
+    expected_id: &str,
+) -> Result<String, String> {
+    match containers
+        .iter()
+        .filter(|c| c.name == NAME)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [c] if ownership(c) && c.id == expected_id => Ok(c.id.clone()),
+        _ => Err("Managed environment ownership or identity changed.".into()),
+    }
+}
+fn validate_owned_container() -> Result<String, String> {
+    let matches: Vec<_> = inspect_all()?
+        .into_iter()
+        .filter(|c| c.name == NAME)
+        .collect();
+    match matches.as_slice() {
+        [c] if ownership(c) => Ok(c.id.clone()),
+        _ => Err("Managed environment ownership or identity could not be verified.".into()),
+    }
+}
+fn validate_open_directory(
+    home: &std::path::Path,
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let home = home
+        .canonicalize()
+        .map_err(|_| "Home directory unavailable.")?;
+    if path.to_string_lossy().chars().any(|c| c.is_control())
+        || path.to_string_lossy().starts_with('-')
+    {
+        return Err("Invalid directory path.".into());
+    }
+    let path = path.canonicalize().map_err(|_| "Directory unavailable.")?;
+    if !path.is_dir() || !path.starts_with(&home) {
+        return Err("Directory must be inside your home directory.".into());
+    }
+    Ok(path)
+}
 static LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
 #[derive(Clone, Debug)]
 struct ContainerIdentity {
@@ -182,23 +282,71 @@ pub(crate) async fn rowyn_development_list() -> Result<DevelopmentState, String>
         .await
         .map_err(|_| "Development worker failed".to_string())?
 }
-fn child(
+const PRESET_OUTPUT_TAIL: usize = 64 * 1024;
+fn job_detail(id: &str, detail: String) {
+    if let Ok(mut registry) = jobs().lock() {
+        if let Some(entry) = registry.0.get_mut(id) {
+            entry.job.detail = detail.chars().take(1024).collect();
+        }
+    }
+}
+fn sanitized_tail(bytes: &[u8]) -> String {
+    use rowyn_shared::{diagnostics_scrub::scrub_logs, system::process::strip_ansi};
+    let text = scrub_logs(&strip_ansi(&String::from_utf8_lossy(bytes)));
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
+    clean
+        .chars()
+        .rev()
+        .take(1200)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
+}
+fn capture_tail<R: std::io::Read + Send + 'static>(mut pipe: R) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut tail = VecDeque::new();
+        let mut buffer = [0u8; 4096];
+        while let Ok(count) = pipe.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            for byte in &buffer[..count] {
+                tail.push_back(*byte);
+                if tail.len() > PRESET_OUTPUT_TAIL {
+                    tail.pop_front();
+                }
+            }
+        }
+        tail.into_iter().collect()
+    })
+}
+fn child_reporting(
     mut c: Command,
     flag: Arc<std::sync::atomic::AtomicBool>,
     timeout: Duration,
-) -> Result<(), String> {
+    job_id: Option<&str>,
+) -> Result<String, String> {
+    use std::io::Read;
     use std::os::unix::process::CommandExt;
     use std::sync::atomic::Ordering;
     c.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .process_group(0);
     let mut p = c
         .spawn()
         .map_err(|_| "Could not start development command.".to_string())?;
+    let stdout = p.stdout.take().unwrap();
+    let stderr = p.stderr.take().unwrap();
+    let out_reader = capture_tail(stdout);
+    let err_reader = capture_tail(stderr);
     let group = p.id() as i32;
     let t = std::time::Instant::now();
-    loop {
+    let status = loop {
         if flag.load(Ordering::SeqCst) || t.elapsed() > timeout {
             unsafe {
                 libc::kill(-group, libc::SIGTERM);
@@ -208,20 +356,16 @@ fn child(
                 libc::kill(-group, libc::SIGKILL);
             }
             let _ = p.wait();
+            let _ = out_reader.join();
+            let _ = err_reader.join();
             return Err(if flag.load(Ordering::SeqCst) {
-                "Cancelled.".into()
+                "Cancelled; apt/package state may have changed and no automatic repair was attempted.".into()
             } else {
                 "Development command timed out.".into()
             });
         }
         match p.try_wait() {
-            Ok(Some(s)) => {
-                return if s.success() {
-                    Ok(())
-                } else {
-                    Err("Development command failed.".into())
-                }
-            }
+            Ok(Some(s)) => break s,
             Ok(None) => thread::sleep(Duration::from_millis(100)),
             Err(_) => {
                 unsafe {
@@ -231,12 +375,51 @@ fn child(
                 return Err("Could not monitor development command.".into());
             }
         }
+    };
+    unsafe {
+        libc::kill(-group, libc::SIGKILL);
     }
+    let out = out_reader.join().unwrap_or_default();
+    let err = err_reader.join().unwrap_or_default();
+    let sample = sanitized_tail(if !err.is_empty() { &err } else { &out });
+    if let Some(id) = job_id {
+        if !sample.is_empty() {
+            job_detail(
+                id,
+                format!(
+                    "{} Output: {}",
+                    if status.success() {
+                        "Command completed."
+                    } else {
+                        "Command failed."
+                    },
+                    sample
+                ),
+            );
+        }
+    }
+    if status.success() {
+        Ok(sample)
+    } else {
+        Err(if sample.is_empty() {
+            "Development command failed.".into()
+        } else {
+            format!("Development command failed: {}", sample)
+        })
+    }
+}
+fn child(
+    c: Command,
+    flag: Arc<std::sync::atomic::AtomicBool>,
+    timeout: Duration,
+) -> Result<(), String> {
+    child_reporting(c, flag, timeout, None).map(|_| ())
 }
 fn perform(
     op: String,
     confirmation: Option<String>,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    job_id: &str,
 ) -> Result<String, String> {
     use std::sync::atomic::Ordering;
     let _guard = LIFECYCLE
@@ -247,6 +430,81 @@ fn perform(
         return Err("Cancelled.".into());
     }
     match op.as_str() {
+        op if op.starts_with("preset:") => {
+            let preset = &op[7..];
+            let commands = preset_commands(preset)?;
+            let packages = preset_packages(preset)?;
+            if confirmation.as_deref() != Some(format!("install:{preset}").as_str()) {
+                return Err("Package installation requires explicit confirmation.".into());
+            }
+            if state_inner()?.state != "managed" {
+                return Err("Managed environment unavailable.".into());
+            }
+            let container_id = validate_owned_container()?;
+            for (index, command) in commands.iter().enumerate() {
+                validate_owned_identity(&inspect_all()?, &container_id)?;
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("Cancelled.".into());
+                }
+                let step = if index == 0 {
+                    "Refreshing apt indexes."
+                } else if index == 1 {
+                    "Installing preset packages."
+                } else {
+                    "Verifying installed packages."
+                };
+                job_detail(job_id, step.into());
+                let args = distrobox_command_args(command, &container_id);
+                let mut c = Command::new(DISTROBOX);
+                c.args(&args)
+                    .env("DBX_CONTAINER_MANAGER", "podman")
+                    .env("LC_ALL", "C");
+                if index < 2 {
+                    child_reporting(
+                        c,
+                        cancel.clone(),
+                        if index == 0 {
+                            Duration::from_secs(300)
+                        } else {
+                            Duration::from_secs(900)
+                        },
+                        Some(job_id),
+                    )?;
+                } else {
+                    let output = run_bounded_command(c, Duration::from_secs(60)).map_err(|_| {
+                        "Package verification unavailable or timed out.".to_string()
+                    })?;
+                    if !output.status.success()
+                        || output.stdout.len() > MAX_OUTPUT
+                        || output.stderr.len() > MAX_OUTPUT
+                    {
+                        return Err(
+                            "Package verification failed; apt may have changed package state."
+                                .into(),
+                        );
+                    }
+                    let lines: Vec<_> = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(str::to_owned)
+                        .collect();
+                    if lines.len() != packages.len() || lines.iter().any(|line| line != "installed")
+                    {
+                        return Err(
+                            "Package verification incomplete; apt may have changed package state."
+                                .into(),
+                        );
+                    }
+                    validate_owned_identity(&inspect_all()?, &container_id)?;
+                    if cancel.load(Ordering::SeqCst) {
+                        return Err("Cancelled.".into());
+                    }
+                }
+            }
+            Ok(format!(
+                "Installed and verified preset {preset}: {}.",
+                packages.join(", ")
+            ))
+        }
         "create" => {
             if confirmation.is_some() {
                 return Err("Create does not accept confirmation.".into());
@@ -323,7 +581,7 @@ fn finish(id: &str, result: Result<String, String>) {
                     e.job.detail = s
                 }
                 Err(s) => {
-                    e.job.status = if s == "Cancelled." {
+                    e.job.status = if s.starts_with("Cancelled") {
                         "cancelled"
                     } else {
                         "failed"
@@ -336,15 +594,42 @@ fn finish(id: &str, result: Result<String, String>) {
         }
     }
 }
+#[derive(Serialize, Clone, Debug)]
+pub(crate) struct DevelopmentPlan {
+    preset: String,
+    target: String,
+    packages: Vec<String>,
+    commands: Vec<Vec<String>>,
+}
+#[tauri::command]
+pub(crate) async fn rowyn_development_preset_preview(
+    preset: String,
+) -> Result<DevelopmentPlan, String> {
+    let packages = preset_packages(&preset)?;
+    let commands = preset_commands(&preset)?;
+    Ok(DevelopmentPlan {
+        preset: preset.clone(),
+        target: NAME.into(),
+        packages: packages.iter().map(|p| (*p).into()).collect(),
+        commands,
+    })
+}
 #[tauri::command]
 pub(crate) async fn rowyn_development_start(
     operation: String,
     confirmation: Option<String>,
 ) -> Result<DevelopmentJob, String> {
-    if !matches!(operation.as_str(), "create" | "delete") {
+    let preset_operation = operation
+        .strip_prefix("preset:")
+        .and_then(|preset| preset_packages(preset).ok().map(|_| preset));
+    if !matches!(operation.as_str(), "create" | "delete") && preset_operation.is_none() {
         return Err("Unsupported development operation.".into());
     }
-    if operation == "delete" && confirmation.as_deref() != Some(NAME) {
+    if let Some(preset) = preset_operation {
+        if confirmation.as_deref() != Some(format!("install:{preset}").as_str()) {
+            return Err("Package installation requires explicit confirmation.".into());
+        }
+    } else if operation == "delete" && confirmation.as_deref() != Some(NAME) {
         return Err("Delete requires exact environment-name confirmation.".into());
     }
     if operation == "create" && confirmation.is_some() {
@@ -390,7 +675,12 @@ pub(crate) async fn rowyn_development_start(
         x.1.push_back(ident.clone())
     }
     let worker_id = ident.clone();
-    thread::spawn(move || finish(&worker_id, perform(operation, confirmation, flag)));
+    thread::spawn(move || {
+        finish(
+            &worker_id,
+            perform(operation, confirmation, flag, &worker_id),
+        )
+    });
     Ok(DevelopmentJob {
         id: ident,
         status: "running".into(),
@@ -419,6 +709,41 @@ pub(crate) async fn rowyn_development_cancel(id: String) -> Result<DevelopmentJo
     }
     Ok(e.job.clone())
 }
+pub fn handle_development_cli(args: &[std::ffi::OsString]) -> Option<Result<(), String>> {
+    if args.first().map(|a| a == "--development-directory") != Some(true) {
+        return None;
+    }
+    Some((|| {
+        if args.len() != 2 {
+            return Err("Expected one directory argument.".into());
+        }
+        let raw = std::path::PathBuf::from(&args[1]);
+        if raw.to_string_lossy().contains("://") {
+            return Err("Directory URLs are not accepted.".into());
+        }
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .ok_or("Home directory unavailable.")?;
+        let path = validate_open_directory(&home, &raw)?;
+        let _guard = LIFECYCLE
+            .get_or_init(|| Mutex::new(()))
+            .try_lock()
+            .map_err(|_| "Development lifecycle is busy.".to_string())?;
+        if state_inner()?.state != "managed" {
+            return Err("Managed environment unavailable.".into());
+        }
+        let container_id = validate_owned_container()?;
+        let mut c = Command::new("/usr/bin/konsole");
+        c.args(["--separate", "--workdir"])
+            .arg(&path)
+            .arg("-e")
+            .arg(DISTROBOX)
+            .args(["enter", "--name", &container_id, "--", "/bin/sh", "-l"])
+            .env("DBX_CONTAINER_MANAGER", "podman");
+        spawn_detached(&mut c).map_err(|_| "Could not request terminal window.".to_string())
+    })())
+}
+
 #[tauri::command]
 pub(crate) async fn rowyn_development_open() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -429,8 +754,16 @@ pub(crate) async fn rowyn_development_open() -> Result<String, String> {
         if state_inner()?.state != "managed" {
             return Err("Managed environment unavailable.".into());
         }
+        let container_id = validate_owned_container()?;
         let mut c = Command::new("/usr/bin/konsole");
-        c.args(["--separate", "-e", DISTROBOX, "enter", "--name", NAME]);
+        c.args([
+            "--separate",
+            "-e",
+            DISTROBOX,
+            "enter",
+            "--name",
+            &container_id,
+        ]);
         c.env("DBX_CONTAINER_MANAGER", "podman");
         spawn_detached(&mut c).map_err(|_| "Could not request terminal window.".to_string())?;
         Ok("Terminal launch requested; readiness unverified.".into())

@@ -1,0 +1,9 @@
+[Unit]
+Description=Notify once when a Rowyn system update is ready
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rowyn-update-notify
+TimeoutStartSec=50

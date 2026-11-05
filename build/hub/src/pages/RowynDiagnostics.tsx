@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { rowynDiagnosticsSnapshot, exportRowynReport } from '../services/rowynMvp';
 import { formatReport, type DiagnosticsSnapshot } from '../services/rowynMvpModel';
 import '../styles/rowynMvp.css';
+import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
 
 export function Diagnostics() {
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | null>(null);
@@ -34,7 +35,15 @@ export function Diagnostics() {
       <p role="status" className="card-copy">{status}</p>
       {snapshot && <p className="card-copy">Collected {new Date(snapshot.collected_at * 1000).toLocaleString()}. This snapshot is not live.</p>}
     </section>
-    {snapshot?.readings.map((reading) => <section key={reading.name} className="glass dashboard-card">
+    {snapshot && <section className="glass dashboard-card" aria-label="Hardware checks"><h2>Focused hardware checks</h2>
+      <p className="card-copy">Read-only status signals, not a test of device function. Unavailable checks are not healthy. Opening settings only opens the desktop panel; it does not change hardware state.</p>
+      {([['Bluetooth','Bluetooth','bluetooth'],['Wi-Fi','Wi-Fi','wifi'],['Audio','Audio','audio'],['Displays','Displays','displays']] as [string,string,SettingTarget][]).map(([name,label,target]) => {
+        const item = snapshot.readings.find((r) => r.name === name);
+        return <article key={name}><h3>{label} <span className="rowyn-state">{item?.state ?? 'unavailable'}</span></h3><pre>{item?.detail ?? 'Check not reported.'}</pre>
+          <button className="action-button" disabled={busy} onClick={() => run(() => openRowynSettings(target))}>Open {label} settings</button></article>;
+      })}
+    </section>}
+    {snapshot?.readings.filter((reading) => !['Bluetooth','Wi-Fi','Audio','Displays'].includes(reading.name)).map((reading) => <section key={reading.name} className="glass dashboard-card">
       <h2>{reading.name} <span className="rowyn-state">{reading.state}</span></h2><pre>{reading.detail}</pre>
     </section>)}
     <section className="glass dashboard-card"><h2>Report preview</h2>

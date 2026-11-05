@@ -1,0 +1,35 @@
+import type { UpdatesSnapshot } from "./liveData";
+
+export type UpdateBannerState = "unavailable" | "current" | "available" | "staging" | "staged" | "restartready" | "blocked" | "failed";
+
+export interface UpdateBannerProjection {
+  state: UpdateBannerState;
+  label: string;
+  guidance: string;
+}
+
+/** Pure display projection. A failed read is represented separately from a successful empty snapshot. */
+export function projectUpdateBanner(snapshot: UpdatesSnapshot | null, readFailed = false): UpdateBannerProjection {
+  if (readFailed) return { state: "failed", label: "Update status unavailable", guidance: "Could not read update status. Refresh to try again." };
+  if (!snapshot || (!snapshot.status && !snapshot.pending && !snapshot.health)) {
+    return { state: "unavailable", label: "Update status unavailable", guidance: "No update status is available yet. Refresh to check again." };
+  }
+
+  const status = snapshot.status;
+  const health = snapshot.health;
+  const pending = snapshot.pending;
+  const staged = Boolean(status?.staged) || pending?.bootc === "staged";
+  const check = status?.check_state ?? "";
+  if (check === "blocked" || Boolean(status?.blocked_reason) || health?.status === "quarantined") {
+    return { state: "blocked", label: "Update blocked", guidance: status?.blocked_reason || status?.detail || health?.detail || "An update is held back for safety. Review Updates for details." };
+  }
+  if (staged) return { state: "restartready", label: "Restart required", guidance: "An update is staged and will apply when you restart. Open Updates to review details." };
+  if (["busy", "checking"].includes(check)) return { state: "staging", label: "Update check in progress", guidance: "Update status is being checked. Open Updates for details." };
+  if (check === "error" || check === "failed") return { state: "failed", label: "Update status unavailable", guidance: status?.detail || "The update check failed. Refresh to try again." };
+  if (check === "staged") return { state: "staged", label: "Update staged", guidance: "An update is staged. Open Updates to review restart information." };
+  // A remote digest may identify the currently running image, and the pending
+  // map always contains keys even when its counts are zero. Neither proves an update.
+  if (check === "available") return { state: "available", label: "Update available", guidance: "An update is available. Open Updates to review it; nothing will be installed from this banner." };
+  if (check === "uptodate" || check === "current") return { state: "current", label: "System is up to date", guidance: "No system update is currently available." };
+  return { state: "unavailable", label: "Update status unavailable", guidance: status?.detail || "Refresh to check update status." };
+}

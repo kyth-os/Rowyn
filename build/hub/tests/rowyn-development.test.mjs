@@ -10,6 +10,29 @@ const out = resolve(await mkdtemp(resolve(tmpdir(), 'rowyn-development-')), 'mod
 await build({ entryPoints: [resolve(root, 'src/services/rowynDevelopmentModel.ts')], outfile: out, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
 const m = await import(pathToFileURL(out).href);
 
+test('fixed presets expose their pinned package plans and disallow arbitrary package input', () => {
+  assert.deepEqual(m.DEVELOPMENT_PRESETS.map(p => [p.id, p.packages]), [
+    ['git-build', ['git', 'build-essential', 'pkg-config', 'cmake']],
+    ['python', ['python3', 'python3-pip', 'python3-venv']],
+    ['node', ['nodejs', 'npm']], ['rust', ['rustc', 'cargo']],
+  ]);
+  assert.equal(m.presetOperation('git-build'), 'preset:git-build');
+  assert.equal(m.presetOperation('not-allowed'), null);
+});
+
+test('page presents concrete plan, confirmation, phases, cancellation and partial-state warning', async () => {
+  const page = await readFile(resolve(root, 'src/pages/RowynDevelopment.tsx'), 'utf8');
+  assert.match(page, /plan\.commands\.map/);
+  assert.match(page, /confirmUserAction/);
+  assert.match(page, /partial.*package|package.*partial/i);
+});
+
+test('Dolphin service menu passes one directory argument to the fixed executable', async () => {
+  const menu = await readFile(resolve(root, 'src-tauri/data/kde/servicemenus/rowyn-development-here.desktop'), 'utf8');
+  assert.match(menu, /Exec=\/usr\/bin\/rowyn-hub-shell --development-directory %f/);
+  assert.match(menu, /MimeType=inode\/directory/);
+});
+
 test('states separate managed, absent, collision and unavailable', () => {
   assert.equal(m.describeState({ state: 'absent' }).canCreate, true);
   assert.equal(m.describeState({ state: 'managed' }).canOpen, true);

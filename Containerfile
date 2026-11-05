@@ -75,7 +75,10 @@ RUN cargo build --release --locked && \
 
 # --- system: assemble the bootable image ------------------------------------
 FROM base AS system
+ARG ROWYN_SOURCE_REVISION=unknown
+ARG ROWYN_IMAGE_VERSION=0.1
 LABEL org.opencontainers.image.source="https://github.com/mrtrickdotorg/Rowyn"
+LABEL org.opencontainers.image.revision="${ROWYN_SOURCE_REVISION}"
 COPY --from=builder /output /
 
 RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root --mount=type=tmpfs,dst=/boot apt update -y && \
@@ -131,6 +134,7 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
+        kup-backup bup rsync kde-config-flatpak libnotify-bin \
         network-manager pipewire wireplumber upower udisks2 plymouth plymouth-label \
         tzdata tzdata-legacy polkitd \
         fonts-noto-core \
@@ -331,6 +335,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # firewalld) are in the KDE package layer above.
 COPY --from=hub-builder /rowyn-hub-shell /usr/bin/rowyn-hub-shell
 COPY shared/com.rowyn.hub.desktop /usr/share/applications/com.rowyn.hub.desktop
+COPY build/hub/src-tauri/data/kde/servicemenus/rowyn-development-here.desktop /usr/share/kio/servicemenus/rowyn-development-here.desktop
 COPY docs/assets/rowyn-logo.png /usr/share/icons/hicolor/512x512/apps/com.rowyn.hub.png
 
 # The VPN backend pins the Fedora paths /usr/bin/openconnect and
@@ -375,6 +380,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm644 /ctx/shared/rowyn-update-watcher.timer /usr/lib/systemd/system/rowyn-update-watcher.timer && \
     systemctl enable rowyn-update-watcher.timer
 
+# Passive per-user notification, deduplicated by the exact staged image digest.
+# No automatic reboot and no privilege prompts in the desktop session.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    install -Dm755 /ctx/shared/rowyn-update-notify /usr/bin/rowyn-update-notify && \
+    install -Dm644 /ctx/shared/rowyn-update-notify.service /usr/lib/systemd/user/rowyn-update-notify.service && \
+    install -Dm644 /ctx/shared/rowyn-update-notify.timer /usr/lib/systemd/user/rowyn-update-notify.timer && \
+    systemctl --global enable rowyn-update-notify.timer
+
 # Boot health: a deployment that has never been confirmed healthy runs bounded
 # local checks once per boot; three failures quarantine the digest and roll the
 # machine back. Rowyn's own systemd + bootc implementation, not greenboot.
@@ -388,6 +401,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 
 # --- Rowyn identity ----------------------------------------------------------
 COPY os-release /usr/lib/os-release
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    python3 /ctx/shared/write-build-info.py --root / \
+      --source-revision "${ROWYN_SOURCE_REVISION}" --image-version "${ROWYN_IMAGE_VERSION}"
 
 # No login users are baked into the image. The KDE first-login defaults a
 # new account needs are already system-wide: kde-dark-defaults.sh --root /

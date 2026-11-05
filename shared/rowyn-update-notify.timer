@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for a staged Rowyn update in the desktop session
+PartOf=graphical-session.target
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=rowyn-update-notify.service
+
+[Install]
+WantedBy=graphical-session.target

@@ -44,8 +44,14 @@ function reconcileJob(job: DevelopmentJob): DevelopmentJob {
   return job;
 }
 
+export type DevelopmentPlan = { preset: string; target: string; packages: string[]; commands: string[][] };
+export async function rowynDevelopmentPresetPreview(preset: string): Promise<DevelopmentPlan> {
+  nativeOnly();
+  return invoke('rowyn_development_preset_preview', { preset });
+}
+
 export async function rowynDevelopmentStart(
-  operation: 'create' | 'delete',
+  operation: 'create' | 'delete' | `preset:${string}`,
   confirmation?: string,
 ): Promise<DevelopmentJob> {
   nativeOnly();

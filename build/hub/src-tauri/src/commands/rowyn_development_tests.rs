@@ -77,6 +77,12 @@ fn controlled_child_lifecycle_reports_success_failure_cancellation_and_timeout()
     let mut success = Command::new("/bin/sh");
     success.args(["-c", "exit 0"]);
     assert!(child(success, flag(), Duration::from_secs(2)).is_ok());
+    let mut flood = Command::new("/usr/bin/python3");
+    flood.args([
+        "-c",
+        "import sys; sys.stdout.write('o'*700000); sys.stderr.write('e'*700000)",
+    ]);
+    assert!(child(flood, flag(), Duration::from_secs(5)).is_ok());
     let mut failure = Command::new("/bin/sh");
     failure.args(["-c", "exit 9"]);
     assert!(child(failure, flag(), Duration::from_secs(2)).is_err());
@@ -87,7 +93,7 @@ fn controlled_child_lifecycle_reports_success_failure_cancellation_and_timeout()
     let join = thread::spawn(move || child(sleeper, worker_flag, Duration::from_secs(5)));
     thread::sleep(Duration::from_millis(100));
     cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(join.join().unwrap().unwrap_err(), "Cancelled.");
+    assert!(join.join().unwrap().unwrap_err().starts_with("Cancelled"));
     let mut sleeper = Command::new("/bin/sh");
     sleeper.args(["-c", "sleep 5"]);
     assert_eq!(
@@ -111,6 +117,12 @@ fn job_terminal_transitions_and_unknown_job_errors() {
             cancel: Some(flag),
         },
     );
+    finish(
+        &key,
+        Err("Cancelled; packages may be partially installed.".into()),
+    );
+    let cancelled = tauri::async_runtime::block_on(rowyn_development_job(key.clone())).unwrap();
+    assert_eq!(cancelled.status, "cancelled");
     finish(&key, Ok("verified".into()));
     let job = tauri::async_runtime::block_on(rowyn_development_job(key.clone())).unwrap();
     assert_eq!(job.status, "succeeded");
@@ -118,6 +130,100 @@ fn job_terminal_transitions_and_unknown_job_errors() {
     assert!(tauri::async_runtime::block_on(rowyn_development_job("missing".into())).is_err());
     assert!(tauri::async_runtime::block_on(rowyn_development_cancel("missing".into())).is_err());
     jobs().lock().unwrap().0.remove(&key);
+}
+
+#[test]
+fn fixed_presets_build_exact_apt_plans_and_reject_arbitrary_packages() {
+    assert_eq!(
+        preset_packages("git-build").unwrap(),
+        &["git", "build-essential", "pkg-config", "cmake"]
+    );
+    assert_eq!(
+        preset_packages("python").unwrap(),
+        &["python3", "python3-pip", "python3-venv"]
+    );
+    assert_eq!(preset_packages("node").unwrap(), &["nodejs", "npm"]);
+    assert_eq!(preset_packages("rust").unwrap(), &["rustc", "cargo"]);
+    assert!(preset_packages("git; rm -rf /").is_err());
+    for preset in ["git-build", "python", "node", "rust"] {
+        let plan = preset_commands(preset).unwrap();
+        assert_eq!(plan.len(), 3);
+        assert!(plan[0].starts_with(&[
+            "/usr/bin/sudo".into(),
+            "-n".into(),
+            "/usr/bin/env".into(),
+            "DEBIAN_FRONTEND=noninteractive".into(),
+            "/usr/bin/apt-get".into(),
+            "update".into()
+        ]));
+        assert!(plan[1].contains(&"install".into()));
+        assert_eq!(
+            plan[2],
+            [
+                vec!["/usr/bin/dpkg-query", "-W", "-f=${db:Status-Status}\\n"],
+                preset_packages(preset).unwrap().to_vec()
+            ]
+            .concat()
+        );
+        assert_eq!(
+            plan[2][3..],
+            preset_packages(preset)
+                .unwrap()
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            distrobox_command_args(&plan[0], &owned().id)[..4],
+            ["enter", "--name", owned().id.as_str(), "--"]
+        );
+    }
+    assert!(preset_commands("arbitrary").is_err());
+}
+
+#[test]
+fn immutable_container_identity_is_required_and_used_for_preset_execution() {
+    let original = owned();
+    let replacement = ContainerIdentity {
+        id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        ..original.clone()
+    };
+    assert_eq!(
+        validate_owned_identity(&[original.clone()], &original.id).unwrap(),
+        original.id
+    );
+    assert!(validate_owned_identity(&[replacement], &original.id).is_err());
+    assert!(validate_owned_identity(&[original.clone(), original.clone()], &original.id).is_err());
+    assert_eq!(
+        distrobox_command_args(&["/usr/bin/apt-get".into(), "update".into()], &original.id),
+        vec![
+            "enter",
+            "--name",
+            original.id.as_str(),
+            "--",
+            "/usr/bin/apt-get",
+            "update"
+        ]
+    );
+}
+
+#[test]
+fn dolphin_path_policy_accepts_only_canonical_home_directories() {
+    let home = std::env::temp_dir().join(format!("rowyn-dev-home-{}", id()));
+    let inside = home.join("source dir");
+    std::fs::create_dir_all(&inside).unwrap();
+    assert_eq!(validate_open_directory(&home, &inside).unwrap(), inside);
+    assert!(validate_open_directory(&home, &home.join("missing")).is_err());
+    assert!(validate_open_directory(&home, std::path::Path::new("/tmp")).is_err());
+    assert!(validate_open_directory(&home, std::path::Path::new("--help")).is_err());
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn desktop_service_menu_uses_fixed_command_and_directory_mime_type() {
+    let menu = include_str!("../../data/kde/servicemenus/rowyn-development-here.desktop");
+    assert!(menu.contains("Exec=/usr/bin/rowyn-hub-shell --development-directory %f"));
+    assert!(menu.contains("MimeType=inode/directory;"));
 }
 
 #[test]

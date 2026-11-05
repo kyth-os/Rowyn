@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=inode/directory;
+Actions=rowynDevelopmentHere;
+X-KDE-Priority=TopLevel
+
+[Desktop Action rowynDevelopmentHere]
+Name=Open Here in Rowyn Development
+Icon=utilities-terminal
+Exec=/usr/bin/rowyn-hub-shell --development-directory %f

@@ -1,0 +1,84 @@
+#!/usr/bin/python3
+"""User-session, once-per-staged-image notification. Never stages or reboots."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+def staged_digest(document):
+    try:
+        value = document["status"]["staged"]["image"]["imageDigest"]
+        return value if isinstance(value, str) and DIGEST.fullmatch(value) else None
+    except (KeyError, TypeError):
+        return None
+
+
+def notify_once(digest, state, send):
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        return False
+    state = Path(state)
+    try:
+        if state.is_symlink() or state.parent.is_symlink():
+            return False
+        state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lock_fd = os.open(str(state) + ".lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(lock_fd, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if state.exists():
+                if state.stat().st_size > 4096:
+                    return False
+                try:
+                    if json.loads(state.read_text()).get("last_notified_digest") == digest:
+                        return False
+                except (ValueError, AttributeError):
+                    return False  # Do not repeatedly notify when deduplication state is corrupt.
+            send()
+            name = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", dir=state.parent, prefix=".notification-", delete=False) as output:
+                    name = output.name
+                    json.dump({"version": 1, "last_notified_digest": digest}, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(name, state)
+            finally:
+                if name and os.path.exists(name):
+                    os.unlink(name)
+            return True
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+
+
+def send_notification():
+    subprocess.run([
+        "/usr/bin/notify-send", "--app-name=Rowyn", "--urgency=normal", "--expire-time=10000",
+        "Rowyn update ready", "Restart when convenient to apply the staged system update. Review it in Hub → Updates. Your work will not be restarted automatically.",
+    ], check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+
+
+def main():
+    try:
+        result = subprocess.run([
+            "/usr/bin/sudo", "-n", "/usr/bin/rowyn-bootc-guard", "status-json",
+        ], check=True, stdin=subprocess.DEVNULL, capture_output=True, timeout=35)
+        if len(result.stdout) > 256 * 1024:
+            return
+        digest = staged_digest(json.loads(result.stdout))
+        if digest is None:
+            return
+        base = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+        if not base.is_absolute():
+            return
+        notify_once(digest, base / "rowyn/update-notification.json", send_notification)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return  # Missing privilege/read access is not a reason to prompt or repeatedly notify.
+
+
+if __name__ == "__main__":
+    main()

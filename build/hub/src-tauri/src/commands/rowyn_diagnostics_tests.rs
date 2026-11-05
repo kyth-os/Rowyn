@@ -5,7 +5,7 @@ use super::*;
 #[ignore = "explicit installed-system read-only smoke"]
 fn live_read_only_snapshot_has_all_sections_and_controller_helper_result() {
     let snapshot = collect().unwrap();
-    assert_eq!(snapshot.readings.len(), 9);
+    assert_eq!(snapshot.readings.len(), 13);
     assert!(snapshot.collected_at > 0);
     for reading in &snapshot.readings {
         assert!(!reading.detail.is_empty());
@@ -148,4 +148,48 @@ fn bounded_view_scrubs_before_truncating_a_secret() {
     let text = safe_text(&input);
     assert!(!text.contains("secret"));
     assert!(text.chars().count() <= TEXT_LIMIT + 20);
+}
+
+
+#[test]
+fn focused_hardware_fixture_parsers_are_bounded_and_truthful() {
+    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"blocked","soft":"unblocked"}]}"#).unwrap().contains("hard-blocked"));
+    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"unblocked","soft":"blocked"}]}"#).unwrap().contains("soft-blocked"));
+    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("unblocked"));
+    assert!(parse_rfkill(r#"{"rfkill":[{"type":"wlan","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("not present"));
+    for malformed in ["", "{}", r#"{"rfkill":[{"type":"bluetooth","hard":false,"soft":false}]}"#, r#"{"rfkill":[{"type":"bluetooth","hard":"unknown","soft":"unblocked"}]}"#] { assert!(parse_rfkill(malformed).is_err(), "{malformed}"); }
+    assert_eq!(parse_wifi("wlan0:wifi:connected", "enabled").unwrap(), "Wi-Fi radio enabled; device connected. Network names omitted.");
+    assert!(parse_wifi("wlan0:wifi:disconnected", "disabled").unwrap().contains("disabled"));
+    assert!(parse_audio("active\ninactive\n").unwrap().contains("inactive"));
+    assert!(parse_audio("").is_err());
+    assert!(parse_audio("Failed to connect").is_err());
+    assert!(focused_reading("Audio", parse_audio("inactive\nactive")).state == "attention");
+    let display = parse_displays("Output: HDMI-A-1 (connected) enabled\n").unwrap();
+    assert!(display.contains("1 connected display output(s)"));
+    assert!(!display.contains("HDMI-A-1"));
+    assert!(parse_displays("").is_err());
+    assert!(parse_displays("Output: HDMI-A-1 (disconnected) disabled\n").unwrap().contains("0 connected"));
+    assert!(parse_displays("Output: HDMI-A-1 (disconnected) enabled\n").is_ok());
+    assert_eq!(focused_reading("Displays", parse_displays("Output: HDMI-A-1 (disconnected) disabled\n")).state, "attention");
+}
+
+
+#[test]
+fn focused_probe_arguments_are_fixed_and_read_only() {
+    fn args(kind: Probe) -> (String, Vec<String>) {
+        let mut command = match kind {
+            Probe::Bluetooth => { let mut c=Command::new("/usr/bin/rfkill"); c.args(["--json"]); c }
+            Probe::Wifi => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["-t","-f","DEVICE,TYPE,STATE","device","status"]); c }
+            Probe::WifiRadio => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["radio","wifi"]); c }
+            Probe::Audio => { let mut c=Command::new("/usr/bin/systemctl"); c.args(["--user","is-active","pipewire.service","wireplumber.service"]); c }
+            Probe::Displays => { let mut c=Command::new("/usr/bin/kscreen-doctor"); c.arg("-o"); c }
+            _ => unreachable!(),
+        };
+        (command.get_program().to_string_lossy().into_owned(), command.get_args().map(|a| a.to_string_lossy().into_owned()).collect())
+    }
+    assert_eq!(args(Probe::Bluetooth), ("/usr/bin/rfkill".into(), vec!["--json".into()]));
+    assert_eq!(args(Probe::Wifi).1, vec!["-t","-f","DEVICE,TYPE,STATE","device","status"]);
+    assert_eq!(args(Probe::WifiRadio).1, vec!["radio","wifi"]);
+    assert_eq!(args(Probe::Audio).1, vec!["--user","is-active","pipewire.service","wireplumber.service"]);
+    assert_eq!(args(Probe::Displays).1, vec!["-o"]);
 }

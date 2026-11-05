@@ -468,6 +468,61 @@ def export_source(repo, destination):
             path.chmod(member.mode & 0o777)
 
 
+def apply_rowyn_qol(root):
+    """Wire small desktop additions into the existing exported Hub."""
+    web = root / "src/rowyn-hub-web"
+    manifest_path = web / "src/data/hubRoutes.json"
+    manifest = json.loads(manifest_path.read_text())
+    if any(d["key"] == "Backups" for d in manifest["destinations"]):
+        raise ValueError("Backups destination already exists")
+    manifest["destinations"].append({
+        "key": "Backups", "route": "/backups", "sections": [{
+            "key": "Backups", "title": "Backups",
+            "description": "Configure file backups and inspect recorded completion."}]})
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    app = web / "src/App.tsx"
+    text = replace_once(app.read_text(), 'const Apps = lazy(',
+        'const Backups = lazy(() => import("./pages/Backups").then(({ Backups: page }) => ({ default: page })));\nconst Apps = lazy(')
+    text = replace_once(text, '  "/apps": "Apps",', '  "/backups": "Backups",\n  "/apps": "Apps",')
+    text = replace_once(text, '              <Route path="/apps"',
+        '              <Route path="/backups" element={<Backups />} />\n              <Route path="/apps"')
+    app.write_text(text)
+    sidebar = web / "src/components/Sidebar.tsx"
+    sidebar.write_text(replace_once(sidebar.read_text(), '  Apps: { hint:',
+        '  Backups: { hint: "Personal files and backup plans", Icon: IconShield },\n  Apps: { hint:'))
+    sections = web / "src/data/hubSections.ts"
+    text = replace_once(sections.read_text(), '  Diagnostics: IconDatabase,',
+        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  Diagnostics: IconDatabase,')
+    sections.write_text(text + '\nexport const BACKUPS_SECTIONS = sectionsFor("Backups");\n')
+    destinations = web / "src/data/destinations.ts"
+    text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  BACKUPS_SECTIONS,\n  APPS_SECTIONS,')
+    destinations.write_text(replace_once(text, '  Apps: APPS_SECTIONS,', '  Backups: BACKUPS_SECTIONS,\n  Apps: APPS_SECTIONS,'))
+    apps = web / "src/pages/Apps.tsx"
+    text = 'import { AppsDefaultsAccess } from "./AppsDefaultsAccess";\n' + apps.read_text()
+    apps.write_text(replace_once(text, '      <HubPage', '      <AppsDefaultsAccess />\n      <HubPage'))
+    updates = web / "src/pages/Updates.tsx"
+    text = 'import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\n' + updates.read_text()
+    updates.write_text(replace_once(text, '<UpdatesOverview />', '<UpdateStatusBanner /><UpdatesOverview />'))
+    commands = web / "src-tauri/src/commands/mod.rs"
+    commands.write_text(commands.read_text() + '\npub(crate) mod rowyn_backups;\npub(crate) mod rowyn_settings;\npub(crate) mod rowyn_support;\n')
+    main = web / "src-tauri/src/main.rs"
+    text = replace_once(main.read_text(), 'tauri::generate_handler![',
+        'tauri::generate_handler![\n'
+        '            commands::rowyn_backups::rowyn_backups_snapshot,\n'
+        '            commands::rowyn_settings::rowyn_open_settings,\n'
+        '            commands::rowyn_development::rowyn_development_preset_preview,')
+    text = replace_once(text, 'fn main() {', '''fn main() {
+    let development_args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let Some(result) = commands::rowyn_development::handle_development_cli(&development_args) {
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }''')
+    main.write_text(text)
+
+
 def apply_rowyn_mvp(root):
     """Add Rowyn-owned pages after the upstream cuts; never restore gaming.rs.
 
@@ -523,7 +578,8 @@ def apply_rowyn_mvp(root):
     package = web / "package.json"
     package_json = json.loads(package.read_text())
     scripts = package_json.setdefault("scripts", {})
-    scripts["test:rowyn-mvp"] = "node --test tests/rowyn-mvp.test.mjs tests/rowyn-development.test.mjs"
+    scripts["test:rowyn-mvp"] = "node --test " + " ".join(
+        f"tests/{test.name}" for test in sorted((Path(__file__).resolve().parent / "hub/tests").glob("rowyn-*.test.mjs")))
     package.write_text(json.dumps(package_json, indent=2) + "\n")
     overlay = Path(__file__).resolve().parent / "hub"
     for source in sorted(overlay.rglob("*")):
@@ -552,6 +608,7 @@ def apply_rowyn_mvp(root):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.adapt(web, replace_once)
+    apply_rowyn_qol(root)
 
 
 def port_source(root):

@@ -12,6 +12,7 @@ import getpass
 import ipaddress
 import os
 import re
+import selectors
 import shutil
 import socket
 import subprocess
@@ -20,6 +21,61 @@ from urllib.parse import quote
 
 ISSUE_BASE = "https://github.com/mrtrickdotorg/Rowyn/issues/new"
 URL_CAP = 6000
+_PUBLIC_VALUES = []
+
+
+def parse_build_info(text):
+    import json
+    if not isinstance(text, str) or len(text.encode("utf-8")) > 16_384:
+        return []
+    try:
+        data = json.loads(text)
+        if not isinstance(data, dict): return []
+        revision = data.get("source_revision")
+    except (TypeError, ValueError, AttributeError):
+        return []
+    values = []
+    if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision): values.append(revision)
+    return values
+
+
+def public_image_values(text):
+    import json
+    if not isinstance(text, str) or len(text.encode("utf-8")) > 65_536:
+        return []
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError, KeyError):
+        return []
+    values = []
+    if not isinstance(data, dict): return values
+    status = data.get("status")
+    if not isinstance(status, dict): return values
+    for key in ("booted", "staged"):
+        try:
+            image = status.get(key, {}).get("image", {})
+            ref, digest = image.get("image", {}).get("image"), image.get("imageDigest")
+        except (AttributeError, TypeError): continue
+        if isinstance(ref, str) and (re.fullmatch(r"ghcr\.io/mrtrickdotorg/rowyn:[A-Za-z0-9._-]{1,128}", ref) or re.fullmatch(r"ghcr\.io/mrtrickdotorg/rowyn@sha256:[0-9a-f]{64}", ref)) and ref not in values: values.append(ref)
+        if isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) and digest not in values: values.append(digest)
+    return values
+
+
+def scrub_public(text, ctx=None, trusted=None):
+    values = sorted({v for v in (_PUBLIC_VALUES if trusted is None else trusted) if isinstance(v, str) and v}, key=len, reverse=True)
+    if not values: return scrub(text, ctx)
+    pattern = re.compile(r"(?<![A-Za-z0-9._/@:-])(" + "|".join(re.escape(v) for v in values) + r")(?![A-Za-z0-9._/@:-])")
+    def preserve(m):
+        if re.search(r"(?i)(?:token|password|passwd|secret|apikey|api_key|psk|passphrase)[\"']?\s*[=:]\s*$", text[max(0, m.start()-80):m.start()]): return m.group(0)
+        return "ROWYNPUBLICPROVENANCE%04dTOKEN" % values.index(m.group(0))
+    marked, restore = pattern.sub(preserve, text), []
+    for index, value in enumerate(values): restore.append(("ROWYNPUBLICPROVENANCE%04dTOKEN" % index, value))
+    clean = scrub(marked, ctx)
+    for marker, value in restore:
+        clean = clean.replace(marker, value)
+    return clean
+
+
 GPU_MODULES = ("nvidia", "nouveau", "amdgpu", "i915", "xe")
 
 
@@ -155,27 +211,67 @@ def scrub(text, ctx=None):
 # Gathering
 # --------------------------------------------------------------------------
 
+def _kill_and_reap(p):
+    """Bound the caller's post-kill wait; reap later if the child is stuck."""
+    import threading
+    p.kill()
+    try:
+        p.wait(timeout=0.25)
+    except subprocess.TimeoutExpired:
+        threading.Thread(target=p.wait, daemon=True).start()
+
+
 def run(cmd, timeout=15):
     """Run a command, bounded. Returns (ok, text); never raises."""
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           stdin=subprocess.DEVNULL, env=dict(os.environ, LC_ALL="C"))
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             stdin=subprocess.DEVNULL, env=dict(os.environ, LC_ALL="C"))
     except FileNotFoundError:
         return False, "%s: not installed" % cmd[0]
-    except subprocess.TimeoutExpired:
-        return False, "%s: timed out after %ss" % (cmd[0], timeout)
+
     except Exception as exc:
         return False, "%s: %s" % (cmd[0], exc)
-    out = (p.stdout or "").strip()
-    if p.returncode != 0:
-        return False, ("%s: exit %d %s" % (cmd[0], p.returncode, (p.stderr or "").strip()[:200])).strip()
+    streams = {p.stdout: bytearray(), p.stderr: bytearray()}; overflow = False
+    sel = selectors.DefaultSelector()
+    for stream in streams: os.set_blocking(stream.fileno(), False); sel.register(stream, selectors.EVENT_READ)
+    import time
+    end = time.monotonic() + timeout
+    try:
+        while sel.get_map():
+            if time.monotonic() >= end:
+                _kill_and_reap(p)
+                for stream in streams:
+                    try: stream.close()
+                    except Exception: pass
+                return False, "%s: timed out after %ss" % (cmd[0], timeout)
+            for key, _ in sel.select(min(.1, max(0, end-time.monotonic()))):
+                chunk = os.read(key.fileobj.fileno(), 8192)
+                if not chunk: sel.unregister(key.fileobj); continue
+                buf = streams[key.fileobj]
+                if len(buf)+len(chunk) > 65536: overflow = True
+                buf.extend(chunk[:max(0, 65536-len(buf))])
+        try:
+            code = p.wait(timeout=max(0, end - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            _kill_and_reap(p)
+            for stream in streams:
+                try: stream.close()
+                except Exception: pass
+            return False, "%s: timed out after %ss" % (cmd[0], timeout)
+    finally: sel.close()
+    out, err = streams[p.stdout].decode("utf-8", "replace").strip(), streams[p.stderr].decode("utf-8", "replace").strip()
+    p.stdout.close(); p.stderr.close()
+    if overflow: return False, "%s: output exceeded 65536-byte limit" % cmd[0]
+    if code != 0: return False, ("%s: exit %d %s" % (cmd[0], code, err[:200])).strip()
     return True, out
 
 
 def read_file(path, limit=20000):
     try:
-        with open(path, errors="replace") as fh:
-            return True, fh.read(limit).strip()
+        with open(path, "rb") as fh:
+            data = fh.read(limit + 1)
+        if len(data) > limit: return False, "%s: exceeds %d-byte limit" % (path, limit)
+        return True, data.decode("utf-8", "replace").strip()
     except Exception as exc:
         return False, "%s: %s" % (path, exc)
 
@@ -202,6 +298,7 @@ def image_from_bootc(js):
 
 def gather(use_sudo=True):
     """Return (sections, facts). sections: list of (title, body)."""
+    import json
     sections, facts = [], {}
 
     ok, txt = read_file("/usr/lib/os-release")
@@ -216,12 +313,30 @@ def gather(use_sudo=True):
     sections.append(("Kernel", txt))
 
     facts["image"] = "unknown"
+    _PUBLIC_VALUES.clear()
+    build_ok, build_txt = read_file("/usr/share/rowyn/build-info.json", limit=16_384)
+    if build_ok:
+        for value in parse_build_info(build_txt):
+            _PUBLIC_VALUES.append(value)
+    try:
+        build_data = json.loads(build_txt) if build_ok else {}
+        if not isinstance(build_data, dict): build_data = {}
+    except (ValueError, TypeError): build_data = {}
+    revision = build_data.get("source_revision")
+    version = build_data.get("image_version")
+    revision = revision if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision) else "unknown"
+    version = version if isinstance(version, str) and re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", version) else "unknown"
+    sections.append(("Build metadata", "Source revision: %s\nImage version: %s" % (revision, version) if build_ok else "Build metadata unavailable: " + build_txt))
     if use_sudo:
-        ok, txt = run(["sudo", "-n", "/usr/bin/rowyn-bootc-guard", "status-json"], timeout=40)
-        ref, digest = image_from_bootc(txt) if ok else (None, None)
-        if ref:
-            facts["image"] = "%s @ %s" % (ref, (digest or "")[:19])
-            sections.append(("Image", "ref=%s\ndigest=%s" % (ref, digest)))
+        ok, txt = run(["sudo", "-n", "/usr/bin/rowyn-bootc-guard", "status-json"], timeout=35)
+        txt = txt[:65_537]
+        values = public_image_values(txt) if ok and len(txt) <= 65_536 else []
+        for value in values:
+            if value not in _PUBLIC_VALUES:
+                _PUBLIC_VALUES.append(value)
+        if values:
+            facts["image"] = next((v for v in values if v.startswith("ghcr.io/")), "unknown")
+            sections.append(("Image", "\n".join(v for v in values if v.startswith("ghcr.io/") or v.startswith("sha256:"))))
         else:
             sections.append(("Image", "bootc status unavailable (not run as an admin)"))
     else:
@@ -241,6 +356,20 @@ def gather(use_sudo=True):
     gpu_text = "\n".join(gpu) if gpu else (txt if not ok else "none found")
     gpu_text += "\nloaded modules: " + (", ".join(mods) or "none of " + "/".join(GPU_MODULES))
     sections.append(("GPU", gpu_text))
+
+    okcpu, cputxt = read_file("/proc/cpuinfo", limit=1000000)
+    cpu = next((line.split(":", 1)[1].strip() for line in cputxt.splitlines() if line.lower().startswith("model name") and ":" in line), "unknown") if okcpu else "unknown"
+    oknv, nvidia_version = read_file("/sys/module/nvidia/version", limit=256)
+    sections.append(("Hardware facts", "CPU model: %s\nNVIDIA module version: %s" % (cpu, nvidia_version if oknv else "unavailable")))
+    okhealth, healthtxt = read_file("/var/lib/rowyn/boot-health.json", limit=65536)
+    try:
+        import json
+        health = json.loads(healthtxt) if okhealth else None
+        if not isinstance(health, dict): raise ValueError("not an object")
+        selected = {key: health[key] for key in ("schema_version", "failures", "quarantined", "rollback", "last_boot") if key in health}
+        healthout = json.dumps(selected, sort_keys=True)
+    except (ValueError, TypeError): healthout = "Boot health unavailable or invalid"
+    sections.append(("Boot health", healthout))
 
     facts["session"] = "%s / %s" % (os.environ.get("XDG_SESSION_TYPE", "unknown"),
                                     os.environ.get("XDG_CURRENT_DESKTOP", "unknown"))
@@ -311,10 +440,15 @@ def report_path(now=None):
 
 def write_private(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(text)
-    os.chmod(path, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+    except Exception:
+        try: os.unlink(path)
+        except OSError: pass
+        raise
 
 
 def open_url(url):
@@ -339,15 +473,15 @@ def main(argv=None):
 
     ctx = make_context()
     sections, facts = gather(use_sudo=not args.no_sudo)
-    report = scrub(render_report(sections), ctx)
+    report = scrub_public(render_report(sections), ctx)
     if args.stdout:
         sys.stdout.write(report)
         return 0
 
     path = report_path()
     write_private(path, report)
-    body = scrub(summary_body({k: (scrub(str(v), ctx) if v is not None else None)
-                               for k, v in facts.items()}), ctx)
+    body = scrub_public(summary_body({k: (scrub_public(str(v), ctx) if v is not None else None)
+                                      for k, v in facts.items()}), ctx)
     url = build_issue_url("Rowyn: <short problem description>", body)
     print("Scrubbed report written to: %s" % path)
     print("Nothing was uploaded. Read the file first; attach it to the issue only if you are happy with it.")

@@ -7,6 +7,7 @@ import {
   rowynDevelopmentJob,
   rowynDevelopmentCancel,
   rowynDevelopmentOpen,
+  rowynDevelopmentPresetPreview,
   setDevelopmentActiveJobId,
   type DevelopmentJob,
 } from '../services/rowynDevelopment';
@@ -14,6 +15,8 @@ import {
   createJobController,
   DEVELOPMENT_NAME,
   DEVELOPMENT_IMAGE,
+  DEVELOPMENT_PRESETS,
+  presetOperation,
   DELETE_WARNING,
   describeState,
   deleteConfirmation,
@@ -33,6 +36,8 @@ export function Development() {
   const [job, setJob] = useState<DevelopmentJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState('');
+  const [preset, setPreset] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{ preset: string; target: string; packages: string[]; commands: string[][] } | null>(null);
   const mounted = useRef(false);
   const lock = useRef(false);
   const controller = useRef<ReturnType<typeof createJobController> | null>(null);
@@ -117,6 +122,33 @@ export function Development() {
           Cancelling stops the operation where possible; it does not roll back packages or files already
           changed. Your home directory is shared with the container.
         </p>
+        <div className="home-actions">
+          {DEVELOPMENT_PRESETS.map(item => (
+            <button key={item.id} className="action-button" disabled={lockedActions || !caps.canOpen}
+              onClick={() => void act(async () => {
+                setPreset(item.id);
+                try { setPlan(await rowynDevelopmentPresetPreview(item.id)); }
+                catch (error) { setPlan(null); setMessage(String(error)); }
+              })}>
+              Preview {item.label}
+            </button>
+          ))}
+        </div>
+        {plan && preset === plan.preset && (
+          <section aria-label="Package installation plan">
+            <h2>Install {DEVELOPMENT_PRESETS.find(item => item.id === plan.preset)?.label}</h2>
+            <p>Target: <code>{plan.target}</code> (managed Ubuntu 26.10 container)</p>
+            <p>Packages: {plan.packages.map(pkg => <code key={pkg}>{pkg} </code>)}</p>
+            <ol>{plan.commands.map((argv, index) => <li key={index}><code>{argv.join(' ')}</code></li>)}</ol>
+            <p>Cancellation stops the process group where possible; packages and apt state may be partially changed and are not rolled back.</p>
+            <button className="action-button" disabled={lockedActions} onClick={() => {
+              if (confirmUserAction(`Install ${plan.packages.join(', ')} in ${plan.target}? Package and apt state may be partially changed if cancelled.`)) {
+                const operation = presetOperation(plan.preset);
+                if (operation) void act(() => controller.current?.start(operation, `install:${plan.preset}`) ?? Promise.resolve());
+              }
+            }}>Install this preset</button>
+          </section>
+        )}
         <div className="home-actions">
           <button className="action-button" disabled={busy} onClick={() => void act(() => controller.current?.refresh() ?? Promise.resolve())}>
             Refresh status

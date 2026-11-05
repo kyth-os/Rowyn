@@ -125,12 +125,14 @@ jobs:
 
       - name: Build image (offline Containerfile)
         shell: bash --noprofile --norc -euo pipefail {0}
-        run: sudo podman build -t rowyn:ci .
+        run: sudo podman build --build-arg "ROWYN_SOURCE_REVISION=${GITHUB_SHA}" -t rowyn:ci .
 
       - name: Inspect image and run image smoke checks
         shell: bash --noprofile --norc -euo pipefail {0}
         run: |
           sudo podman run --rm rowyn:ci cat /usr/lib/os-release
+          image_revision=$(sudo podman run --rm --entrypoint /usr/bin/python3 rowyn:ci -c 'import json; print(json.load(open("/usr/share/rowyn/build-info.json"))["source_revision"])')
+          test "${image_revision}" = "${GITHUB_SHA}"
           sudo podman run --rm --entrypoint /bin/sh rowyn:ci -euxc '
             grep -Fqx "NAME=\"Rowyn\"" /usr/lib/os-release
             grep -Fqx "ID=rowyn" /usr/lib/os-release
@@ -179,6 +181,15 @@ jobs:
             grep -qx LANG=en_US.UTF-8 /etc/default/locale
             test "$(readlink /etc/systemd/system/ufw.service)" = /dev/null
             test -x /usr/bin/rowyn-hub-shell
+            test -x /usr/bin/kup-daemon
+            test -x /usr/bin/bup
+            test -x /usr/bin/rsync
+            test -x /usr/bin/notify-send
+            test -x /usr/bin/rowyn-update-notify
+            test -s /usr/share/applications/kcm_kup.desktop
+            test -s /usr/share/applications/kcm_app-permissions.desktop
+            test -s /usr/share/kio/servicemenus/rowyn-development-here.desktop
+            test -e /etc/systemd/user/graphical-session.target.wants/rowyn-update-notify.timer
             if ldd /usr/bin/rowyn-hub-shell | grep -Fq "not found"; then
               echo "rowyn-hub-shell has unresolved runtime libraries" >&2
               exit 1

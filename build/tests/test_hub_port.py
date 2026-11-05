@@ -290,7 +290,7 @@ class PinnedHubSourceTests(unittest.TestCase):
 
                 manifest = json.loads((web / "src/data/hubRoutes.json").read_text())
                 self.assertEqual([d["key"] for d in manifest["destinations"]],
-                                 ["Apps", "VPN", "Updates", "Development", "Diagnostics", "Play"])
+                                 ["Apps", "VPN", "Updates", "Development", "Diagnostics", "Play", "Backups"])
 
                 app = (web / "src/App.tsx").read_text()
                 for route in ("/dev-tools", "/this-pc", "/move-in"):

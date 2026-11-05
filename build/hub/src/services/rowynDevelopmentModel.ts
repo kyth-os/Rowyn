@@ -12,7 +12,7 @@ export type Job = {
 };
 
 export type JobControllerDeps = {
-  start: (op: 'create' | 'delete', confirmation?: string) => Promise<Job>;
+  start: (op: 'create' | 'delete' | `preset:${string}`, confirmation?: string) => Promise<Job>;
   poll: (id: string) => Promise<Job>;
   cancel: (id: string) => Promise<Job>;
   onJob: (job: Job | null) => void;
@@ -109,7 +109,7 @@ export function createJobController(deps: JobControllerDeps) {
     get job() { return current; },
     get locked() { return inFlight; },
     get paused() { return paused; },
-    async start(op: 'create' | 'delete', confirmation?: string) {
+    async start(op: 'create' | 'delete' | `preset:${string}`, confirmation?: string) {
       if (!mounted || inFlight || current?.status === 'running') return;
       inFlight = true;
       const token = ++generation;
@@ -197,6 +197,16 @@ export function createJobController(deps: JobControllerDeps) {
       clearTimeout(timer);
     },
   };
+}
+
+export const DEVELOPMENT_PRESETS = [
+  { id: 'git-build', label: 'Git + build tools', packages: ['git', 'build-essential', 'pkg-config', 'cmake'] },
+  { id: 'python', label: 'Python', packages: ['python3', 'python3-pip', 'python3-venv'] },
+  { id: 'node', label: 'Node.js', packages: ['nodejs', 'npm'] },
+  { id: 'rust', label: 'Rust', packages: ['rustc', 'cargo'] },
+] as const;
+export function presetOperation(id: string): `preset:${string}` | null {
+  return DEVELOPMENT_PRESETS.some(preset => preset.id === id) ? `preset:${id}` : null;
 }
 
 export const DEVELOPMENT_IMAGE = 'docker.io/library/ubuntu:26.10';

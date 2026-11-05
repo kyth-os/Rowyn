@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { SetupChecklist } from './SetupChecklist';
+import { UpdateStatusBanner } from '../components/UpdateStatusBanner';
 import { degradedDashboardAcceptance, recordHubAcceptance } from '../services/acceptance';
 import {
   fetchBootRuntimeChecks,
@@ -35,6 +37,7 @@ function StatusCard({ icon, label, value, detail, tone = 'neutral' }: {
 }
 
 const destinations = [
+  { label: 'Backups', description: 'Configure file backups and review recorded completion.', route: '/backups', icon: '↥', accent: 'mint' },
   { label: 'Development', description: 'Create and manage a dedicated Ubuntu development environment.', route: '/development', icon: '⌘', accent: 'violet' },
   { label: 'Play', description: 'Launchers, local game discovery, and controller checks.', route: '/play', icon: '✦', accent: 'berry' },
   { label: 'Apps', description: 'Browse and manage the apps available on this system.', route: '/apps', icon: '▦', accent: 'blue' },
@@ -116,6 +119,8 @@ export function Dashboard() {
 
   return (
     <div className="page-content rowyn-home">
+      <UpdateStatusBanner />
+      <SetupChecklist navigate={navigate} />
       <section className="rowyn-home-hero" aria-labelledby="rowyn-home-title">
         <div className="rowyn-home-hero-copy">
           <span className="home-eyebrow">ROWYN · CONTROL ROOM</span>

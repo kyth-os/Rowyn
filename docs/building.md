@@ -26,8 +26,22 @@ owns. Distrobox shares the user's home directory, so it is a development
 environment, not a security sandbox. Creating or deleting the box requires an
 explicit user action; deleting it removes the container and its installed
 packages, not files in the shared home directory. The feature does not install
-packages or otherwise change the native host. No live container operations
-are part of source validation.
+packages on the native host. No live container operations are part of source validation.
+
+### Daily-driver integrations
+
+- **Development presets:** Git/build tools, Python, Node, and Rust use fixed Ubuntu package lists. The Hub previews the plan and requires confirmation; installation and verification run inside the owned development container, not on the host. Cancelling may leave partial package or apt state and never implies rollback.
+- **Dolphin:** the directory context menu opens an existing owned environment at a canonical folder within the shared home directory. It does not create a container. Remote locations, files, and folders outside that boundary are refused.
+- **Updates:** Home and Updates share a passive status banner. A user-session timer sends one notification per staged image digest, without staging an update or forcing a restart.
+- **Backups:** Kup owns backup-plan editing, destination selection, scheduling, and backup execution. The Hub reads `kuprc` on request to show plan folders, destination, backup type, and Kup's recorded completion time. A configured plan or recorded timestamp does not prove the destination is connected or that a restore will succeed. **OS rollback does not restore personal files.** Versioned backups and mirrors have different deletion/history behavior.
+- **Troubleshooting:** Diagnostics provides focused read-only Bluetooth, Wi-Fi, audio-service, and display findings, with explicit links to KDE settings. These links request a panel; they do not claim to repair hardware.
+- **Defaults & Access:** Apps links to KDE Default Applications, File Associations, and Application Permissions. Portal-mediated file selection and broad persistent Flatpak overrides are distinct. The Hub does not grant extra filesystem access automatically.
+- **Getting started:** the optional Dashboard checklist persists manual completion/skips, can be dismissed, and can always be resumed. It launches no setup operations automatically and reports when preferences cannot be saved.
+- **Support reports:** explicit collection preserves validated public build/image provenance while redacting other sensitive output. Preview before copying or saving; no report is uploaded automatically. Native report files are private and do not overwrite an existing file.
+
+The image explicitly includes `kup-backup`, `bup`, `rsync`, and `kde-config-flatpak`. Ubuntu 26.10 ships Kup as `kcm_kup` and Flatpak permissions as `kcm_app-permissions`; these are checked against installed module metadata rather than guessed from older Ubuntu releases. CI passes the exact source revision to `shared/write-build-info.py`; a local build without `ROWYN_SOURCE_REVISION` records an unknown revision rather than inventing one.
+
+Automated validation uses fixtures for package execution, configuration, commands, and redaction. Real preset installation/cancellation, Dolphin/Wayland launching, backup/restore, desktop notification delivery, and physical-device behavior remain installed-system qualification tasks; automated tests do not certify them.
 
 ## Validate source changes
 
