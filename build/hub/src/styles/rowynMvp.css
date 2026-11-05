@@ -128,3 +128,34 @@
   .rowyn-launcher, .home-destination, .home-destination-arrow { transition: none; }
   .rowyn-launcher:hover, .home-destination:hover, .home-destination:active { transform: none; }
 }
+
+/* Diagnostics: an at-a-glance card grid; raw probe text stays folded. */
+.rowyn-diagnostics { display: flex; flex-direction: column; gap: 13px; }
+.rowyn-diagnostics h1 { margin: 2px 0 6px; font-size: 1.4rem; letter-spacing: -.02em; }
+.rowyn-diag-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 18px 20px; border-radius: 16px; }
+.rowyn-diag-head .rowyn-note { grid-column: 1 / -1; margin: 0; }
+.rowyn-diag-stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.rowyn-stat { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--hairline, rgba(255,255,255,.12)); border-radius: 14px; background: rgba(255,255,255,.03); }
+.rowyn-stat span { color: var(--text-muted, #a7adb9); font-size: .7rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+.rowyn-stat strong { font-size: 1.2rem; font-weight: 650; letter-spacing: -.02em; }
+.rowyn-diag-group { display: grid; gap: 9px; }
+.rowyn-diag-group > h2 { margin: 2px 0 0; font-size: .98rem; letter-spacing: -.01em; }
+.rowyn-diag-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.rowyn-diag-section-head h2 { margin: 0; font-size: .98rem; letter-spacing: -.01em; }
+.rowyn-diag-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); }
+.rowyn-diag-card { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 13px 15px; border: 1px solid var(--hairline, rgba(255,255,255,.12)); border-radius: 14px; background: rgba(255,255,255,.03); }
+.rowyn-diag-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rowyn-diag-card h3 { margin: 0; font-size: .87rem; font-weight: 650; letter-spacing: -.01em; }
+.rowyn-diag-card p { margin: 0; color: var(--text-muted, #a7adb9); font-size: .78rem; line-height: 1.45; overflow-wrap: anywhere; }
+.rowyn-diag-card .rowyn-state { flex: none; font-size: .7rem; }
+.rowyn-diag-card .rowyn-state.is-ok { border-color: rgba(120, 210, 155, .45); color: #9be6b8; }
+.rowyn-diag-card .rowyn-state.is-missing { border-color: rgba(235, 165, 100, .45); color: #f0c391; }
+.rowyn-diag-card .rowyn-state.is-partial { border-color: rgba(228, 205, 120, .4); color: #e7d79e; }
+.rowyn-diag-card .action-button { align-self: flex-start; padding: 6px 10px; font-size: .75rem; }
+.rowyn-diag-raw { font-size: .73rem; }
+.rowyn-diag-raw summary { cursor: pointer; color: var(--text-muted, #a7adb9); }
+.rowyn-diag-raw pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.28); font-size: .71rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rowyn-diag-raw ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-muted, #a7adb9); }
+.rowyn-meter { height: 6px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; }
+.rowyn-meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6ea8ff, #8fe0b0); }
+@media (max-width: 720px) { .rowyn-diag-head { grid-template-columns: minmax(0, 1fr); } }
