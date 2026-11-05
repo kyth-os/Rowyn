@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink } from '../components/ExternalLink';
-import { cancelInstall, confirmUserAction, fetchInstalledFlatpaks, installFlatpak, uninstallFlatpak, waitInstallJob, invalidateSharedReads, getInFlightJob, type InstalledFlatpaksResult } from '../services/liveData';
+import { cancelInstall, fetchInstalledFlatpaks, installFlatpak, uninstallFlatpak, waitInstallJob, invalidateSharedReads, getInFlightJob, type InstalledFlatpaksResult } from '../services/liveData';
 import { rowynControllerScan, openRowynLauncher, rowynSteamGamesScan } from '../services/rowynMvp';
 import { LAUNCHERS, launcherState, installLauncher, createPlayStatusOwner, launchOptions, steamCompatibilityLinks, type Reading, type SteamScan } from '../services/rowynMvpModel';
 import { copyText } from '../services/rowynClipboard';
@@ -14,12 +14,28 @@ const SECTIONS: SectionMap = {
   Controllers: 'hub-section-controllers',
 };
 
+// Confirmation lives in the page: a webview without script dialogs answers
+// window.confirm with false, which silently cancelled installs and removals.
+type PendingLauncher = { kind: 'install' | 'remove'; id: string; name: string };
+
+function launcherStateLabel(scan: InstalledFlatpaksResult | null, state: string): string {
+  if (!scan) return 'Reading installed launchers…';
+  if (state === 'unavailable') return 'Unavailable — a Flatpak scope could not be read';
+  return state;
+}
+
+function launcherStateDetail(scan: InstalledFlatpaksResult | null, state: string): string | null {
+  if (!scan) return 'Install and removal stay disabled until the read finishes.';
+  if (state !== 'unavailable') return null;
+  return `Scopes reported as unreadable: ${scan.failedScopes.join(', ') || 'unknown'}. Choose Refresh launchers to try again; unknown is not the same as not installed.`;
+}
+
 export function Play() {
   useSectionFollow(SECTIONS);
   const [scan, setScan] = useState<InstalledFlatpaksResult | null>(null);
   const [steamScan, setSteamScan] = useState<SteamScan | null>(null);
   const [controllers, setControllers] = useState<Reading[] | null>(null);
-  const [status, setStatus] = useState('Choose Refresh launchers to detect installed Flatpaks. No checks run automatically.');
+  const [status, setStatus] = useState('Reading installed launchers…');
   const [busy, setBusy] = useState(false);
   const [activeInstall, setActiveInstall] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -27,6 +43,7 @@ export function Play() {
   const [game, setGame] = useState('');
   const [gaming, setGaming] = useState(true);
   const [mimalloc, setMimalloc] = useState(false);
+  const [pending, setPending] = useState<PendingLauncher | null>(null);
   const lock = useRef(false);
   const statusOwner = useRef(createPlayStatusOwner(setStatus));
   const options = launchOptions(boundary, gaming, mimalloc);
@@ -37,12 +54,37 @@ export function Play() {
     return !next ? 'Launcher scan unavailable. Use the installed Rowyn Hub and retry.' : next.failedScopes.length
       ? `Partial scan: ${next.failedScopes.join(', ')} unavailable. Unknown is not the same as not installed.` : 'Launcher scan finished.';
   }
-  async function run(pending: string, action: () => Promise<string>) {
+  async function run(pendingMessage: string, action: () => Promise<string>) {
     if (lock.current) return;
     lock.current = true; setBusy(true);
-    try { await statusOwner.current.run(pending, action); }
+    try { await statusOwner.current.run(pendingMessage, action); }
     finally { setActiveInstall(getInFlightJob('install') ?? null); lock.current = false; setBusy(false); }
   }
+  useEffect(() => {
+    // One read when the page opens so the four cards show this account's real
+    // state instead of "unavailable" until someone presses refresh. No timers.
+    void run('Reading installed launchers…', refreshLaunchers);
+  }, []);
+  async function confirmPending() {
+    const action = pending;
+    if (!action) return;
+    setPending(null);
+    const launcher = LAUNCHERS.find((entry) => entry.id === action.id);
+    if (!launcher) return;
+    if (action.kind === 'install') {
+      void run(`Installing ${launcher.name}…`, async () => {
+        const result = await installLauncher(launcher.id, { install: installFlatpak, wait: waitInstallJob }, setActiveInstall);
+        setActiveInstall(null);
+        const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
+      });
+      return;
+    }
+    void run(`Removing ${launcher.name}…`, async () => {
+      const result = await uninstallFlatpak(launcher.id);
+      const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
+    });
+  }
+  const installedCount = scan ? LAUNCHERS.filter((launcher) => launcherState(launcher.id, scan) === 'installed').length : null;
   return <div className="page-content rowyn-mvp">
     <section className="glass dashboard-card" id="hub-section-gaming">
       <span className="home-eyebrow">Rowyn Play · MVP</span><h1>Play</h1>
@@ -56,31 +98,31 @@ export function Play() {
         {tracked && !busy && <button className="action-button" onClick={() => run('Reconnecting to install…', () => waitInstallJob(tracked, 1800))}>Resume install status</button>}
       </div>
       <p className="card-copy" role="status">{status}</p>
-      {!scan && <p className="card-copy">Not scanned yet: Refresh launchers before installing or removing a launcher. Nothing runs automatically.</p>}
+      {installedCount !== null && <p className="card-copy">{installedCount} of {LAUNCHERS.length} launchers installed for this account.</p>}
       {busy && <p className="card-copy" role="progressbar" aria-label="Play action in progress">Working… Install jobs remain cancellable here or in Apps.</p>}
       <div className="rowyn-launchers">{LAUNCHERS.map((launcher) => {
         const state = launcherState(launcher.id, scan);
+        const detail = launcherStateDetail(scan, state);
         return <article className="rowyn-launcher" key={launcher.id}><h2>{launcher.name}</h2>
-          <p className="card-copy">{launcher.description}</p><p className="rowyn-state">{state}</p><code>{launcher.id}</code>
-          {state === 'unavailable' && <p className="card-copy">Install and removal stay disabled until a scan confirms the current state.</p>}
+          <p className="card-copy">{launcher.description}</p><p className="rowyn-state">{launcherStateLabel(scan, state)}</p><code>{launcher.id}</code>
+          {detail && <p className="card-copy">{detail}</p>}
           <div className="home-actions"><button className="action-button" disabled={busy || state !== 'installed'} onClick={() => run(`Opening ${launcher.name}…`, () => openRowynLauncher(launcher.id))}>Open {launcher.name}</button>
-          <button className="action-button" disabled={busy || state !== 'not installed' || !!tracked} onClick={() => {
-            if (!confirmUserAction(`Install ${launcher.name} from Flathub for your user? This downloads software and may take several minutes.`)) return;
-            void run(`Installing ${launcher.name}…`, async () => {
-              const result = await installLauncher(launcher.id, { install: installFlatpak, wait: waitInstallJob }, setActiveInstall);
-              setActiveInstall(null);
-              const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
-            });
-          }}>Install {launcher.name}</button>
-          <button className="action-button" disabled={busy || state !== 'installed' || !!tracked} onClick={() => {
-            if (!confirmUserAction(`Remove ${launcher.name} for your user? Game files, saves and compatibility data are not deleted.`)) return;
-            void run(`Removing ${launcher.name}…`, async () => {
-              const result = await uninstallFlatpak(launcher.id);
-              const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
-            });
-          }}>Remove {launcher.name}</button></div>
+          <button className="action-button" disabled={busy || !!pending || state !== 'not installed' || !!tracked} onClick={() => setPending({ kind: 'install', id: launcher.id, name: launcher.name })}>Install {launcher.name}</button>
+          <button className="action-button" disabled={busy || !!pending || state !== 'installed' || !!tracked} onClick={() => setPending({ kind: 'remove', id: launcher.id, name: launcher.name })}>Remove {launcher.name}</button></div>
         </article>;
       })}</div>
+      {pending && <section className="glass dashboard-card" role="alertdialog" aria-labelledby="rowyn-play-confirm">
+        <h2 id="rowyn-play-confirm">{pending.kind === 'install' ? `Install ${pending.name}?` : `Remove ${pending.name}?`}</h2>
+        <p className="card-copy">{pending.kind === 'install'
+          ? `Downloads ${pending.name} from Flathub into your user account with the same job as the App Store. This can take several minutes, and installing it does not establish game compatibility.`
+          : `Removes ${pending.name} from your user account. Game files, saves and compatibility data are not deleted.`}</p>
+        <div className="home-actions">
+          <button className="action-button" disabled={busy} onClick={() => setPending(null)}>Cancel</button>
+          <button className="action-button" disabled={busy} onClick={() => void confirmPending()}>
+            {pending.kind === 'install' ? `Install ${pending.name}` : `Remove ${pending.name}`}
+          </button>
+        </div>
+      </section>}
     </section>
     <section className="glass dashboard-card" id="hub-section-steam-library"><h2>Installed Steam games</h2>
       <p className="card-copy">Local metadata only: scans Steam app manifests in common native and Flatpak library paths when you ask. It never reads game files, sends a network request, launches a title, or rates compatibility. ProtonDB links are community reports and do not mean Rowyn tested the game.</p>

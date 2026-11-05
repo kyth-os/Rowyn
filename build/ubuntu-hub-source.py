@@ -1794,6 +1794,10 @@ mod audit_fix_tests {
 
     live_data = web / "src/services/liveData.ts"
     text = live_data.read_text()
+    # The page that owns the consequence confirms before invoking this; a
+    # webview without script dialogs answered the service-level dialog with
+    # false and reported "Cancelled." for every removal.
+    text = replace_once(text, '  if (!confirmUserAction(`Uninstall ${id}? This removes the application from this system.`)) return "Cancelled.";\n', "")
     text = replace_once(
         text, "; `removeKaliBox` has its own prompt below. */", ". */")
     text = replace_once(
