@@ -2,6 +2,9 @@ import type { UpdatesSnapshot } from "./liveData";
 
 export type UpdateBannerState = "unavailable" | "current" | "available" | "staging" | "staged" | "restartready" | "blocked" | "failed";
 
+// Reasons the update service reports when it cannot be read at all.
+const READ_FAILURE = /could not read|not installed|no such file|timed out|unavailable/i;
+
 export interface UpdateBannerProjection {
   state: UpdateBannerState;
   label: string;
@@ -20,6 +23,11 @@ export function projectUpdateBanner(snapshot: UpdatesSnapshot | null, readFailed
   const pending = snapshot.pending;
   const staged = Boolean(status?.staged) || pending?.bootc === "staged";
   const check = status?.check_state ?? "";
+  // bootc missing or unreachable surfaces as a blocked_reason too. That is a
+  // read failure, not a safety hold, and must not read as "Update blocked".
+  if (check === "error" || check === "failed" || READ_FAILURE.test(status?.blocked_reason ?? "")) {
+    return { state: "failed", label: "Update status unavailable", guidance: status?.blocked_reason || status?.detail || "The update service did not respond. Refresh to try again." };
+  }
   if (check === "blocked" || Boolean(status?.blocked_reason) || health?.status === "quarantined") {
     return { state: "blocked", label: "Update blocked", guidance: status?.blocked_reason || status?.detail || health?.detail || "An update is held back for safety. Review Updates for details." };
   }

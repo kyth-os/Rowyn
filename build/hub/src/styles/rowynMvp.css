@@ -107,6 +107,23 @@
 .rowyn-apps-default p.rowyn-apps-default-status { padding-left: 8px; border-left: 2px solid var(--accent-end, #78b7ff); color: var(--text, #f1f3f7); }
 .rowyn-apps-default p.rowyn-apps-default-status[data-error="true"] { border-left-color: var(--status-warn, #efb65a); color: var(--status-warn, #efb65a); }
 
+/* Updates: the three read-only panels share one compact group above the hero
+   instead of stacking as three full-width cards that restate each other. */
+.rowyn-updates-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); align-items: start; gap: 13px; }
+.rowyn-updates-panels > .dashboard-card { display: flex; min-width: 0; flex-direction: column; gap: 4px; margin: 0; padding: 18px 20px; border-radius: 16px; }
+.rowyn-updates-panels > #hub-section-recovery { grid-column: 1 / -1; }
+.rowyn-updates-panels h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+.rowyn-updates-panels h3 { margin: 10px 0 0; font-size: .86rem; }
+.rowyn-updates-panels p { margin: 4px 0 0; color: var(--text-muted, #a7adb9); font-size: .78rem; line-height: 1.5; }
+.rowyn-updates-panels .rowyn-note { font-size: .71rem; opacity: .85; }
+.rowyn-updates-panels ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-muted, #a7adb9); font-size: .78rem; }
+.rowyn-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.rowyn-recovery-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; margin: 12px 0 0; }
+.rowyn-recovery-slots > div { padding: 12px; border: 1px solid var(--hairline, rgba(255,255,255,.1)); border-radius: 12px; background: rgba(255,255,255,.02); }
+.rowyn-recovery-slots dt { color: var(--text-muted, #a7adb9); font-size: .72rem; font-weight: 700; }
+.rowyn-recovery-slots dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: .75rem; }
+.rowyn-recovery-slots button { margin-top: 8px; }
+
 @media (prefers-reduced-motion: reduce) {
   .rowyn-launcher, .home-destination, .home-destination-arrow { transition: none; }
   .rowyn-launcher:hover, .home-destination:hover, .home-destination:active { transform: none; }

@@ -29,11 +29,29 @@ test('zero-count pending summaries and cached digests never imply an available s
   assert.equal(projectUpdateBanner(fixture({check_state:'idle'}, {pending:{bootc:'staged',flatpak:'0',firmware:'0'}})).state, 'restartready');
 });
 
+test('a failed read is unavailable, not a policy block', () => {
+  for (const status of [
+    { check_state: 'error', blocked_reason: 'Could not read bootc status.' },
+    { check_state: 'blocked', blocked_reason: 'Could not read update status.' },
+    { check_state: 'failed', detail: 'bootc is not installed.' },
+  ]) {
+    const projected = projectUpdateBanner(fixture(status));
+    assert.equal(projected.state, 'failed', JSON.stringify(status));
+    assert.equal(projected.label, 'Update status unavailable');
+    assert.doesNotMatch(projected.label, /blocked/i);
+  }
+  // A real safety hold still reads as blocked, with its own reason.
+  const held = projectUpdateBanner(fixture({ check_state: 'blocked', blocked_reason: 'Safety hold' }));
+  assert.equal(held.state, 'blocked');
+  assert.equal(held.label, 'Update blocked');
+});
+
 test('busy, blocked, failed, available and current statuses project explicitly', () => {
   assert.equal(projectUpdateBanner(fixture({ check_state: 'busy' })).state, 'staging');
   assert.equal(projectUpdateBanner(fixture({ check_state: 'blocked', blocked_reason: 'Safety hold' })).state, 'blocked');
   assert.match(projectUpdateBanner(fixture({ check_state: 'blocked', blocked_reason: 'Safety hold' })).guidance, /Safety hold/);
   assert.equal(projectUpdateBanner(fixture({ check_state: 'error' })).state, 'failed');
+  assert.equal(projectUpdateBanner(fixture({ check_state: 'error' })).label, 'Update status unavailable');
   assert.equal(projectUpdateBanner(fixture({ check_state: 'available' })).state, 'available');
   assert.equal(projectUpdateBanner(fixture({ check_state: 'uptodate' })).state, 'current');
 });

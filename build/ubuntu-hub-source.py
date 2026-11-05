@@ -504,8 +504,11 @@ def apply_rowyn_qol(root):
     text = ('import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\n'
             'import { RecoveryClarity } from "../components/RecoveryClarity";\n'
             'import { BootHealthPanel } from "../components/BootHealthPanel";\n') + updates.read_text()
+    # One compact group for the three read-only panels: as three full-width
+    # cards above the hero they restated the same failure three times.
     updates.write_text(replace_once(text, '<UpdatesOverview />',
-        '<UpdateStatusBanner /><RecoveryClarity /><BootHealthPanel /><UpdatesOverview />'))
+        '<section className="rowyn-updates-panels"><UpdateStatusBanner />'
+        '<RecoveryClarity /><BootHealthPanel /></section><UpdatesOverview />'))
     app_store = web / "src/components/AppStoreSection.tsx"
     text = 'import { AppRemovalConfirmation } from "./AppRemovalConfirmation";\n' + app_store.read_text()
     text = replace_once(text,
