@@ -235,23 +235,27 @@ class MvpWork(unittest.TestCase):
     def test_work_page_and_printing_bridge_are_rowyn_owned_and_bounded(self):
         page = (ROOT / "build/hub/src/pages/RowynWork.tsx").read_text()
         for needle in ("hub-section-printing", "hub-section-office", "hub-section-focus",
-                       "Print test page", "Open printer settings", "ipp-usb",
+                       "Print test page", "Add print queue", "Open printer settings", "ipp-usb",
+                       "parseDiscoveredPrinters", "addQueuePrompt",
                        "useSectionFollow(SECTIONS)", 'role="alertdialog"'):
             self.assertIn(needle, page)
         for forbidden in ("setInterval", "setTimeout", "confirmUserAction", "window.confirm"):
             self.assertNotIn(forbidden, page)
         model = (ROOT / "build/hub/src/services/rowynWorkModel.ts").read_text()
-        for needle in ("queuesSummary", "queueStateLabel", "testPagePrompt", "unknown"):
+        for needle in ("queuesSummary", "queueStateLabel", "testPagePrompt", "unknown",
+                       "parseDiscoveredPrinters", "addQueuePrompt", "DiscoveredPrinter"):
             self.assertIn(needle, model)
         service = (ROOT / "build/hub/src/services/rowynWork.ts").read_text()
-        for needle in ("rowyn_print_queues", "rowyn_print_test_page"):
+        for needle in ("rowyn_print_queues", "rowyn_print_test_page", "rowyn_print_add_queue"):
             self.assertIn(needle, service)
         bridge = ROOT / "build/hub/src-tauri/src/commands/rowyn_work.rs"
         self.assertTrue(bridge.is_file(), "printing bridge is missing")
         text = bridge.read_text()
         for needle in ("/usr/bin/lpstat", "/usr/share/rowyn/print-test-page.txt",
-                       "queue_argument", "parse_lpstat", "run_bounded_command",
-                       "rowyn_print_queues", "rowyn_print_test_page", "mod tests"):
+                       "/usr/bin/lpadmin", "queue_argument", "parse_lpstat", "run_bounded_command",
+                       "add_queue_args", "printer_uri", "queue_names",
+                       "rowyn_print_queues", "rowyn_print_test_page", "rowyn_print_add_queue",
+                       "mod tests"):
             self.assertIn(needle, text)
         for forbidden in ("sudo", "pkexec", "sh -c", "Command::new(program)"):
             self.assertNotIn(forbidden, text)
@@ -269,6 +273,7 @@ class MvpWork(unittest.TestCase):
                       "RowynWork", "pub(crate) mod rowyn_work;",
                       "commands::rowyn_work::rowyn_print_queues",
                       "commands::rowyn_work::rowyn_print_test_page",
+                      "commands::rowyn_work::rowyn_print_add_queue",
                       "WORK_SECTIONS", "Work: { hint:",
                       'Apps: { hint: "Discover and install apps"'):
             self.assertIn(token, port)

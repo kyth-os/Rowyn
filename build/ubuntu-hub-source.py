@@ -578,7 +578,7 @@ def apply_rowyn_mvp(root):
             {"key": "Compatibility", "title": "Compatibility", "description": "Dated support guidance, anti-cheat caveats and per-game launch options."},
             {"key": "Controllers", "title": "Controllers", "description": "Read-only controller readiness; rescan after connecting a gamepad."}]},
         {"key": "Work", "route": "/work", "sections": [
-            {"key": "Printing", "title": "Printing", "description": "CUPS queues, a driverless printer scan and one confirmed test page."},
+            {"key": "Printing", "title": "Printing", "description": "CUPS queues, a driverless printer scan, one confirmed test page and adding a queue."},
             {"key": "Office", "title": "Office and mail", "description": "Office fonts, LibreOffice and Betterbird, Microsoft 365 web apps and Outlook archives."},
             {"key": "Focus", "title": "Focus and connectivity", "description": "Timed focus sessions and the work network identity."}]},
     ]
@@ -689,7 +689,8 @@ def apply_rowyn_mvp(root):
     main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
         '            commands::rowyn_work::rowyn_print_queues,\n'
-        '            commands::rowyn_work::rowyn_print_test_page,\n'))
+        '            commands::rowyn_work::rowyn_print_test_page,\n'
+        '            commands::rowyn_work::rowyn_print_add_queue,\n'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
     assert spec is not None and spec.loader is not None

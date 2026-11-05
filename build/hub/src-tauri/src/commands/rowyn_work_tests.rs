@@ -64,6 +64,47 @@ fn queue_names_cannot_be_read_as_flags_or_paths() {
 }
 
 #[test]
+fn printer_addresses_must_be_ipp_and_free_of_whitespace() {
+    assert_eq!(
+        printer_uri("ipp://Office%20Printer._ipp._tcp.local/").unwrap(),
+        "ipp://Office%20Printer._ipp._tcp.local/"
+    );
+    assert_eq!(
+        printer_uri("ipps://192.168.1.10:631/ipp/print").unwrap(),
+        "ipps://192.168.1.10:631/ipp/print"
+    );
+    let long = format!("ipp://{}", "a".repeat(MAX_URI));
+    for bad in [
+        "",
+        "http://printer/ipp/print",
+        "ipp://bad host/ipp/print",
+        "ipp://host/ipp/print\n",
+        "--domain",
+        long.as_str(),
+    ] {
+        assert!(printer_uri(bad).is_err(), "{bad:?} must be rejected");
+    }
+}
+
+#[test]
+fn add_queue_arguments_are_fixed_and_driverless() {
+    assert_eq!(
+        add_queue_args("Office_Printer", "ipp://p.local/ipp/print"),
+        vec!["-p", "Office_Printer", "-E", "-v", "ipp://p.local/ipp/print", "-m", "everywhere"]
+    );
+}
+
+#[test]
+fn a_refused_addition_names_the_authorization_problem() {
+    let message = add_failure("Office", b"lpadmin: Unauthorized\n");
+    assert!(message.contains("Unauthorized"), "{message}");
+    assert!(message.contains("Print settings"), "{message}");
+    let bare = add_failure("Office", b"");
+    assert!(bare.contains("did not create the queue Office"), "{bare}");
+    assert!(!bare.contains("administrator"), "no authorization is invented: {bare}");
+}
+
+#[test]
 fn the_test_page_is_the_image_file_and_the_bridge_elevates_nothing() {
     assert_eq!(TEST_PAGE, "/usr/share/rowyn/print-test-page.txt");
     let source = include_str!("rowyn_work.rs");

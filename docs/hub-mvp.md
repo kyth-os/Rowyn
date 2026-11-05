@@ -55,6 +55,33 @@ sandbox escape. Mimalloc is experimental and opt-in per game; no custom
 kernels, sched-ext, telemetry, Guardian, generic argv or privilege bridge is
 introduced.
 
+## Work (`/work`)
+
+Work is its own destination directly after Play, so printing, office documents
+and focus time no longer sit inside Apps (which keeps the App Store). Printing
+is the only part with a native bridge, and it is entirely fixed-argument
+`lpstat`/`lp`/`lpadmin` work in `commands/rowyn_work.rs`: read queues (state and
+default reported by CUPS, unknown when CUPS does not answer), send the image's
+`/usr/share/rowyn/print-test-page.txt` to one named queue, and create one new
+queue from a discovered IPP address.
+
+Queue creation is the only mutating action. The page scans with `ippfind` on
+demand, splits the answer into IPP addresses this page can add, names that are
+already queues, and anything else, and shows an in-page confirmation for the
+chosen address before anything runs. The bridge accepts only `ipp://` and
+`ipps://` addresses, refuses a name that already exists (because `lpadmin -p`
+would rewrite that queue), fails closed when the queue list cannot be read, and
+adds with the driverless `everywhere` model — no vendor driver. Adding a printer
+is an administrator action: when CUPS refuses, the reported reason is CUPS's own
+text plus a pointer to the system authorization prompt in Print settings, and
+the page re-reads the queues afterwards so it shows what exists rather than what
+was requested. Removing or reconfiguring a queue stays in Print settings.
+
+Office and mail entries are the same typed personal-Flatpak jobs as the App
+Store, and the Microsoft 365 entries open as web apps in their own tab. Focus
+sessions call the existing bounded session bridge; the page starts and ends one
+on request and never runs on a timer.
+
 ## Section anchors, boot health, and clipboard
 
 Each Rowyn page follows its declared manifest sections itself: `useSectionFollow`

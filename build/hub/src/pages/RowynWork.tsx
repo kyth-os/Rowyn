@@ -18,8 +18,8 @@ import {
   type NetworkSummary,
 } from '../services/liveData';
 import { openRowynSettings } from '../services/rowynSettings';
-import { printTestPage, readPrintQueues } from '../services/rowynWork';
-import { queueStateLabel, queuesSummary, testPagePrompt, type PrintQueuesResult } from '../services/rowynWorkModel';
+import { addPrintQueue, printTestPage, readPrintQueues } from '../services/rowynWork';
+import { addQueuePrompt, parseDiscoveredPrinters, queueStateLabel, queuesSummary, testPagePrompt, type DiscoveredPrinter, type PrintQueuesResult } from '../services/rowynWorkModel';
 import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
 import '../styles/rowynMvp.css';
 
@@ -55,6 +55,7 @@ export function Work() {
   const [queues, setQueues] = useState<PrintQueuesResult | null>(null);
   const [printers, setPrinters] = useState<string[] | null>(null);
   const [pendingTest, setPendingTest] = useState<string | null>(null);
+  const [pendingAdd, setPendingAdd] = useState<DiscoveredPrinter | null>(null);
   const [fonts, setFonts] = useState<{ ready: boolean; detail: string } | null>(null);
   const [summary, setSummary] = useState<NetworkSummary | null>(null);
   const [installed, setInstalled] = useState<string[]>([]);
@@ -112,7 +113,23 @@ export function Work() {
     await run('test-page', `Sending a test page to ${queue}…`, () => printTestPage(queue));
   }
 
+  async function confirmAddQueue() {
+    const candidate = pendingAdd;
+    if (!candidate || lock.current) return;
+    setPendingAdd(null);
+    await run('add-queue', `Creating the print queue ${candidate.name}…`, async () => {
+      const result = await addPrintQueue(candidate.name, candidate.uri);
+      // Read the queues again so the page shows what CUPS actually created
+      // rather than the queue the request asked for.
+      const next = await readPrintQueues();
+      setQueues(next);
+      return `${result} ${queuesSummary(next)}`;
+    });
+  }
+
   const defaultQueue = queues?.default_queue ?? null;
+  const parsed = parseDiscoveredPrinters(printers ?? []);
+  const queueNames = new Set((queues?.queues ?? []).map((queue) => queue.name));
   const focusMinutesLeft = focus ? Math.ceil(focus.remaining_secs / 60) : 0;
 
   return <div className="page-content rowyn-mvp rowyn-work">
@@ -122,7 +139,7 @@ export function Work() {
     </section>
     <section className="glass dashboard-card" id="hub-section-printing">
       <h2>Printing</h2>
-      <p className="card-copy">Printing runs through CUPS. Network printers are found over mDNS and printed to driverless (IPP Everywhere) queues; USB printers are published by ipp-usb, which this image ships. No vendor driver is installed, and no queue is added, changed or removed by this page — Print settings owns that. Reading queues and sending one test page are the only actions here.</p>
+      <p className="card-copy">Printing runs through CUPS. Network printers are found over mDNS and printed to driverless (IPP Everywhere) queues; USB printers are published by ipp-usb, which this image ships. No vendor driver is installed. This page reads the queues, creates one new driverless queue from a printer you choose, and sends one test page; changing or removing an existing queue stays in Print settings.</p>
       <div className="home-actions">
         <button className="action-button" disabled={busy !== null} onClick={() => void run('queues', 'Reading print queues…', async () => {
           const next = await readPrintQueues();
@@ -134,7 +151,7 @@ export function Work() {
           if (!found) return 'Printer discovery is unavailable outside the Hub shell.';
           setPrinters(found);
           return found.length > 0
-            ? `${found.length} printer(s) answered. A discovered printer still needs a queue in Print settings before it can be used.`
+            ? `${found.length} printer(s) answered. Add one below to give it a queue, or use Print settings; a found address is not usable until a queue exists.`
             : 'No network printers answered. USB printers are reached through ipp-usb, and a printer on another subnet may not answer mDNS.';
         })}>Scan for network printers</button>
         <button className="action-button" disabled={busy !== null} onClick={() => void run('settings', 'Opening Print settings…', () => openRowynSettings('printers'))}>Open printer settings</button>
@@ -143,13 +160,32 @@ export function Work() {
       <div className="work-card-grid">
         <WorkCard icon="▣" label="Print queues" value={queues === null ? 'Not read' : queues.queues.length === 0 ? 'None configured' : `${queues.queues.length} configured`} detail={queuesSummary(queues)} good={queues === null ? null : queues.queues.length > 0} />
         <WorkCard icon="◎" label="Default queue" value={defaultQueue ?? (queues === null ? 'Unknown' : 'None set')} detail={defaultQueue ? 'Jobs without an explicit queue go here.' : queues === null ? 'The queue list could not be read, so no default can be confirmed.' : 'Choose a default in Print settings, or name the queue for each job.'} good={defaultQueue ? true : queues === null ? null : false} />
-        <WorkCard icon="⌁" label="Network printers found" value={printers === null ? 'Not scanned' : printers.length === 0 ? 'None answered' : `${printers.length} answered`} detail={printers === null ? 'Scanning is an explicit IPP/mDNS probe; nothing runs on its own.' : printers.length > 0 ? printers.join(' · ') : 'No network printer answered. That is not proof none exist on this network.'} good={printers === null ? null : printers.length > 0} />
+        <WorkCard icon="⌁" label="Network printers found" value={printers === null ? 'Not scanned' : printers.length === 0 ? 'None answered' : `${printers.length} answered`} detail={printers === null ? 'Scanning is an explicit IPP/mDNS probe; nothing runs on its own.' : printers.length > 0 ? `${parsed.addable.length} of them can become a queue here; the rest are already queues or not IPP addresses.` : 'No network printer answered. That is not proof none exist on this network.'} good={printers === null ? null : printers.length > 0} />
       </div>
       {queues?.queues.length ? <div>{queues.queues.map((queue) => <article className="rowyn-launcher" key={queue.name}>
         <h3>{queue.name} <span className="rowyn-state">{queueStateLabel(queue.state)}</span>{queue.is_default && <span className="pill pill-ok">default</span>}</h3>
         <p className="card-copy">Reported by CUPS · {queue.is_default ? 'this is the default queue' : 'not the default queue'}.</p>
         <div className="home-actions"><button className="action-button" disabled={busy !== null || pendingTest !== null} onClick={() => setPendingTest(queue.name)}>Print test page on {queue.name}</button></div>
       </article>)}</div> : null}
+      {printers !== null && parsed.addable.length > 0 && <div>
+        <h3>Discovered printers</h3>
+        <p className="card-copy">Each address below answered the scan. Adding one creates a new queue with CUPS's driverless model; nothing is added until you confirm in the page.</p>
+        {parsed.addable.map((candidate) => <article className="rowyn-launcher" key={candidate.uri}>
+          <h3>{candidate.name}{queueNames.has(candidate.name) && <span className="pill">queue exists</span>}</h3>
+          <p className="card-copy">{candidate.uri}{queueNames.has(candidate.name) ? ' · a queue with this name already exists, so the Add button stays off.' : ''}</p>
+          <div className="home-actions"><button className="action-button" disabled={busy !== null || pendingAdd !== null || pendingTest !== null || queueNames.has(candidate.name)} onClick={() => setPendingAdd(candidate)}>Add print queue</button></div>
+        </article>)}
+        {parsed.existing.length > 0 && <p className="card-copy">Already queues: {parsed.existing.join(' · ')}.</p>}
+        {parsed.unsupported.length > 0 && <p className="card-copy">Not an IPP address, so it cannot become a queue here: {parsed.unsupported.join(' · ')}.</p>}
+      </div>}
+      {pendingAdd && <section className="glass dashboard-card" role="alertdialog" aria-labelledby="rowyn-work-add-queue">
+        <h2 id="rowyn-work-add-queue">Create the queue {pendingAdd.name}?</h2>
+        <p className="card-copy">{addQueuePrompt(pendingAdd.name, pendingAdd.uri)}</p>
+        <div className="home-actions">
+          <button className="action-button" disabled={busy !== null} onClick={() => setPendingAdd(null)}>Cancel</button>
+          <button className="action-button" disabled={busy !== null} onClick={() => void confirmAddQueue()}>Create print queue</button>
+        </div>
+      </section>}
       {pendingTest && <section className="glass dashboard-card" role="alertdialog" aria-labelledby="rowyn-work-test-page">
         <h2 id="rowyn-work-test-page">Print a test page?</h2>
         <p className="card-copy">{testPagePrompt(pendingTest)}</p>

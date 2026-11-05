@@ -36,6 +36,40 @@ test('the test-page prompt names its queue and leaves confirmation to the printe
   assert.match(prompt, /printer/i);
 });
 
+test('discovery separates addable IPP addresses from queues that must not be rewritten', () => {
+  const parsed = m.parseDiscoveredPrinters([
+    'ipp://Office%20Printer._ipp._tcp.local/',
+    'ipps://192.168.1.10:631/ipp/print',
+    'Office_Printer',
+    'not a printer',
+    'ipp://Office%20Printer._ipp._tcp.local/',
+  ]);
+  assert.deepEqual(parsed.addable.map((p) => p.name), ['Office_Printer', '192.168.1.10']);
+  assert.equal(parsed.addable[0].uri, 'ipp://Office%20Printer._ipp._tcp.local/');
+  assert.deepEqual(parsed.existing, ['Office_Printer']);
+  assert.deepEqual(parsed.unsupported, ['not a printer']);
+  // An address without a host cannot be named, so it is reported, not added.
+  assert.deepEqual(m.parseDiscoveredPrinters(['ipp:///ipp/print']).addable, []);
+});
+
+test('the add-queue prompt names the queue, the address and the authorization caveat', () => {
+  const prompt = m.addQueuePrompt('Office_Printer', 'ipp://office.local/ipp/print');
+  assert.match(prompt, /Office_Printer/);
+  assert.match(prompt, /ipp:\/\/office\.local\/ipp\/print/);
+  assert.match(prompt, /driverless/);
+  assert.match(prompt, /administrator/);
+  assert.match(prompt, /existing queues are not changed/);
+});
+
+test('the work page adds a queue only from its own confirmation card', async () => {
+  const page = await readFile(resolve(root, 'src/pages/RowynWork.tsx'), 'utf8');
+  assert.match(page, /addPrintQueue/);
+  assert.match(page, /Add print queue/);
+  assert.match(page, /id="rowyn-work-add-queue"/);
+  assert.match(page, /parseDiscoveredPrinters/);
+  assert.doesNotMatch(page, /window\.confirm|confirmUserAction/);
+});
+
 test('the work page confirms in its own card and never polls or uses a native dialog', async () => {
   const page = await readFile(resolve(root, 'src/pages/RowynWork.tsx'), 'utf8');
   assert.doesNotMatch(page, /setInterval|setTimeout/);

@@ -19,6 +19,10 @@ const PRINT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_OUTPUT: usize = 64 * 1024;
 const MAX_QUEUES: usize = 64;
 const MAX_QUEUE_NAME: usize = 64;
+const MAX_URI: usize = 512;
+/// Adding a queue writes CUPS configuration and can wait on authorization.
+const ADMIN_TIMEOUT: Duration = Duration::from_secs(20);
+const LPADMIN: &str = "/usr/bin/lpadmin";
 
 #[derive(Serialize, PartialEq, Debug, Clone)]
 pub(crate) struct PrintQueue {
@@ -112,6 +116,66 @@ fn first_line(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// Fixed argument shape for a driverless queue: `-m everywhere` asks CUPS for
+/// the IPP Everywhere model instead of a vendor driver.
+fn add_queue_args<'a>(name: &'a str, uri: &'a str) -> Vec<&'a str> {
+    vec!["-p", name, "-E", "-v", uri, "-m", "everywhere"]
+}
+
+/// Only IPP service addresses are accepted: they are what discovery reports,
+/// and they cannot be read as a flag or carry whitespace into argv.
+fn printer_uri(uri: &str) -> Result<&str, String> {
+    if uri.is_empty() || uri.len() > MAX_URI {
+        return Err("Invalid printer address.".into());
+    }
+    let lowered = uri.to_ascii_lowercase();
+    if !(lowered.starts_with("ipp://") || lowered.starts_with("ipps://")) {
+        return Err("Only IPP printer addresses can become a queue.".into());
+    }
+    if uri.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("Invalid printer address.".into());
+    }
+    Ok(uri)
+}
+
+/// Queue names CUPS already has. `lpadmin -p` edits an existing queue instead
+/// of failing, so this is the guard that keeps an add from rewriting one.
+fn queue_names() -> Result<Vec<String>, String> {
+    let mut command = Command::new(LPSTAT);
+    command.args(["-e"]).env("LC_ALL", "C").stdin(Stdio::null());
+    let output = run_bounded_command(command, QUEUE_TIMEOUT).map_err(|_| {
+        "Printing is not available: the CUPS client (lpstat) did not answer.".to_string()
+    })?;
+    if !output.status.success() {
+        return Err("CUPS did not answer, so the existing queue names could not be checked.".into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+fn add_failure(queue: &str, stderr: &[u8]) -> String {
+    let reason = first_line(stderr);
+    let lowered = reason.to_ascii_lowercase();
+    let hint = if lowered.contains("unauthorized")
+        || lowered.contains("forbidden")
+        || lowered.contains("not allowed")
+        || lowered.contains("permission")
+    {
+        " This account may not administer printers; Print settings can add it with the system authorization prompt."
+    } else {
+        ""
+    };
+    if reason.is_empty() {
+        format!("CUPS did not create the queue {queue}.{hint}")
+    } else {
+        format!("CUPS did not create the queue {queue}: {reason}{hint}")
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn rowyn_print_queues() -> Result<PrintQueues, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -175,6 +239,38 @@ pub(crate) async fn rowyn_print_test_page(queue: String) -> Result<String, Strin
     })
     .await
     .map_err(|_| "Print worker failed.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn rowyn_print_add_queue(queue: String, uri: String) -> Result<String, String> {
+    let name = queue_argument(&queue)?.to_string();
+    let uri = printer_uri(&uri)?.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Fail closed: if the queue list cannot be read, do not run a command
+        // that would silently modify a queue whose name collides.
+        if queue_names()?.iter().any(|existing| existing == &name) {
+            return Err(format!(
+                "A print queue named {name} already exists, so nothing was changed. Edit it in Print settings, or add the printer under another name."
+            ));
+        }
+        let mut command = Command::new(LPADMIN);
+        command
+            .args(add_queue_args(&name, &uri))
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null());
+        let output = run_bounded_command(command, ADMIN_TIMEOUT).map_err(|_| {
+            "CUPS did not accept the queue: the administration client (lpadmin) did not answer."
+                .to_string()
+        })?;
+        if !output.status.success() {
+            return Err(add_failure(&name, &output.stderr));
+        }
+        Ok(format!(
+            "Queue {name} created for {uri}. CUPS owns its options now; send a test page to check it."
+        ))
+    })
+    .await
+    .map_err(|_| "Print queue worker failed.".to_string())?
 }
 
 #[cfg(test)]
