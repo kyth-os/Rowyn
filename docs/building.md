@@ -22,7 +22,9 @@ The Containerfile builds bootc from the fetched source with offline Cargo depend
 Hub's Development page manages one dedicated rootless Distrobox named
 `rowyn-ubuntu-dev`, based on Ubuntu 26.10. It refuses to take ownership of an
 existing box with that name rather than modifying a box the user already
-owns. Distrobox shares the user's home directory, so it is a development
+owns. The image reference is digest-pinned, and the container installs the
+USN-8996-1 (CVE-2026-109518) apt before any preset installs packages, so
+package installs never run under the vulnerable archive client. Distrobox shares the user's home directory, so it is a development
 environment, not a security sandbox. Creating or deleting the box requires an
 explicit user action; deleting it removes the container and its installed
 packages, not files in the shared home directory. The feature does not install

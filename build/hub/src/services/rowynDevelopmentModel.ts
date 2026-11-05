@@ -209,7 +209,13 @@ export function presetOperation(id: string): `preset:${string}` | null {
   return DEVELOPMENT_PRESETS.some(preset => preset.id === id) ? `preset:${id}` : null;
 }
 
-export const DEVELOPMENT_IMAGE = 'docker.io/library/ubuntu:26.10';
+// Digest-pinned: the 26.10 tag moves, and a moving tag cannot be a security
+// boundary. No published Ubuntu image carries the USN-8996-1 apt fix yet, so
+// the managed container also upgrades apt before any preset installs packages.
+export const DEVELOPMENT_IMAGE =
+  'docker.io/library/ubuntu@sha256:262df65c0ec6bf8d9dcc87454f4330a05fae4b97825f45854af3b136666584c2';
+export const DEVELOPMENT_IMAGE_LABEL = 'Ubuntu 26.10 (digest-pinned)';
+export const APT_FLOOR = '3.3.3ubuntu0.1';
 export const POLL_LIMIT = 1800;
 export const DELETE_WARNING = 'Deleting the container loses installed packages; running processes are stopped and your shared home directory is retained; deletion does not roll back files.';
 

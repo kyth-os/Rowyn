@@ -14,7 +14,7 @@ import {
 import {
   createJobController,
   DEVELOPMENT_NAME,
-  DEVELOPMENT_IMAGE,
+  DEVELOPMENT_IMAGE_LABEL,
   DEVELOPMENT_PRESETS,
   presetOperation,
   DELETE_WARNING,
@@ -113,7 +113,7 @@ export function Development() {
         <h1>Ubuntu development environment</h1>
         <p className="card-copy">
           Creates one dedicated Distrobox named <code>{DEVELOPMENT_NAME}</code> from{' '}
-          <code>{DEVELOPMENT_IMAGE}</code>. Developer tools stay in the container rather than the immutable
+          <code>{DEVELOPMENT_IMAGE_LABEL}</code>. Developer tools stay in the container rather than the immutable
           host OS. Distrobox shares your home directory and is <strong>not a sandbox</strong>; software
           inside can access your home files.
         </p>
@@ -121,6 +121,11 @@ export function Development() {
           This page only manages that fixed environment. It does not accept shell commands or create
           arbitrary containers. Missing tooling and permission errors are reported as unavailable, not as
           absence. The first terminal open may initialize the container and download packages.
+        </p>
+        <p className="card-copy">
+          Creating the container installs the fixed APT (USN-8996-1) inside it, and every preset
+          refreshes apt again before it installs packages, so the shared home directory is never
+          served by a package client carrying CVE-2026-109518.
         </p>
         <p className="card-copy">
           Cancelling stops the operation where possible; it does not roll back packages or files already
@@ -141,7 +146,7 @@ export function Development() {
         {plan && preset === plan.preset && (
           <section aria-label="Package installation plan">
             <h2>Install {DEVELOPMENT_PRESETS.find(item => item.id === plan.preset)?.label}</h2>
-            <p>Target: <code>{plan.target}</code> (managed Ubuntu 26.10 container)</p>
+            <p>Target: <code>{plan.target}</code> (managed, digest-pinned Ubuntu 26.10 container)</p>
             <p>Packages: {plan.packages.map(pkg => <code key={pkg}>{pkg} </code>)}</p>
             <ol>{plan.commands.map((argv, index) => <li key={index}><code>{argv.join(' ')}</code></li>)}</ol>
             <p>Cancellation stops the process group where possible; packages and apt state may be partially changed and are not rolled back.</p>

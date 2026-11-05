@@ -9,7 +9,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 const NAME: &str = "rowyn-ubuntu-dev";
-const IMAGE: &str = "docker.io/library/ubuntu:26.10";
+// Digest-pinned: the 26.10 tag moves, and a moving tag cannot decide which
+// image the managed environment is verified against.
+const IMAGE: &str =
+    "docker.io/library/ubuntu@sha256:262df65c0ec6bf8d9dcc87454f4330a05fae4b97825f45854af3b136666584c2";
+// Containers created before the digest pin report the tag; the Rowyn labels
+// still decide ownership.
+const IMAGE_TAG_ALIAS: &str = "docker.io/library/ubuntu:26.10";
+// USN-8996-1 (CVE-2026-109518): no published Ubuntu image carries this fix yet,
+// so the managed container installs the fixed apt itself before any preset.
+const APT_FLOOR: &str = "3.3.3ubuntu0.1";
 const LABEL: &str = "io.rowyn.development";
 const LABEL_VALUE: &str = "ubuntu-v1";
 const MAX_OUTPUT: usize = 512 * 1024;
@@ -32,37 +41,58 @@ fn preset_packages(name: &str) -> Result<&'static [&'static str], String> {
         .map(|(_, packages)| *packages)
         .ok_or_else(|| "Unsupported development preset.".into())
 }
+fn sudo_apt(arguments: &[&str]) -> Vec<String> {
+    let mut command: Vec<String> = [
+        "/usr/bin/sudo",
+        "-n",
+        "/usr/bin/env",
+        "DEBIAN_FRONTEND=noninteractive",
+        "/usr/bin/apt-get",
+    ]
+    .iter()
+    .map(|argument| (*argument).into())
+    .collect();
+    command.extend(arguments.iter().map(|argument| (*argument).into()));
+    command
+}
+fn apt_floor_command() -> Vec<String> {
+    vec![
+        "/usr/bin/sh".into(),
+        "-c".into(),
+        format!(
+            "v=$(/usr/bin/dpkg-query -W -f='${{Version}}' apt) && /usr/bin/dpkg --compare-versions \"$v\" ge {APT_FLOOR}"
+        ),
+    ]
+}
+// Every package operation refreshes indexes, takes the fixed apt from the
+// security archive, and refuses to continue below the USN-8996-1 floor.
+fn apt_refresh_commands() -> Vec<Vec<String>> {
+    vec![
+        sudo_apt(&["update"]),
+        sudo_apt(&[
+            "install",
+            "-y",
+            "--no-install-recommends",
+            "--only-upgrade",
+            "apt",
+        ]),
+        apt_floor_command(),
+    ]
+}
 fn preset_commands(preset: &str) -> Result<Vec<Vec<String>>, String> {
     let packages = preset_packages(preset)?;
-    let mut install = vec![
-        "/usr/bin/sudo".into(),
-        "-n".into(),
-        "/usr/bin/env".into(),
-        "DEBIAN_FRONTEND=noninteractive".into(),
-        "/usr/bin/apt-get".into(),
-        "install".into(),
-        "-y".into(),
-        "--no-install-recommends".into(),
-    ];
+    let mut commands = apt_refresh_commands();
+    let mut install = sudo_apt(&["install", "-y", "--no-install-recommends"]);
     install.extend(packages.iter().map(|p| (*p).into()));
+    commands.push(install);
     let mut verify = vec![
         "/usr/bin/dpkg-query".into(),
         "-W".into(),
         "-f=${db:Status-Status}\\n".into(),
     ];
     verify.extend(packages.iter().map(|p| (*p).into()));
-    Ok(vec![
-        vec![
-            "/usr/bin/sudo".into(),
-            "-n".into(),
-            "/usr/bin/env".into(),
-            "DEBIAN_FRONTEND=noninteractive".into(),
-            "/usr/bin/apt-get".into(),
-            "update".into(),
-        ],
-        install,
-        verify,
-    ])
+    commands.push(verify);
+    Ok(commands)
 }
 fn distrobox_command_args(command: &[String], container_id: &str) -> Vec<String> {
     let mut args = vec![
@@ -169,7 +199,7 @@ fn validate_name(n: &str) -> Result<(), String> {
 }
 fn ownership(c: &ContainerIdentity) -> bool {
     c.name == NAME
-        && c.image == IMAGE
+        && (c.image == IMAGE || c.image == IMAGE_TAG_ALIAS)
         && c.labels.get(LABEL).map(String::as_str) == Some(LABEL_VALUE)
         && c.labels.get("manager").map(String::as_str) == Some("distrobox")
 }
@@ -441,17 +471,24 @@ fn perform(
                 return Err("Managed environment unavailable.".into());
             }
             let container_id = validate_owned_container()?;
+            let verify_index = commands.len() - 1;
             for (index, command) in commands.iter().enumerate() {
                 validate_owned_identity(&inspect_all()?, &container_id)?;
                 if cancel.load(Ordering::SeqCst) {
                     return Err("Cancelled.".into());
                 }
-                let step = if index == 0 {
-                    "Refreshing apt indexes."
-                } else if index == 1 {
-                    "Installing preset packages."
-                } else {
-                    "Verifying installed packages."
+                let (step, timeout) = match index {
+                    0 => ("Refreshing apt indexes.", Duration::from_secs(300)),
+                    1 => (
+                        "Upgrading apt to the USN-8996-1 floor.",
+                        Duration::from_secs(300),
+                    ),
+                    2 => ("Checking the apt security floor.", Duration::from_secs(60)),
+                    index if index == verify_index => (
+                        "Verifying installed packages.",
+                        Duration::from_secs(60),
+                    ),
+                    _ => ("Installing preset packages.", Duration::from_secs(900)),
                 };
                 job_detail(job_id, step.into());
                 let args = distrobox_command_args(command, &container_id);
@@ -459,17 +496,8 @@ fn perform(
                 c.args(&args)
                     .env("DBX_CONTAINER_MANAGER", "podman")
                     .env("LC_ALL", "C");
-                if index < 2 {
-                    child_reporting(
-                        c,
-                        cancel.clone(),
-                        if index == 0 {
-                            Duration::from_secs(300)
-                        } else {
-                            Duration::from_secs(900)
-                        },
-                        Some(job_id),
-                    )?;
+                if index != verify_index {
+                    child_reporting(c, cancel.clone(), timeout, Some(job_id))?;
                 } else {
                     let output = run_bounded_command(c, Duration::from_secs(60)).map_err(|_| {
                         "Package verification unavailable or timed out.".to_string()
@@ -516,14 +544,40 @@ fn perform(
             c.args(create_args())
                 .env("DBX_CONTAINER_MANAGER", "podman")
                 .env("LC_ALL", "C");
-            child(c, cancel, Duration::from_secs(300))?;
+            child(c, cancel.clone(), Duration::from_secs(300))?;
             if state_inner()?.state != "managed" {
                 return Err(
                     "Create command finished, but managed environment could not be verified."
                         .into(),
                 );
             }
-            Ok("Environment created.".into())
+            let container_id = validate_owned_container()?;
+            for (index, command) in apt_refresh_commands().iter().enumerate() {
+                validate_owned_identity(&inspect_all()?, &container_id)?;
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("Cancelled.".into());
+                }
+                job_detail(
+                    job_id,
+                    match index {
+                        0 => "Refreshing apt indexes.",
+                        1 => "Upgrading apt to the USN-8996-1 floor.",
+                        _ => "Checking the apt security floor.",
+                    }
+                    .into(),
+                );
+                let args = distrobox_command_args(command, &container_id);
+                let mut c = Command::new(DISTROBOX);
+                c.args(&args)
+                    .env("DBX_CONTAINER_MANAGER", "podman")
+                    .env("LC_ALL", "C");
+                child_reporting(c, cancel.clone(), Duration::from_secs(300), Some(job_id))
+                    .map_err(|_| {
+                        "Environment created, but the apt security floor could not be installed."
+                            .to_string()
+                    })?;
+            }
+            Ok("Environment created and apt updated to the USN-8996-1 floor.".into())
         }
         "delete" => {
             if confirmation.as_deref() != Some(NAME) {

@@ -10,6 +10,19 @@ const out = resolve(await mkdtemp(resolve(tmpdir(), 'rowyn-development-')), 'mod
 await build({ entryPoints: [resolve(root, 'src/services/rowynDevelopmentModel.ts')], outfile: out, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
 const m = await import(pathToFileURL(out).href);
 
+test('managed image is digest-pinned and names the apt security floor', () => {
+  assert.match(m.DEVELOPMENT_IMAGE, /^docker\.io\/library\/ubuntu@sha256:[0-9a-f]{64}$/);
+  assert.equal(m.APT_FLOOR, '3.3.3ubuntu0.1');
+  assert.match(m.DEVELOPMENT_IMAGE_LABEL, /Ubuntu 26\.10/);
+});
+
+test('page states the digest pin and the pre-preset apt upgrade', async () => {
+  const page = await readFile(resolve(root, 'src/pages/RowynDevelopment.tsx'), 'utf8');
+  assert.match(page, /DEVELOPMENT_IMAGE_LABEL/);
+  assert.match(page, /USN-8996-1/);
+  assert.match(page, /CVE-2026-109518/);
+});
+
 test('fixed presets expose their pinned package plans and disallow arbitrary package input', () => {
   assert.deepEqual(m.DEVELOPMENT_PRESETS.map(p => [p.id, p.packages]), [
     ['git-build', ['git', 'build-essential', 'pkg-config', 'cmake']],

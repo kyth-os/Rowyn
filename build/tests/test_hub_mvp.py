@@ -1,6 +1,7 @@
 """Rowyn-owned Hub MVP: pin-export and safety contracts (no VM needed)."""
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -38,6 +39,22 @@ class MvpRoutes(unittest.TestCase):
                 self.assertIn('Rowyn', page)
                 self.assertNotIn('RecipeButton', page)
                 self.assertNotIn('setInterval', page)
+
+
+class DevelopmentImagePin(unittest.TestCase):
+    """The managed box must pin its image and raise apt before presets."""
+
+    def test_rust_and_typescript_agree_on_the_pinned_image_and_apt_floor(self):
+        model = (ROOT / "build/hub/src/services/rowynDevelopmentModel.ts").read_text()
+        native = (ROOT / "build/hub/src-tauri/src/commands/rowyn_development.rs").read_text()
+        pinned = re.search(r"docker\.io/library/ubuntu@sha256:[0-9a-f]{64}", model)
+        self.assertIsNotNone(pinned, "development image must be digest-pinned")
+        self.assertIn(pinned.group(0), native)
+        for needle in ("3.3.3ubuntu0.1", "--only-upgrade", "apt_refresh_commands",
+                       "apt_floor_command", "--compare-versions"):
+            self.assertIn(needle, native)
+        self.assertIn("3.3.3ubuntu0.1", model)
+        self.assertNotIn("ubuntu:26.10'", model)
 
 
 class MvpDevelopment(unittest.TestCase):

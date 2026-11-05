@@ -147,18 +147,30 @@ fn fixed_presets_build_exact_apt_plans_and_reject_arbitrary_packages() {
     assert!(preset_packages("git; rm -rf /").is_err());
     for preset in ["git-build", "python", "node", "rust"] {
         let plan = preset_commands(preset).unwrap();
-        assert_eq!(plan.len(), 3);
-        assert!(plan[0].starts_with(&[
-            "/usr/bin/sudo".into(),
-            "-n".into(),
-            "/usr/bin/env".into(),
-            "DEBIAN_FRONTEND=noninteractive".into(),
-            "/usr/bin/apt-get".into(),
-            "update".into()
-        ]));
-        assert!(plan[1].contains(&"install".into()));
+        assert_eq!(plan.len(), 5);
+        assert_eq!(plan[0], sudo_apt(&["update"]));
         assert_eq!(
-            plan[2],
+            plan[1],
+            sudo_apt(&[
+                "install",
+                "-y",
+                "--no-install-recommends",
+                "--only-upgrade",
+                "apt"
+            ])
+        );
+        assert_eq!(plan[2], apt_floor_command());
+        assert!(plan[2][2].contains(APT_FLOOR));
+        let mut install = sudo_apt(&["install", "-y", "--no-install-recommends"]);
+        install.extend(
+            preset_packages(preset)
+                .unwrap()
+                .iter()
+                .map(|package| (*package).to_string()),
+        );
+        assert_eq!(plan[3], install);
+        assert_eq!(
+            plan[4],
             [
                 vec!["/usr/bin/dpkg-query", "-W", "-f=${db:Status-Status}\\n"],
                 preset_packages(preset).unwrap().to_vec()
@@ -166,7 +178,7 @@ fn fixed_presets_build_exact_apt_plans_and_reject_arbitrary_packages() {
             .concat()
         );
         assert_eq!(
-            plan[2][3..],
+            plan[4][3..],
             preset_packages(preset)
                 .unwrap()
                 .iter()
@@ -224,6 +236,18 @@ fn desktop_service_menu_uses_fixed_command_and_directory_mime_type() {
     let menu = include_str!("../../data/kde/servicemenus/rowyn-development-here.desktop");
     assert!(menu.contains("Exec=/usr/bin/rowyn-hub-shell --development-directory %f"));
     assert!(menu.contains("MimeType=inode/directory;"));
+}
+
+#[test]
+fn managed_image_is_digest_pinned_and_legacy_tag_containers_stay_owned() {
+    assert!(IMAGE.starts_with("docker.io/library/ubuntu@sha256:"));
+    assert_eq!(IMAGE.rsplit('@').next().unwrap().len(), "sha256:".len() + 64);
+    let mut legacy = owned();
+    legacy.image = IMAGE_TAG_ALIAS.into();
+    assert!(ownership(&legacy));
+    let mut foreign = owned();
+    foreign.image = "docker.io/library/ubuntu:latest".into();
+    assert!(!ownership(&foreign));
 }
 
 #[test]
