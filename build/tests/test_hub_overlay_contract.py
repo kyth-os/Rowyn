@@ -126,7 +126,7 @@ class SettingsCoverage(unittest.TestCase):
 
     def test_image_smoke_checks_probe_binaries(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        for binary in ("/usr/bin/nmcli", "/usr/bin/rfkill", "/usr/bin/kscreen-doctor",
+        for binary in ("/usr/bin/nmcli", "/usr/sbin/rfkill", "/usr/bin/kscreen-doctor",
                        "/usr/bin/df"):
             self.assertIn(f"test -x {binary}", workflow)
         # bootc-rootfs.sh deletes /var, so the payload has no dpkg database:

@@ -203,8 +203,7 @@ fn probe(kind: Probe) -> Result<String, String> {
             c.arg("--json");
             c
         }
-        Probe::Disk => { let mut c = Command::new("/usr/bin/df"); c.args(["-h", "--output=size,used,avail,pcent,target", "/", "/var"]); c }
-        Probe::Bluetooth => { let mut c=Command::new("/usr/bin/rfkill"); c.args(["--json"]); c }
+        Probe::Disk => { let mut c = Command::new("/usr/bin/df"); c.args(["-h", "--output=size,used,avail,pcent,target", "/", "/var"]); c }            Probe::Bluetooth => { let mut c = Command::new("/usr/sbin/rfkill"); c.args(["--json"]); c }
         Probe::Wifi => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["-t","-f","DEVICE,TYPE,STATE","device","status"]); c }
         Probe::WifiRadio => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["radio","wifi"]); c }
         Probe::Audio => { let mut c=Command::new("/usr/bin/systemctl"); c.args(["--user","is-active","pipewire.service","wireplumber.service"]); c }

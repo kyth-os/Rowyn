@@ -274,7 +274,7 @@ jobs:
             # KCMs is asserted in the Containerfile, where the dpkg database
             # still exists; bootc-rootfs.sh deletes /var from the payload.
             test -x /usr/bin/nmcli
-            test -x /usr/bin/rfkill
+            test -x /usr/sbin/rfkill
             test -x /usr/bin/kscreen-doctor
             test -x /usr/bin/df
             # New accounts are seeded a permissive per-user containers

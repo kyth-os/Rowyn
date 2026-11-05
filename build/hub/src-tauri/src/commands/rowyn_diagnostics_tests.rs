@@ -178,7 +178,7 @@ fn focused_hardware_fixture_parsers_are_bounded_and_truthful() {
 fn focused_probe_arguments_are_fixed_and_read_only() {
     fn args(kind: Probe) -> (String, Vec<String>) {
         let mut command = match kind {
-            Probe::Bluetooth => { let mut c=Command::new("/usr/bin/rfkill"); c.args(["--json"]); c }
+            Probe::Bluetooth => { let mut c=Command::new("/usr/sbin/rfkill"); c.args(["--json"]); c }
             Probe::Wifi => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["-t","-f","DEVICE,TYPE,STATE","device","status"]); c }
             Probe::WifiRadio => { let mut c=Command::new("/usr/bin/nmcli"); c.args(["radio","wifi"]); c }
             Probe::Audio => { let mut c=Command::new("/usr/bin/systemctl"); c.args(["--user","is-active","pipewire.service","wireplumber.service"]); c }
@@ -187,7 +187,7 @@ fn focused_probe_arguments_are_fixed_and_read_only() {
         };
         (command.get_program().to_string_lossy().into_owned(), command.get_args().map(|a| a.to_string_lossy().into_owned()).collect())
     }
-    assert_eq!(args(Probe::Bluetooth), ("/usr/bin/rfkill".into(), vec!["--json".into()]));
+    assert_eq!(args(Probe::Bluetooth), ("/usr/sbin/rfkill".into(), vec!["--json".into()]));
     assert_eq!(args(Probe::Wifi).1, vec!["-t","-f","DEVICE,TYPE,STATE","device","status"]);
     assert_eq!(args(Probe::WifiRadio).1, vec!["radio","wifi"]);
     assert_eq!(args(Probe::Audio).1, vec!["--user","is-active","pipewire.service","wireplumber.service"]);
