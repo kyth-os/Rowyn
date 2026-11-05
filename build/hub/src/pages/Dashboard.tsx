@@ -18,12 +18,13 @@ import '../styles/rowynMvp.css';
 
 type Reading<T> = T | null;
 
-function StatusCard({ icon, label, value, detail, tone = 'neutral' }: {
+function StatusCard({ icon, label, value, detail, tone = 'neutral', title }: {
   icon: string;
   label: string;
   value: string;
   detail: string;
   tone?: 'neutral' | 'attention';
+  title?: string;
 }) {
   return (
     <article className={`rowyn-home-stat rowyn-home-stat-${tone}`}>
@@ -31,7 +32,7 @@ function StatusCard({ icon, label, value, detail, tone = 'neutral' }: {
         <span className="rowyn-home-icon" aria-hidden="true">{icon}</span>
         <span className="rowyn-home-stat-label">{label}</span>
       </div>
-      <strong className="rowyn-home-stat-value">{value}</strong>
+      <strong className="rowyn-home-stat-value" title={title}>{value}</strong>
       <span className="rowyn-home-stat-detail">{detail}</span>
     </article>
   );
@@ -46,6 +47,15 @@ const destinations = [
   { label: 'Diagnostics', description: 'Run read-only checks and review a report before sharing.', route: '/diagnostics', icon: '⌁', accent: 'mint' },
   { label: 'VPN', description: 'Manage your saved secure-work connections.', route: '/vpn', icon: '◈', accent: 'violet' },
 ] as const;
+
+/** Drop vendor boilerplate and the PCI id so a long GPU name fits a stat card. */
+function readableDevice(name: string): string {
+  return name
+    .replace(/^(?:Advanced Micro Devices, Inc\.|Intel Corporation|NVIDIA Corporation)\s*/i, '')
+    .replace(/\[(?:AMD\/ATI|Intel|NVIDIA)\]\s*/i, '')
+    .replace(/\s*\[[0-9a-f]{4}:[0-9a-f]{4}\]\s*$/i, '')
+    .trim() || name;
+}
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -120,9 +130,6 @@ export function Dashboard() {
 
   return (
     <div className="page-content rowyn-home">
-      <UpdateStatusBanner />
-      <BootHealthPanel compact />
-      <SetupChecklist navigate={navigate} />
       <section className="rowyn-home-hero" aria-labelledby="rowyn-home-title">
         <div className="rowyn-home-hero-copy">
           <span className="home-eyebrow">ROWYN · CONTROL ROOM</span>
@@ -136,6 +143,17 @@ export function Dashboard() {
         <span className="rowyn-home-orbit rowyn-home-orbit-two" aria-hidden="true" />
       </section>
 
+      <section className="rowyn-home-section" aria-labelledby="rowyn-home-status-title">
+        <div className="rowyn-home-section-heading">
+          <div><span className="home-eyebrow">READ-ONLY CHECKS</span><h2 id="rowyn-home-status-title">System status</h2></div>
+          <span className="rowyn-home-section-aside">Refresh a reading here; changes belong in Updates and Diagnostics</span>
+        </div>
+        <div className="rowyn-home-status-grid">
+          <UpdateStatusBanner />
+          <BootHealthPanel compact />
+        </div>
+      </section>
+
       <section className="rowyn-home-section" aria-labelledby="rowyn-home-snapshot-title">
         <div className="rowyn-home-section-heading">
           <div><span className="home-eyebrow">THE QUICK READ</span><h2 id="rowyn-home-snapshot-title">System snapshot</h2></div>
@@ -145,7 +163,7 @@ export function Dashboard() {
           <StatusCard icon="⌁" label="Boot health" value={bootLabel} detail={healthDetail} tone={needsReview ? 'attention' : 'neutral'} />
           <StatusCard icon="↶" label="Recovery" value={recoveryLabel} detail={recoveryDetail} tone={recovery?.quarantined_digest ? 'attention' : 'neutral'} />
           <StatusCard icon="◈" label="Update channel" value={!loaded ? 'Checking…' : updateChannel ?? 'Unavailable'} detail="The release stream this device follows." />
-          <StatusCard icon="▣" label="Device" value={!loaded ? 'Checking…' : gpuName ?? 'Graphics unavailable'} detail={storageFree ? `${storageFree} free storage` : 'Storage reading unavailable'} />
+          <StatusCard icon="▣" label="Device" value={!loaded ? 'Checking…' : gpuName ? readableDevice(gpuName) : 'Graphics unavailable'} detail={storageFree ? `${storageFree} free storage` : 'Storage reading unavailable'} title={gpuName ?? undefined} />
         </div>
       </section>
 
@@ -164,6 +182,8 @@ export function Dashboard() {
           ))}
         </div>
       </section>
+
+      <SetupChecklist navigate={navigate} />
     </div>
   );
 }
