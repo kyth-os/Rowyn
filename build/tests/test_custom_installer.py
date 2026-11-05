@@ -310,7 +310,7 @@ class UbuntuGuardTests(unittest.TestCase):
                 ("build/assemble-iso.sh", "set -euo pipefail", "set -euo pipefail\nbash build_files/build-live-iso.sh"),
                 (".github/workflows/installer-iso.yml", "docker.io/library/ubuntu@sha256:", "ghcr.io/kyth-os/kyth@sha256:"),
                 ("Containerfile", "FROM docker.io/library/ubuntu@sha256:", "FROM docker.io/library/ubuntu:26.10 # "),
-                ("Containerfile", "ubuntu@sha256:93e29bef", "ubuntu@sha256:00000000"),
+                ("Containerfile", "ubuntu@sha256:262df65c", "ubuntu@sha256:00000000"),
             ]:
                 path = root / file
                 text = path.read_text()

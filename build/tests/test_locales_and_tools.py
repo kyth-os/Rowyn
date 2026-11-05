@@ -54,5 +54,20 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn("'", smoke_block())
 
 
+class AptSecurityFloorTests(unittest.TestCase):
+    """USN-8996-1 (CVE-2026-109518) must be closed where packages are installed."""
+
+    def test_smoke_asserts_the_fixed_apt(self):
+        block = smoke_block()
+        self.assertIn("dpkg --compare-versions", block)
+        self.assertIn("3.3.3ubuntu0.1", block)
+
+    def test_base_stage_takes_the_fixed_apt_before_other_installs(self):
+        self.assertIn("--only-upgrade apt", CONTAINERFILE)
+        self.assertIn("ge 3.3.3ubuntu0.1", CONTAINERFILE)
+        self.assertLess(CONTAINERFILE.index("--only-upgrade apt"),
+                        CONTAINERFILE.index("apt install -y python3"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -262,6 +262,10 @@ jobs:
             test -s /usr/lib/systemd/system/rowyn-boot-health.timer
             test -e /etc/systemd/system/timers.target.wants/rowyn-boot-health.timer
             /usr/libexec/rowyn-boot-health status | python3 -m json.tool > /dev/null
+            # USN-8996-1 (CVE-2026-109518): the payload must carry the fixed APT,
+            # because its archive sources are plain HTTP with retries enabled.
+            apt_version=$(dpkg -s apt | sed -n "s/^Version: //p")
+            dpkg --compare-versions "$apt_version" ge "3.3.3ubuntu0.1"
             # Every KCM the Hub opens and every binary it probes must exist: a
             # missing module turns a settings button into a click-time error.
             for package in bluedevil kscreen powerdevil plasma-nm plasma-pa kde-config-flatpak kup-backup; do

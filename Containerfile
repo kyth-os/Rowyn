@@ -24,8 +24,18 @@ COPY build-assets/ /assets
 
 # Digest-pinned; must equal UBUNTU_LIVE_IMAGE in .github/workflows/installer-iso.yml
 # (build/ubuntu-only-check.py enforces this). The guard makes a wrong digest fail fast.
-FROM docker.io/library/ubuntu@sha256:93e29beff5257b2cdf1c024d831f6d2997e53655a653ff76a811fc9e6564a719 AS base
+FROM docker.io/library/ubuntu@sha256:262df65c0ec6bf8d9dcc87454f4330a05fae4b97825f45854af3b136666584c2 AS base
 RUN . /etc/os-release && test "$ID" = ubuntu && test "$VERSION_ID" = 26.10
+
+# USN-8996-1 (CVE-2026-109518): no published Ubuntu 26.10 image carries the APT
+# fix yet, and every layer below installs packages over the image's plain-HTTP
+# archive sources with the default Acquire::Retries. Take the fixed apt from the
+# security archive before anything else runs, and fail closed if it is absent.
+RUN apt-get update && \
+    apt-get install -y --only-upgrade apt && \
+    installed=$(dpkg-query -W -f='${Version}' apt) && \
+    dpkg --compare-versions "$installed" ge 3.3.3ubuntu0.1 && \
+    rm -rf /var/lib/apt/lists/*
 
 # --- builder: compile bootc from source -------------------------------------
 FROM base AS builder
