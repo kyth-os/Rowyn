@@ -112,8 +112,12 @@ export function Work() {
   const focusMinutesLeft = focus ? Math.ceil(focus.remaining_secs / 60) : 0;
 
   return <div className="page-content rowyn-mvp">
+    <section className="glass dashboard-card">
+      <span className="home-eyebrow">Rowyn Work · MVP</span><h1>Work</h1>
+      <p className="card-copy">Printing, office documents and focus time in one place — the workday tools that used to sit inside Apps. Every action is local and named: print queues are read from CUPS, office apps come from Flathub, and nothing changes without pressing a button.</p>
+    </section>
     <section className="glass dashboard-card" id="hub-section-printing">
-      <span className="home-eyebrow">Rowyn Work · MVP</span><h1>Printing</h1>
+      <h2>Printing</h2>
       <p className="card-copy">Printing runs through CUPS. Network printers are found over mDNS and printed to driverless (IPP Everywhere) queues; USB printers are published by ipp-usb, which this image ships. No vendor driver is installed, and no queue is added, changed or removed by this page — Print settings owns that. Reading queues and sending one test page are the only actions here.</p>
       <div className="home-actions">
         <button className="action-button" disabled={busy !== null} onClick={() => void run('queues', 'Reading print queues…', async () => {

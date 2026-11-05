@@ -269,7 +269,8 @@ class MvpWork(unittest.TestCase):
                       "RowynWork", "pub(crate) mod rowyn_work;",
                       "commands::rowyn_work::rowyn_print_queues",
                       "commands::rowyn_work::rowyn_print_test_page",
-                      "WORK_SECTIONS", "Work: { hint:"):
+                      "WORK_SECTIONS", "Work: { hint:",
+                      'Apps: { hint: "Discover and install apps"'):
             self.assertIn(token, port)
 
 

@@ -618,6 +618,8 @@ def apply_rowyn_mvp(root):
     text = replace_once(text, '  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n',
         '  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n'
         '  Work: { hint: "Printing, office and focus time", Icon: IconMonitor },\n')
+    text = replace_once(text, '  Apps: { hint: "Discover and work setup", Icon: IconGrid },',
+        '  Apps: { hint: "Discover and install apps", Icon: IconGrid },')
     sidebar.write_text(text)
     sections = web / "src/data/hubSections.ts"
     sections.write_text(replace_once(sections.read_text(),

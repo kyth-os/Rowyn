@@ -46,6 +46,9 @@ test('the work page confirms in its own card and never polls or uses a native di
   assert.match(page, /Open printer settings/);
   assert.match(page, /useSectionFollow\(SECTIONS\)/);
   assert.match(page, /ipp-usb/);
+  assert.match(page, /<h1>Work<\/h1>/);
+  // The printing card is a section of the page, not the page title.
+  assert.match(page, /<h2>Printing<\/h2>/);
   for (const anchor of ['hub-section-printing', 'hub-section-office', 'hub-section-focus'])
     assert.equal([...page.matchAll(new RegExp(`id="${anchor}"`, 'g'))].length, 1, anchor);
 });
