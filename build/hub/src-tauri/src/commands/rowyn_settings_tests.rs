@@ -20,6 +20,7 @@ fn target_allowlist_maps_exact_modules() {
         ("defaults", "kcm_componentchooser"),
         ("file-associations", "kcm_filetypes"),
         ("flatpak-permissions", "kcm_app-permissions"),
+        ("printers", "kcm_printer_manager"),
     ] {
         assert_eq!(settings_module(target).unwrap(), expected);
     }
@@ -119,7 +120,8 @@ fn flatpak_permissions_falls_back_to_the_plasma5_module() {
 fn targets_without_alternates_resolve_to_their_only_module() {
     let modules = modules_for("power").unwrap();
     assert_eq!(modules, ["kcm_powerdevil"]);
-    for (target, expected) in [("backups", "kcm_kup"), ("displays", "kcm_kscreen")] {
+    for (target, expected) in [("backups", "kcm_kup"), ("displays", "kcm_kscreen"),
+                               ("printers", "kcm_printer_manager")] {
         assert_eq!(modules_for(target).unwrap(), [expected]);
     }
 }

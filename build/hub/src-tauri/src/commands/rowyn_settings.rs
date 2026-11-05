@@ -52,6 +52,9 @@ fn settings_module(target: &str) -> Result<&'static str, String> {
         "displays" => Ok("kcm_kscreen"),
         "defaults" => Ok("kcm_componentchooser"),
         "file-associations" => Ok("kcm_filetypes"),
+        // Adding a queue is the panel's job; the Work page only reads what
+        // exists and sends one confirmed test page to it.
+        "printers" => Ok("kcm_printer_manager"),
         // Ubuntu 26.10 kde-config-flatpak filelist ships kcm_app-permissions.
         "flatpak-permissions" => Ok("kcm_app-permissions"),
         _ => Err("Unsupported settings target.".into()),

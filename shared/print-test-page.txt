@@ -1,0 +1,6 @@
+Rowyn Hub test page
+
+If this page printed correctly, the print queue, the driver and the printer
+are talking to each other.
+
+Sent from Rowyn Hub through CUPS.

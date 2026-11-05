@@ -35,6 +35,9 @@ ESSENTIALS = [
     "cups-ipp-utils", "cups-pk-helper", "print-manager",
     "system-config-printer-common", "system-config-printer-udev",
     "bluez-cups", "colord", "kde-config-tablet",
+    # Driverless USB printing (ipp-usb) and the mDNS service cups-browsed
+    # and network printer discovery rely on.
+    "ipp-usb", "avahi-daemon",
     "sane-airscan", "sane-utils",
     # Desktop integration: KCMs, KIO workers, Plasma/KWin add-ons.
     "kio-admin", "kio-audiocd", "kde-config-updates", "kde-config-plymouth",
@@ -108,7 +111,8 @@ class PayloadPackageTests(unittest.TestCase):
         desktop = [e for e in enables if "sddm.service" in e]
         self.assertTrue(desktop, "no systemctl enable line names sddm.service")
         units = desktop[0].replace("\\", " ").split()
-        for unit in ("cups.service", "cups.socket", "cups-browsed.service"):
+        for unit in ("cups.service", "cups.socket", "cups-browsed.service",
+                     "avahi-daemon.service", "avahi-daemon.socket"):
             self.assertIn(unit, units)
 
     def test_cli_tools_are_installed(self):
@@ -142,6 +146,9 @@ class PayloadPackageTests(unittest.TestCase):
             "test -e /etc/systemd/system/multi-user.target.wants/cups.service",
             "test -e /etc/systemd/system/sockets.target.wants/cups.socket",
             "test -e /etc/systemd/system/multi-user.target.wants/cups-browsed.service",
+            "test -x /usr/sbin/avahi-daemon",
+            "test -x /usr/sbin/ipp-usb",
+            "test -s /usr/share/rowyn/print-test-page.txt",
         ):
             self.assertIn(assertion, workflow)
 

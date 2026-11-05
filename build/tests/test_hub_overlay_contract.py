@@ -18,6 +18,11 @@ SECTION_ANCHORS = {
         "Compatibility": "hub-section-compatibility",
         "Controllers": "hub-section-controllers",
     },
+    "src/pages/RowynWork.tsx": {
+        "Printing": "hub-section-printing",
+        "Office": "hub-section-office",
+        "Focus": "hub-section-focus",
+    },
     "src/pages/RowynDiagnostics.tsx": {"Diagnostics": "hub-section-diagnostics"},
     "src/components/SystemCare.tsx": {
         "Storage": "hub-section-storage",
@@ -28,6 +33,7 @@ SECTION_ANCHORS = {
 }
 ROUTES_WITH_SECTIONS = (
     "src/pages/RowynPlay.tsx",
+    "src/pages/RowynWork.tsx",
     "src/pages/RowynDiagnostics.tsx",
     "src/pages/Backups.tsx",
     "src/pages/RowynDevelopment.tsx",
@@ -36,7 +42,8 @@ ROUTES_WITH_SECTIONS = (
 KCM_PACKAGES = ("bluedevil", "kscreen", "powerdevil", "plasma-nm", "plasma-pa",
                 "kde-config-flatpak", "kup-backup")
 SETTINGS_TARGETS = ("defaults", "file-associations", "flatpak-permissions",
-                    "bluetooth", "wifi", "audio", "displays", "backups", "power")
+                    "bluetooth", "wifi", "audio", "displays", "backups", "power",
+                    "printers")
 
 
 class SectionReachability(unittest.TestCase):

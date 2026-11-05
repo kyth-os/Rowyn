@@ -577,7 +577,19 @@ def apply_rowyn_mvp(root):
             {"key": "SteamLibrary", "title": "Installed games", "description": "Local Steam metadata, read only when you ask."},
             {"key": "Compatibility", "title": "Compatibility", "description": "Dated support guidance, anti-cheat caveats and per-game launch options."},
             {"key": "Controllers", "title": "Controllers", "description": "Read-only controller readiness; rescan after connecting a gamepad."}]},
+        {"key": "Work", "route": "/work", "sections": [
+            {"key": "Printing", "title": "Printing", "description": "CUPS queues, a driverless printer scan and one confirmed test page."},
+            {"key": "Office", "title": "Office and mail", "description": "Office fonts, LibreOffice and Betterbird, Microsoft 365 web apps and Outlook archives."},
+            {"key": "Focus", "title": "Focus and connectivity", "description": "Timed focus sessions and the work network identity."}]},
     ]
+    # Work setup is its own destination: the Apps page is the software
+    # center, and printing/office/focus live on Work, under Play in the rail.
+    apps_entry = next((entry for entry in manifest["destinations"] if entry["key"] == "Apps"), None)
+    if apps_entry is None:
+        raise ValueError("Apps destination missing from hubRoutes.json")
+    if [section["key"] for section in apps_entry["sections"]] != ["App Store", "Work Setup"]:
+        raise ValueError("Apps sections changed upstream: " + ", ".join(section["key"] for section in apps_entry["sections"]))
+    apps_entry["sections"] = [section for section in apps_entry["sections"] if section["key"] == "App Store"]
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     app = web / "src/App.tsx"
     text = app.read_text()
@@ -591,6 +603,11 @@ def apply_rowyn_mvp(root):
     text = replace_once(text, 'const Apps = lazy(', 'const Development = lazy(() => import("./pages/RowynDevelopment").then(({ Development: page }) => ({ default: page })));\nconst Diagnostics = lazy(() => import("./pages/RowynDiagnostics").then(({ Diagnostics: page }) => ({ default: page })));\nconst Apps = lazy(')
     text = replace_once(text, '  "/apps": "Apps",', '  "/development": "Development",\n  "/diagnostics": "Diagnostics",\n  "/apps": "Apps",')
     text = replace_once(text, '              <Route path="/apps"', '              <Route path="/development" element={<Development />} />\n              <Route path="/diagnostics" element={<Diagnostics />} />\n              <Route path="/apps"')
+    text = replace_once(text, 'const Apps = lazy(',
+        'const Work = lazy(() => import("./pages/RowynWork").then(({ Work: page }) => ({ default: page })));\nconst Apps = lazy(')
+    text = replace_once(text, '  "/play": "Play",\n', '  "/play": "Play",\n  "/work": "Work",\n')
+    text = replace_once(text, '              <Route path="/apps"',
+        '              <Route path="/work" element={<Work />} />\n              <Route path="/apps"')
     app.write_text(text)
     sidebar = web / "src/components/Sidebar.tsx"
     text = sidebar.read_text()
@@ -598,17 +615,45 @@ def apply_rowyn_mvp(root):
     if old_play in text:
         text = replace_once(text, old_play, '')
     text = replace_once(text, '  Apps: { hint:', '  Development: { hint: "Dedicated Ubuntu development environment", Icon: IconTerminal },\n  Diagnostics: { hint: "Read-only system report", Icon: IconShield },\n  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n  Apps: { hint:')
+    text = replace_once(text, '  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n',
+        '  Play: { hint: "Launchers, compatibility, controllers", Icon: IconGrid },\n'
+        '  Work: { hint: "Printing, office and focus time", Icon: IconMonitor },\n')
     sidebar.write_text(text)
     sections = web / "src/data/hubSections.ts"
     sections.write_text(replace_once(sections.read_text(),
         '  if (!destination) {',
         '  if (!destination && ["This PC", "Move In"].includes(destinationKey)) return [];\n  if (!destination) {')
         + '\nexport const DIAGNOSTICS_SECTIONS = sectionsFor("Diagnostics");\n'
-        + 'export const DEVELOPMENT_SECTIONS = sectionsFor("Development");\n')
+        + 'export const DEVELOPMENT_SECTIONS = sectionsFor("Development");\n'
+        + 'export const WORK_SECTIONS = sectionsFor("Work");\n')
+    text = sections.read_text()
+    text = replace_once(text, '  Diagnostics: IconDatabase,',
+        '  Printing: IconMonitor,\n  Office: IconGrid,\n  Focus: IconChip,\n  Diagnostics: IconDatabase,')
+    sections.write_text(text)
     destinations = web / "src/data/destinations.ts"
     text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  DIAGNOSTICS_SECTIONS,\n  DEVELOPMENT_SECTIONS,\n  APPS_SECTIONS,')
     text = replace_once(text, '  Apps: APPS_SECTIONS,', '  Development: DEVELOPMENT_SECTIONS,\n  Diagnostics: DIAGNOSTICS_SECTIONS,\n  Apps: APPS_SECTIONS,')
+    text = replace_once(text, '  APPS_SECTIONS,', '  WORK_SECTIONS,\n  APPS_SECTIONS,')
+    text = replace_once(text, '  Apps: APPS_SECTIONS,', '  Work: WORK_SECTIONS,\n  Apps: APPS_SECTIONS,')
     destinations.write_text(text)
+    apps_page = web / "src/pages/Apps.tsx"
+    text = apps_page.read_text()
+    text = replace_once(text, 'import { WorkSetupSection } from "../components/WorkSetupSection";\n', "")
+    text = replace_once(text, '          "Work Setup": WorkSetupSection,\n', "")
+    text = replace_once(text, 'Find trusted apps, keep them current, and set up the tools you use every day.',
+                        'Find trusted apps, keep them current, and remove the ones you no longer need. Work setup lives on Work.')
+    text = replace_once(text,
+        '// The Apps destination is the software center up front: the App Store\n'
+        '// workspace on top, Work Setup below it — no status-card overview, no\n'
+        '// start-here actions, no tab switcher. Both workspaces always render in\n'
+        '// manifest order, so an incoming ?section= deep link scrolls (HubPage)\n'
+        '// instead of tab-switching.\n',
+        '// The Apps destination is the software center: the App Store workspace,\n'
+        '// no status-card overview, no start-here actions, no tab switcher. Work\n'
+        '// setup moved to its own destination, so this page stays about software;\n'
+        '// an incoming ?section= deep link still scrolls (HubPage) instead of\n'
+        '// tab-switching.\n')
+    apps_page.write_text(text)
     package = web / "package.json"
     package_json = json.loads(package.read_text())
     scripts = package_json.setdefault("scripts", {})
@@ -637,6 +682,12 @@ def apply_rowyn_mvp(root):
         '            commands::rowyn_development::rowyn_development_cancel,\n'
         '            commands::rowyn_development::rowyn_development_open,\n'
         '            commands::rowyn_boot_health::rowyn_boot_health_snapshot,'))
+    commands_mod = web / "src-tauri/src/commands/mod.rs"
+    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_work;\n')
+    main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
+        'tauri::generate_handler![\n'
+        '            commands::rowyn_work::rowyn_print_queues,\n'
+        '            commands::rowyn_work::rowyn_print_test_page,\n'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
     assert spec is not None and spec.loader is not None
@@ -748,7 +799,7 @@ def port_source(root):
     text = replace_once(
         text,
         'import { IconHome, IconPlay, IconGrid, IconLock, IconMonitor, IconRefresh, IconShield, IconTerminal, IconTransfer } from "./icons";',
-        'import { IconHome, IconGrid, IconLock, IconRefresh, IconShield, IconTerminal } from "./icons";')
+        'import { IconHome, IconMonitor, IconGrid, IconLock, IconRefresh, IconShield, IconTerminal } from "./icons";')
     text = replace_once(
         text,
         "// in the rail automatically. Home and Dev Tools are shell-only routes\n"

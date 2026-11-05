@@ -208,6 +208,9 @@ jobs:
             test -e /etc/systemd/system/multi-user.target.wants/cups.service
             test -e /etc/systemd/system/sockets.target.wants/cups.socket
             test -e /etc/systemd/system/multi-user.target.wants/cups-browsed.service
+            test -x /usr/sbin/avahi-daemon
+            test -x /usr/sbin/ipp-usb
+            test -s /usr/share/rowyn/print-test-page.txt
             test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_plymouth.so
             test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_printer_manager.so
             test -s /usr/lib/x86_64-linux-gnu/qt6/plugins/kf6/kio/admin.so

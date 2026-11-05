@@ -156,6 +156,7 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         cups cups-browsed cups-client cups-daemon cups-filters cups-ipp-utils \
         cups-pk-helper print-manager system-config-printer-common \
         system-config-printer-udev bluez-cups colord kde-config-tablet \
+        ipp-usb avahi-daemon \
         sane-airscan sane-utils \
         kio-admin kio-audiocd kde-config-updates kde-config-plymouth \
         plasma-runners-addons plasma-widgets-addons plasma-wallpapers-addons \
@@ -442,6 +443,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # so a real user named rowyn is left alone.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm755 /ctx/shared/retire-spike-account.sh /usr/libexec/rowyn-retire-spike-account && \
+    install -Dm644 /ctx/shared/print-test-page.txt /usr/share/rowyn/print-test-page.txt && \
     install -Dm644 /ctx/shared/retired-dev-key.pub /usr/share/rowyn/retired-dev-key.pub && \
     install -Dm644 /ctx/shared/rowyn-retire-spike-account.service /usr/lib/systemd/system/rowyn-retire-spike-account.service && \
     systemctl enable rowyn-retire-spike-account.service
@@ -460,7 +462,8 @@ RUN mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d &
     chmod 0600 /etc/NetworkManager/system-connections/rowyn-wired.nmconnection && \
     printf '[keyfile]\nunmanaged-devices=none\n' > /etc/NetworkManager/conf.d/99-rowyn-managed.conf && \
     systemctl enable sddm.service NetworkManager.service firewalld.service \
-        cups.service cups.socket cups-browsed.service power-profiles-daemon.service && \
+        cups.service cups.socket cups-browsed.service \
+        avahi-daemon.service avahi-daemon.socket power-profiles-daemon.service && \
     systemctl set-default graphical.target && \
     systemctl disable NetworkManager-wait-online.service && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service ufw.service && \

@@ -1,7 +1,7 @@
 import { inTauriShell } from './tauriEnv';
 import type { BackupSnapshot } from './rowynBackupModel';
 
-export type SettingTarget = 'defaults' | 'file-associations' | 'flatpak-permissions' | 'bluetooth' | 'wifi' | 'audio' | 'displays' | 'backups' | 'power';
+export type SettingTarget = 'defaults' | 'file-associations' | 'flatpak-permissions' | 'bluetooth' | 'wifi' | 'audio' | 'displays' | 'backups' | 'power' | 'printers';
 
 export const SETTINGS_MODULES: Record<SettingTarget, string> = {
   defaults: 'kcm_componentchooser',
@@ -13,6 +13,7 @@ export const SETTINGS_MODULES: Record<SettingTarget, string> = {
   wifi: 'kcm_networkmanagement',
   audio: 'kcm_pulseaudio',
   displays: 'kcm_kscreen',
+  printers: 'kcm_printer_manager',
 };
 
 function requireNative(): void {
