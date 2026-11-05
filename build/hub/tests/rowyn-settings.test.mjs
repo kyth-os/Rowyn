@@ -23,7 +23,7 @@ test('browser-only calls fail visibly before invoking any native command', async
 });
 
 test('power settings map to the packaged KDE PowerDevil module', () => {
-  assert.equal(model.SETTINGS_MODULES.power, 'kcm_powerdevilprofilesconfig');
+  assert.equal(model.SETTINGS_MODULES.power, 'kcm_powerdevil');
 });
 
 test('native settings and backup reads use only registered fixed commands', async () => {

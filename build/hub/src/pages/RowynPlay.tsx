@@ -1,11 +1,21 @@
 import { useRef, useState } from 'react';
 import { ExternalLink } from '../components/ExternalLink';
-import { cancelInstall, fetchInstalledFlatpaks, installFlatpak, waitInstallJob, invalidateSharedReads, getInFlightJob, confirmUserAction, type InstalledFlatpaksResult } from '../services/liveData';
+import { cancelInstall, confirmUserAction, fetchInstalledFlatpaks, installFlatpak, uninstallFlatpak, waitInstallJob, invalidateSharedReads, getInFlightJob, type InstalledFlatpaksResult } from '../services/liveData';
 import { rowynControllerScan, openRowynLauncher, rowynSteamGamesScan } from '../services/rowynMvp';
 import { LAUNCHERS, launcherState, installLauncher, createPlayStatusOwner, launchOptions, steamCompatibilityLinks, type Reading, type SteamScan } from '../services/rowynMvpModel';
+import { copyText } from '../services/rowynClipboard';
+import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
 import '../styles/rowynMvp.css';
 
+const SECTIONS: SectionMap = {
+  Gaming: 'hub-section-gaming',
+  SteamLibrary: 'hub-section-steam-library',
+  Compatibility: 'hub-section-compatibility',
+  Controllers: 'hub-section-controllers',
+};
+
 export function Play() {
+  useSectionFollow(SECTIONS);
   const [scan, setScan] = useState<InstalledFlatpaksResult | null>(null);
   const [steamScan, setSteamScan] = useState<SteamScan | null>(null);
   const [controllers, setControllers] = useState<Reading[] | null>(null);
@@ -46,11 +56,13 @@ export function Play() {
         {tracked && !busy && <button className="action-button" onClick={() => run('Reconnecting to install…', () => waitInstallJob(tracked, 1800))}>Resume install status</button>}
       </div>
       <p className="card-copy" role="status">{status}</p>
+      {!scan && <p className="card-copy">Not scanned yet: Refresh launchers before installing or removing a launcher. Nothing runs automatically.</p>}
       {busy && <p className="card-copy" role="progressbar" aria-label="Play action in progress">Working… Install jobs remain cancellable here or in Apps.</p>}
       <div className="rowyn-launchers">{LAUNCHERS.map((launcher) => {
         const state = launcherState(launcher.id, scan);
         return <article className="rowyn-launcher" key={launcher.id}><h2>{launcher.name}</h2>
           <p className="card-copy">{launcher.description}</p><p className="rowyn-state">{state}</p><code>{launcher.id}</code>
+          {state === 'unavailable' && <p className="card-copy">Install and removal stay disabled until a scan confirms the current state.</p>}
           <div className="home-actions"><button className="action-button" disabled={busy || state !== 'installed'} onClick={() => run(`Opening ${launcher.name}…`, () => openRowynLauncher(launcher.id))}>Open {launcher.name}</button>
           <button className="action-button" disabled={busy || state !== 'not installed' || !!tracked} onClick={() => {
             if (!confirmUserAction(`Install ${launcher.name} from Flathub for your user? This downloads software and may take several minutes.`)) return;
@@ -59,14 +71,16 @@ export function Play() {
               setActiveInstall(null);
               const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
             });
-          }}>Install {launcher.name}</button></div>
+          }}>Install {launcher.name}</button>
+          <button className="action-button" disabled={busy || state !== 'installed' || !!tracked} onClick={() => {
+            if (!confirmUserAction(`Remove ${launcher.name} for your user? Game files, saves and compatibility data are not deleted.`)) return;
+            void run(`Removing ${launcher.name}…`, async () => {
+              const result = await uninstallFlatpak(launcher.id);
+              const refreshed = await refreshLaunchers(); return `${result} ${refreshed}`;
+            });
+          }}>Remove {launcher.name}</button></div>
         </article>;
       })}</div>
-    </section>
-    <section className="glass dashboard-card">
-      <h2>Compatibility &amp; anti-cheat</h2>
-      <p className="card-copy">Guidance reviewed 2026-10-31; not Rowyn-validated game results. Linux/Proton support changes with game, launcher and anti-cheat updates. Kernel-level Windows anti-cheat generally cannot run under Proton. Easy Anti-Cheat and BattlEye support requires the game developer to enable Linux/Proton support; the middleware name alone proves nothing. Check the exact title and multiplayer mode before buying or installing.</p>
-      <p className="card-copy">Provenance: <ExternalLink href="https://partner.steamgames.com/doc/steamdeck/proton">Valve’s Proton / anti-cheat documentation</ExternalLink> (developer guidance), <ExternalLink href="https://www.protondb.com/">ProtonDB</ExternalLink> and <ExternalLink href="https://areweanticheatyet.com/">Are We Anti-Cheat Yet?</ExternalLink> (community reports, not guarantees). Links require a web browser; no compatibility lookup or network probe runs in this page.</p>
     </section>
     <section className="glass dashboard-card" id="hub-section-steam-library"><h2>Installed Steam games</h2>
       <p className="card-copy">Local metadata only: scans Steam app manifests in common native and Flatpak library paths when you ask. It never reads game files, sends a network request, launches a title, or rates compatibility. ProtonDB links are community reports and do not mean Rowyn tested the game.</p>
@@ -91,13 +105,18 @@ export function Play() {
       {!!steamScan?.warnings && <p className="card-copy" role="status">Partial scan: skipped or unreadable library metadata may hide additional titles.</p>}
     </section>
     <section className="glass dashboard-card" id="hub-section-compatibility"><h2>Compatibility &amp; anti-cheat</h2>
+      <p className="card-copy">Guidance reviewed 2026-10-31; not Rowyn-validated game results. Linux/Proton support changes with game, launcher and anti-cheat updates. Kernel-level Windows anti-cheat generally cannot run under Proton. Easy Anti-Cheat and BattlEye support requires the game developer to enable Linux/Proton support; the middleware name alone proves nothing. Check the exact title and multiplayer mode before buying or installing.</p>
+      <p className="card-copy">Provenance: <ExternalLink href="https://partner.steamgames.com/doc/steamdeck/proton">Valve’s Proton / anti-cheat documentation</ExternalLink> (developer guidance), <ExternalLink href="https://www.protondb.com/">ProtonDB</ExternalLink> and <ExternalLink href="https://areweanticheatyet.com/">Are We Anti-Cheat Yet?</ExternalLink> (community reports, not guarantees). Links require a web browser; no compatibility lookup or network probe runs in this page.</p>
       <label>Game label (local only; never executed)<input value={game} maxLength={80} onChange={(event) => setGame(event.target.value)} placeholder="Your game" /></label>
       <label>Where does this game run?<select value={boundary} onChange={(event) => setBoundary(event.target.value as 'flatpak' | 'host')}><option value="flatpak">Flatpak Steam / sandboxed launcher</option><option value="host">Host-native Steam / host command</option></select></label>
       <label><input type="checkbox" checked={gaming} disabled={boundary === 'flatpak'} onChange={(event) => setGaming(event.target.checked)} /> Use Rowyn gaming slice / GameMode when available</label>
       <label><input type="checkbox" checked={mimalloc} disabled={boundary === 'flatpak'} onChange={(event) => setMimalloc(event.target.checked)} /> Try mimalloc for this game only (experimental; may regress or warn on 32-bit games)</label>
       <p className="card-copy">Host wrappers /usr/bin/rowyn-game-launch and /usr/bin/rowyn-mimalloc-run are not generally accessible inside Flatpak Steam. Do not paste host paths there or use flatpak-spawn to escape the sandbox. The Flatpak-safe default below adds no host wrapper. The host-native example is for an already installed host launcher; this Hub does not install one. Undo by removing the launch options.</p>
       <p>{game || 'Selected game'} — paste into that game’s launch options:</p><pre aria-label="Launch options">{options}</pre>
-      <button className="action-button" disabled={busy} onClick={() => run('Copying launch options…', async () => { await navigator.clipboard.writeText(options); return 'Launch options copied. No configuration was changed.'; })}>Copy launch options</button>
+      <button className="action-button" disabled={busy} onClick={() => run('Copying launch options…', async () => {
+        const result = await copyText(options);
+        return result.ok ? 'Launch options copied. No configuration was changed.' : result.reason;
+      })}>Copy launch options</button>
     </section>
     <section className="glass dashboard-card" id="hub-section-controllers"><h2>Controllers</h2>
       <p className="card-copy">Connect or pair a controller, then rescan. This reads the shipped controller checker only; it does not pair devices, load drivers, change permissions, or claim input testing passed.</p>

@@ -22,7 +22,10 @@ import {
   deleteConfirmation,
   type DevelopmentState,
 } from '../services/rowynDevelopmentModel';
+import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
 import '../styles/rowynMvp.css';
+
+const SECTIONS: SectionMap = { Development: 'hub-section-development' };
 
 type PageState = DevelopmentState & {
   status?: string;
@@ -31,6 +34,7 @@ type PageState = DevelopmentState & {
 };
 
 export function Development() {
+  useSectionFollow(SECTIONS);
   const [status, setStatus] = useState<PageState | null>(null);
   const [message, setMessage] = useState('Refresh status to inspect the dedicated environment.');
   const [job, setJob] = useState<DevelopmentJob | null>(null);

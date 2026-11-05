@@ -7,7 +7,7 @@ export const SETTINGS_MODULES: Record<SettingTarget, string> = {
   defaults: 'kcm_componentchooser',
   'file-associations': 'kcm_filetypes',
   'flatpak-permissions': 'kcm_app-permissions',
-  power: 'kcm_powerdevilprofilesconfig',
+  power: 'kcm_powerdevil',
   backups: 'kcm_kup',
   bluetooth: 'kcm_bluetooth',
   wifi: 'kcm_networkmanagement',

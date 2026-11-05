@@ -501,8 +501,11 @@ def apply_rowyn_qol(root):
     text = 'import { AppsDefaultsAccess } from "./AppsDefaultsAccess";\n' + apps.read_text()
     apps.write_text(replace_once(text, '      <HubPage', '      <AppsDefaultsAccess />\n      <HubPage'))
     updates = web / "src/pages/Updates.tsx"
-    text = 'import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\nimport { RecoveryClarity } from "../components/RecoveryClarity";\n' + updates.read_text()
-    updates.write_text(replace_once(text, '<UpdatesOverview />', '<UpdateStatusBanner /><RecoveryClarity /><UpdatesOverview />'))
+    text = ('import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\n'
+            'import { RecoveryClarity } from "../components/RecoveryClarity";\n'
+            'import { BootHealthPanel } from "../components/BootHealthPanel";\n') + updates.read_text()
+    updates.write_text(replace_once(text, '<UpdatesOverview />',
+        '<UpdateStatusBanner /><RecoveryClarity /><BootHealthPanel /><UpdatesOverview />'))
     app_store = web / "src/components/AppStoreSection.tsx"
     text = 'import { AppRemovalConfirmation } from "./AppRemovalConfirmation";\n' + app_store.read_text()
     text = replace_once(text,
@@ -560,6 +563,7 @@ def apply_rowyn_mvp(root):
             {"key": "Power", "title": "Power and sleep", "description": "Read battery health, charging capabilities, power profile and sleep policy; open KDE settings."}]},
         {"key": "Play", "route": "/play", "sections": [
             {"key": "Gaming", "title": "Launchers", "description": "Install or open Steam, Heroic, Lutris and Bottles as Flatpaks."},
+            {"key": "SteamLibrary", "title": "Installed games", "description": "Local Steam metadata, read only when you ask."},
             {"key": "Compatibility", "title": "Compatibility", "description": "Dated support guidance, anti-cheat caveats and per-game launch options."},
             {"key": "Controllers", "title": "Controllers", "description": "Read-only controller readiness; rescan after connecting a gamepad."}]},
     ]
@@ -607,7 +611,7 @@ def apply_rowyn_mvp(root):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
     commands_mod = web / "src-tauri/src/commands/mod.rs"
-    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\npub(crate) mod rowyn_steam;\npub(crate) mod rowyn_development;\n')
+    commands_mod.write_text(commands_mod.read_text() + '\npub(crate) mod rowyn_diagnostics;\npub(crate) mod rowyn_play;\npub(crate) mod rowyn_steam;\npub(crate) mod rowyn_development;\npub(crate) mod rowyn_boot_health;\n')
     main = web / "src-tauri/src/main.rs"
     main.write_text(replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
@@ -620,7 +624,8 @@ def apply_rowyn_mvp(root):
         '            commands::rowyn_development::rowyn_development_start,\n'
         '            commands::rowyn_development::rowyn_development_job,\n'
         '            commands::rowyn_development::rowyn_development_cancel,\n'
-        '            commands::rowyn_development::rowyn_development_open,'))
+        '            commands::rowyn_development::rowyn_development_open,\n'
+        '            commands::rowyn_boot_health::rowyn_boot_health_snapshot,'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("rowyn_port_tests", overlay / "port_tests.py")
     assert spec is not None and spec.loader is not None

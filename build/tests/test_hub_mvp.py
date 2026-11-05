@@ -22,7 +22,7 @@ class MvpRoutes(unittest.TestCase):
             destinations = {d["key"]: d for d in manifest["destinations"]}
             self.assertEqual(destinations["Diagnostics"]["route"], "/diagnostics")
             self.assertEqual([s["key"] for s in destinations["Play"]["sections"]],
-                             ["Gaming", "Compatibility", "Controllers"])
+                             ["Gaming", "SteamLibrary", "Compatibility", "Controllers"])
             app = (web / "src/App.tsx").read_text()
             for name in ("Diagnostics", "Play"):
                 self.assertIn(f'./pages/Rowyn{name}', app)
@@ -118,15 +118,15 @@ class MvpDiagnostics(unittest.TestCase):
             self.assertIn(needle, page)
         for forbidden in ('setInterval', 'repair', 'installFlatpak'):
             self.assertNotIn(forbidden, page)
-        # A DOM-only effect supports storage/power search deep links. It must
-        # not turn Diagnostics into an automatic probe or settings launcher.
-        self.assertEqual(page.count('useEffect(() => {'), 1)
-        effect = page.split('useEffect(() => {', 1)[1].split('  const [snapshot,', 1)[0]
-        self.assertIn('followSection', effect)
-        self.assertIn("addEventListener('hashchange'", effect)
+        # Section following lives in one shared hook, so the page itself runs
+        # no effect that could turn into an automatic probe or launch.
+        self.assertIn('useSectionFollow(SECTIONS)', page)
+        self.assertEqual(page.count('useEffect(() => {'), 0)
+        hook = (ROOT / "build/hub/src/hooks/useSectionFollow.ts").read_text()
+        self.assertIn("addEventListener('hashchange'", hook)
         for forbidden in ('rowynDiagnosticsSnapshot(', 'exportRowynReport(', 'openRowynSettings(',
                           'rowynStorageSnapshot(', 'rowynPowerSnapshot(', 'invoke(', 'fetch('):
-            self.assertNotIn(forbidden, effect)
+            self.assertNotIn(forbidden, hook)
 
 
 class MvpSteamGames(unittest.TestCase):

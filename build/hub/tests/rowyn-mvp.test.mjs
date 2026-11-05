@@ -88,7 +88,8 @@ test('native pages wire explicit reads, report actions, install and cancel witho
   const diagnostics = await readFile(resolve(root, 'src/pages/RowynDiagnostics.tsx'), 'utf8');
   const play = await readFile(resolve(root, 'src/pages/RowynPlay.tsx'), 'utf8');
   for (const text of [diagnostics, play]) assert.doesNotMatch(text, /setInterval|setTimeout/);
-  assert.match(diagnostics, /navigator.clipboard.writeText\(report\)/);
+  assert.match(diagnostics, /copyText\(report\)/);
+  assert.match(diagnostics, /useSectionFollow\(SECTIONS\)/);
   assert.match(diagnostics, /exportRowynReport\(report\)/);
   assert.match(play, /waitInstallJob/);
   assert.match(play, /cancelInstall/);
@@ -98,5 +99,8 @@ test('native pages wire explicit reads, report actions, install and cancel witho
   assert.match(play, /not Rowyn-validated/);
   assert.match(play, /ExternalLink/);
   assert.equal([...play.matchAll(/id="hub-section-compatibility"/g)].length, 1);
+  assert.equal([...play.matchAll(/Compatibility &amp; anti-cheat/g)].length, 1);
+  assert.match(play, /useSectionFollow\(SECTIONS\)/);
+  assert.match(play, /uninstallFlatpak\(launcher\.id\)/);
   assert.doesNotMatch(play, /target=["']_blank/);
 });

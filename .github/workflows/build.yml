@@ -62,6 +62,48 @@ jobs:
           ROWYN_MOUNT_FIXTURE_PRIVILEGED: "1"
         run: ./build/validate.sh
 
+  hub-tests:
+    name: Hub source tests
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Fetch and port pinned upstream System Hub source
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          UPSTREAM_HUB_COMMIT: 2baf8496b5aa904c0784f4290df743ee17edae48
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            https://github.com/kyth-os/kyth.git "${RUNNER_TEMP}/upstream-hub"
+          git -C "${RUNNER_TEMP}/upstream-hub" fetch --depth 1 origin "${UPSTREAM_HUB_COMMIT}"
+          git -C "${RUNNER_TEMP}/upstream-hub" checkout --detach "${UPSTREAM_HUB_COMMIT}"
+          test "$(git -C "${RUNNER_TEMP}/upstream-hub" rev-parse HEAD)" = "${UPSTREAM_HUB_COMMIT}"
+          python3 build/ubuntu-hub-source.py "${RUNNER_TEMP}/upstream-hub" hub-source
+
+      # The runner image already carries Node.js; using it keeps every action in
+      # this workflow SHA-pinned.
+      - name: Check Node.js
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: node --version
+
+      - name: Install Hub frontend dependencies
+        working-directory: hub-source/src/rowyn-hub-web
+        run: npm ci
+
+      - name: Build Hub frontend
+        working-directory: hub-source/src/rowyn-hub-web
+        run: npm run build
+
+      # The Rowyn overlay suite runs against the real export, so a page that
+      # stops following its sections, a broken bridge model, or an unregistered
+      # command fails here instead of shipping in the image.
+      - name: Run Rowyn Hub frontend tests
+        working-directory: hub-source/src/rowyn-hub-web
+        run: node --test tests/rowyn-*.test.mjs
+
   build:
     name: Build and publish image
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && github.repository == 'mrtrickdotorg/Rowyn'
@@ -220,6 +262,15 @@ jobs:
             test -s /usr/lib/systemd/system/rowyn-boot-health.timer
             test -e /etc/systemd/system/timers.target.wants/rowyn-boot-health.timer
             /usr/libexec/rowyn-boot-health status | python3 -m json.tool > /dev/null
+            # Every KCM the Hub opens and every binary it probes must exist: a
+            # missing module turns a settings button into a click-time error.
+            for package in bluedevil kscreen powerdevil plasma-nm plasma-pa kde-config-flatpak kup-backup; do
+              dpkg -s "$package" | grep -Fx "Status: install ok installed"
+            done
+            test -x /usr/bin/nmcli
+            test -x /usr/bin/rfkill
+            test -x /usr/bin/kscreen-doctor
+            test -x /usr/bin/df
             # New accounts are seeded a permissive per-user containers
             # policy (rootless podman/distrobox pulls from any registry);
             # the strict system policy in /etc/containers stays untouched

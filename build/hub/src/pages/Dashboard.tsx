@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupChecklist } from './SetupChecklist';
+import { BootHealthPanel } from '../components/BootHealthPanel';
 import { UpdateStatusBanner } from '../components/UpdateStatusBanner';
 import { degradedDashboardAcceptance, recordHubAcceptance } from '../services/acceptance';
 import {
@@ -120,6 +121,7 @@ export function Dashboard() {
   return (
     <div className="page-content rowyn-home">
       <UpdateStatusBanner />
+      <BootHealthPanel compact />
       <SetupChecklist navigate={navigate} />
       <section className="rowyn-home-hero" aria-labelledby="rowyn-home-title">
         <div className="rowyn-home-hero-copy">

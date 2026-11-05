@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BackupSnapshot } from '../services/rowynBackupModel';
-import { backupSummary, backupStatus } from '../services/rowynBackupModel';
+import { backupFreshness, backupStatus, backupSummary } from '../services/rowynBackupModel';
 import { fetchRowynBackupsSnapshot, openRowynSettings } from '../services/rowynSettings';
+import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
 import '../styles/rowynMvp.css';
 
+const SECTIONS: SectionMap = { Backups: 'hub-section-backups' };
+
 export function Backups() {
+  useSectionFollow(SECTIONS);
   const [snapshot, setSnapshot] = useState<BackupSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Not checked yet. Refresh to read Kup configuration.');
@@ -57,15 +61,18 @@ export function Backups() {
         <h3>Test restore one file</h3>
         <ol><li>Choose one non-sensitive file you recognize from a backup.</li><li>Use the appropriate method above and copy it into a separate test folder you choose; never select the source folder or overwrite an existing file.</li><li>Open the copied file and confirm it is usable, then remove your test copy yourself if desired.</li></ol>
         <p className="card-copy">This is a manual test, not proof supplied by Rowyn. If no plan or destination is configured, first use Open Kup settings to configure one and connect its destination. The settings button remains available even when configuration cannot be read.</p>
-        <button className="action-button" onClick={() => void run('settings')} disabled={busy}>Open Kup settings</button>
       </section>
     </section>
-    {snapshot?.plans.map((plan, index) => <section className="glass dashboard-card" key={`${plan.name}-${index}`}>
-      <h2>{plan.name}</h2><p className="card-copy">Status: {backupStatus(plan)} · Type: {plan.kind === 'versioned' ? 'Versioned' : 'Mirror'}</p>
-      <p className="card-copy">Destination: {plan.destination || 'Not configured'}</p>
-      <p className="card-copy">Included: {plan.defaultIncluded ? 'Kup defaults apply; open settings to review included files' : plan.included.length ? plan.included.join(', ') : 'No paths listed'}</p>
-      <p className="card-copy">Excluded: {plan.excluded.length ? plan.excluded.join(', ') : 'None listed'}</p>
-      <p className="card-copy">Last completed backup recorded by Kup: {plan.lastCompleted ?? 'Not reported'} (not independently verified)</p>
-    </section>)}
+    {snapshot?.plans.map((plan, index) => {
+      const freshness = backupFreshness(plan.lastCompleted);
+      return <section className="glass dashboard-card" key={`${plan.name}-${index}`}>
+        <h2>{plan.name}</h2><p className="card-copy">Status: {backupStatus(plan)} · Type: {plan.kind === 'versioned' ? 'Versioned' : 'Mirror'}</p>
+        <p className="card-copy">Destination: {plan.destination || 'Not configured'}</p>
+        <p className="card-copy">Included: {plan.defaultIncluded ? 'Kup defaults apply; open settings to review included files' : plan.included.length ? plan.included.join(', ') : 'No paths listed'}</p>
+        <p className="card-copy">Excluded: {plan.excluded.length ? plan.excluded.join(', ') : 'None listed'}</p>
+        <p className="card-copy" data-freshness={freshness.state}>Last completed backup recorded by Kup: {plan.lastCompleted ?? 'Not reported'} ({freshness.label}; not independently verified)</p>
+        {freshness.state === 'stale' || freshness.state === 'old' ? <p className="card-copy" role="status">This plan looks due for another run. Rowyn does not start backups; use Kup to run and verify one.</p> : null}
+      </section>;
+    })}
   </div>;
 }

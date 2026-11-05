@@ -55,12 +55,33 @@ sandbox escape. Mimalloc is experimental and opt-in per game; no custom
 kernels, sched-ext, telemetry, Guardian, generic argv or privilege bridge is
 introduced.
 
+## Section anchors, boot health, and clipboard
+
+Each Rowyn page follows its declared manifest sections itself: `useSectionFollow`
+maps `?section=` (hash query or search string) to a rendered `hub-section-*`
+anchor, so a search result or section link lands on the section instead of the
+top of the page. `build/tests/test_hub_overlay_contract.py` fails when a
+declared section has no anchor, a page stops following its sections, or a page
+starts polling.
+
+Updates and Home read `/var/lib/rowyn/boot-health.json` through a bounded,
+root-owned, symlink-refusing native command and a strict frontend model: known
+good count, per-digest failures, quarantine reasons, and rollback attempts. The
+panel is read-only; clearing a quarantine stays a terminal-only action.
+
+Copy actions try the webview clipboard, fall back to a selection copy, and
+report a typed failure that points at the native report download instead of
+claiming success.
+
 ## Tests
 
 `ROWYN_TEST_UPSTREAM_REPO=/path/to/pinned/checkout ./build/validate.sh` covers
 source and actual export contracts. In a fresh exported Hub run
 `npm ci && npm run build && node --test tests/*.test.mjs`, then in `src-tauri`
-`cargo test --locked`. The Rowyn MVP tests execute real TS model functions,
+`cargo test --locked`. The `Hub source tests` CI job runs that export and the
+Rowyn suite (`node --test tests/rowyn-*.test.mjs`) on every push, so a section,
+wiring, or model regression fails the build instead of shipping; the cargo
+suite still runs only in the manual flow. The Rowyn MVP tests execute real TS model functions,
 SSR page construction, native parsers, launcher allowlists, bounded scrubbing,
 single-flight checks and private explicit report export. No VM gate is added.
 Live launcher downloads, desktop windows, clipboard and physical controllers

@@ -1,24 +1,20 @@
+import { useRef, useState } from 'react';
 import { StorageCare, PowerCare } from '../components/SystemCare';
-import { useEffect, useRef, useState } from 'react';
 import { rowynDiagnosticsSnapshot, exportRowynReport } from '../services/rowynMvp';
 import { formatReport, type DiagnosticsSnapshot } from '../services/rowynMvpModel';
-import '../styles/rowynMvp.css';
 import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
+import { copyText } from '../services/rowynClipboard';
+import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
+import '../styles/rowynMvp.css';
+
+const SECTIONS: SectionMap = {
+  Diagnostics: 'hub-section-diagnostics',
+  Storage: 'hub-section-storage',
+  Power: 'hub-section-power',
+};
 
 export function Diagnostics() {
-  useEffect(() => {
-    const followSection = () => {
-      const fragment = window.location.hash;
-      const query = fragment.includes('?') ? fragment.slice(fragment.indexOf('?')) : window.location.search;
-      const section = new URLSearchParams(query).get('section');
-      const id = section === 'Storage' ? 'hub-section-storage' : section === 'Power' ? 'hub-section-power' : section === 'Diagnostics' ? 'hub-section-diagnostics' : null;
-      if (id) document.getElementById(id)?.scrollIntoView({block: 'start'});
-    };
-    followSection();
-    window.addEventListener('hashchange', followSection);
-    window.addEventListener('popstate', followSection);
-    return () => { window.removeEventListener('hashchange', followSection); window.removeEventListener('popstate', followSection); };
-  }, []);
+  useSectionFollow(SECTIONS);
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Not checked yet. Choose Refresh checks to read this system.');
@@ -42,7 +38,8 @@ export function Diagnostics() {
           return 'Checks finished. Review each result below.';
         })}>{busy ? 'Working…' : 'Refresh checks'}</button>
         <button className="action-button" disabled={busy || !snapshot} onClick={() => run(async () => {
-          await navigator.clipboard.writeText(report); return 'Report copied. Review before sharing.';
+          const result = await copyText(report);
+          return result.ok ? 'Report copied. Review before sharing.' : result.reason;
         })}>Copy report</button>
         <button className="action-button" disabled={busy || !snapshot} onClick={() => run(() => exportRowynReport(report))}>Save report to Downloads</button>
       </div>

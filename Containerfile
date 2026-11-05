@@ -134,6 +134,7 @@ RUN printf 'path-include=/usr/share/doc/nvidia-kernel-common-*/supported-gpus.js
         plasma-desktop sddm xserver-xorg sddm-theme-breeze konsole dolphin kinfocenter kde-spectacle \
         breeze breeze-gtk-theme breeze-icon-theme kde-style-breeze kde-cli-tools \
         plasma-nm plasma-pa xdg-desktop-portal-kde \
+        bluedevil kscreen powerdevil \
         kup-backup bup rsync kde-config-flatpak libnotify-bin \
         network-manager pipewire wireplumber upower udisks2 plymouth plymouth-label \
         tzdata tzdata-legacy polkitd \

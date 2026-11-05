@@ -23,6 +23,28 @@ class QolPackagingTests(unittest.TestCase):
             self.assertIn(package, container.split())
 
 
+class QolBootHealthTests(unittest.TestCase):
+    def test_hub_reads_and_surfaces_the_boot_health_record(self):
+        port = (ROOT / "build/ubuntu-hub-source.py").read_text()
+        for token in ("rowyn_boot_health_snapshot",
+                      "pub(crate) mod rowyn_boot_health;",
+                      "BootHealthPanel"):
+            self.assertIn(token, port)
+        dashboard = (ROOT / "build/hub/src/pages/Dashboard.tsx").read_text()
+        self.assertIn("<BootHealthPanel compact />", dashboard)
+        panel = (ROOT / "build/hub/src/components/BootHealthPanel.tsx").read_text()
+        for token in ("rowynBootHealthSnapshot", "Refresh boot health",
+                      "Read-only. Clearing a quarantine is a terminal-only action."):
+            self.assertIn(token, panel)
+        bridge = (ROOT / "build/hub/src-tauri/src/commands/rowyn_boot_health.rs").read_text()
+        for token in ("/var/lib/rowyn/boot-health.json", "O_NOFOLLOW", "spawn_blocking",
+                      "rowyn_boot_health_snapshot", "mod tests"):
+            self.assertIn(token, bridge)
+        for forbidden in ("sudo", "pkexec", "bash", "Command::new", ".output()",
+                          "clear-quarantine"):
+            self.assertNotIn(forbidden, bridge)
+
+
 class QolIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(_pinned_repo(), "set ROWYN_TEST_UPSTREAM_REPO")
     def test_backup_workspace_is_registered_once_with_native_handlers(self):
