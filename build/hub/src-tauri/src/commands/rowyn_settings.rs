@@ -1,10 +1,38 @@
 //! Curated entry points for KDE system settings modules.
-use rowyn_shared::system::process::{run_bounded_command, spawn_detached};
+use rowyn_shared::system::process::spawn_detached;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
-const KCMSHELL: &str = "/usr/bin/kcmshell6";
-const MAX_LIST_OUTPUT: usize = 64 * 1024;
+// Plasma 6 ships kcmshell6, Plasma 5 still ships kcmshell5, and
+// `systemsettings` opens a named module on both. Resolving at runtime keeps
+// the buttons working on the host the Hub is actually running on instead of
+// only on the image that ships Plasma 6.
+const LAUNCHERS: &[&str] = &[
+    "/usr/bin/kcmshell6",
+    "/usr/bin/kcmshell5",
+    "/usr/bin/systemsettings",
+];
+
+// KCM plugins, per Qt major version. No directory at all means this check
+// cannot judge the host (it is not a KDE install), and that must not block a
+// launch the user asked for.
+const KCM_DIRS: &[&str] = &[
+    // Plasma 6.
+    "/usr/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings",
+    "/usr/lib64/qt6/plugins/plasma/kcms/systemsettings",
+    "/usr/lib/qt6/plugins/plasma/kcms/systemsettings",
+    // Plasma 5 keeps the same tree under qt5, split into QML modules and
+    // qwidgets ones (kcm_filetypes, for example, only ships in the latter).
+    "/usr/lib/x86_64-linux-gnu/qt5/plugins/plasma/kcms/systemsettings",
+    "/usr/lib/x86_64-linux-gnu/qt5/plugins/plasma/kcms/systemsettings_qwidgets",
+    "/usr/lib64/qt5/plugins/plasma/kcms/systemsettings",
+    "/usr/lib64/qt5/plugins/plasma/kcms/systemsettings_qwidgets",
+    "/usr/lib/qt5/plugins/plasma/kcms/systemsettings",
+    "/usr/lib/qt5/plugins/plasma/kcms/systemsettings_qwidgets",
+];
+
+// Plasma 5's kde-config-flatpak ships the permissions panel under this name.
+const FLATPAK_ALTERNATES: &[&str] = &["kcm_flatpak"];
 
 fn settings_module(target: &str) -> Result<&'static str, String> {
     match target {
@@ -24,41 +52,79 @@ fn settings_module(target: &str) -> Result<&'static str, String> {
     }
 }
 
-fn parse_module_list(output: &[u8]) -> Result<Vec<String>, String> {
-    if output.len() > MAX_LIST_OUTPUT {
-        return Err("KDE settings module list exceeded the output limit.".into());
+/// Modules this target may open, most specific first.
+fn modules_for(target: &str) -> Result<Vec<&'static str>, String> {
+    let primary = settings_module(target)?;
+    let mut modules = vec![primary];
+    if primary == "kcm_app-permissions" {
+        modules.extend_from_slice(FLATPAK_ALTERNATES);
     }
-    let text = std::str::from_utf8(output)
-        .map_err(|_| "KDE settings module list was not valid UTF-8.".to_string())?;
-    Ok(text.lines().filter_map(|line| line.split_whitespace().next().map(str::to_owned)).collect())
+    Ok(modules)
 }
 
-fn module_list_command() -> Command {
-    let mut command = Command::new(KCMSHELL);
-    command.arg("--list").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-    command
+fn first_existing(paths: &[&str]) -> Option<PathBuf> {
+    paths
+        .iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .map(Path::to_path_buf)
 }
 
-fn launch_command(module: &str) -> Command {
-    let mut command = Command::new(KCMSHELL);
+fn launcher_binary() -> Result<PathBuf, String> {
+    first_existing(LAUNCHERS).ok_or_else(|| "No KDE settings launcher is installed.".to_string())
+}
+
+/// `Some(true)`/`Some(false)` once a KCM directory was found, `None` when the
+/// host has no KCM plugin directory at all.
+fn module_installed_in(module: &str, dirs: &[&str]) -> Option<bool> {
+    let file = format!("{module}.so");
+    let mut searched = false;
+    for dir in dirs {
+        let path = Path::new(dir);
+        if !path.is_dir() {
+            continue;
+        }
+        searched = true;
+        if path.join(&file).is_file() {
+            return Some(true);
+        }
+    }
+    if searched {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn resolve_module_in(modules: &[&'static str], dirs: &[&str]) -> Result<&'static str, String> {
+    for module in modules {
+        match module_installed_in(module, dirs) {
+            Some(true) => return Ok(module),
+            Some(false) => continue,
+            // Nothing to judge by: try the most specific module anyway.
+            None => return Ok(modules[0]),
+        }
+    }
+    Err(format!("KDE settings module {} is not installed.", modules[0]))
+}
+
+fn resolve_module(modules: &[&'static str]) -> Result<&'static str, String> {
+    resolve_module_in(modules, KCM_DIRS)
+}
+
+fn launch_command(launcher: &Path, module: &str) -> Command {
+    let mut command = Command::new(launcher);
     command.arg(module).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     command
 }
 
 #[tauri::command]
 pub(crate) async fn rowyn_open_settings(target: String) -> Result<String, String> {
-    let module = settings_module(&target)?;
+    let modules = modules_for(&target)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let output = run_bounded_command(module_list_command(), Duration::from_secs(5))
-            .map_err(|_| "Could not check installed KDE settings modules.".to_string())?;
-        if !output.status.success() {
-            return Err("Could not check installed KDE settings modules.".into());
-        }
-        let modules = parse_module_list(&output.stdout)?;
-        if !modules.iter().any(|listed| listed == module) {
-            return Err(format!("KDE settings module {module} is not installed."));
-        }
-        let mut command = launch_command(module);
+        let module = resolve_module(&modules)?;
+        let launcher = launcher_binary()?;
+        let mut command = launch_command(&launcher, module);
         spawn_detached(&mut command).map_err(|_| "Could not open KDE settings module.".to_string())?;
         Ok("Settings launch requested.".into())
     })
