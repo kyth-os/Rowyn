@@ -61,6 +61,9 @@ export function Work() {
   const [pstFiles, setPstFiles] = useState<string[] | null>(null);
   const [focus, setFocus] = useState<FocusStatus | null>(null);
   const [focusMinutes, setFocusMinutes] = useState(25);
+  // "Checking…" must end: once the mount reads settle, a value that is still
+  // null is a failed read and has to read as unknown, not as pending forever.
+  const [loaded, setLoaded] = useState(false);
   const lock = useRef(false);
 
   async function run(key: string, pending: string, action: () => Promise<string>) {
@@ -94,6 +97,7 @@ export function Work() {
       setSummary(networkRead);
       setInstalled((appsRead?.apps ?? []).map((app) => app.id));
       setFocus(focusRead);
+      setLoaded(true);
       setStatus(queueRead
         ? queuesSummary(queueRead)
         : 'Print queues could not be read, so printing state is unknown rather than empty. Check that cups.service is running, then read the queues again.');
@@ -111,7 +115,7 @@ export function Work() {
   const defaultQueue = queues?.default_queue ?? null;
   const focusMinutesLeft = focus ? Math.ceil(focus.remaining_secs / 60) : 0;
 
-  return <div className="page-content rowyn-mvp">
+  return <div className="page-content rowyn-mvp rowyn-work">
     <section className="glass dashboard-card">
       <span className="home-eyebrow">Rowyn Work · MVP</span><h1>Work</h1>
       <p className="card-copy">Printing, office documents and focus time in one place — the workday tools that used to sit inside Apps. Every action is local and named: print queues are read from CUPS, office apps come from Flathub, and nothing changes without pressing a button.</p>
@@ -138,7 +142,7 @@ export function Work() {
       <p className="card-copy" role="status">{status}</p>
       <div className="work-card-grid">
         <WorkCard icon="▣" label="Print queues" value={queues === null ? 'Not read' : queues.queues.length === 0 ? 'None configured' : `${queues.queues.length} configured`} detail={queuesSummary(queues)} good={queues === null ? null : queues.queues.length > 0} />
-        <WorkCard icon="◎" label="Default queue" value={defaultQueue ?? (queues === null ? 'Unknown' : 'None set')} detail={defaultQueue ? 'Jobs without an explicit queue go here.' : 'Choose a default in Print settings, or name the queue for each job.'} good={defaultQueue ? true : queues === null ? null : false} />
+        <WorkCard icon="◎" label="Default queue" value={defaultQueue ?? (queues === null ? 'Unknown' : 'None set')} detail={defaultQueue ? 'Jobs without an explicit queue go here.' : queues === null ? 'The queue list could not be read, so no default can be confirmed.' : 'Choose a default in Print settings, or name the queue for each job.'} good={defaultQueue ? true : queues === null ? null : false} />
         <WorkCard icon="⌁" label="Network printers found" value={printers === null ? 'Not scanned' : printers.length === 0 ? 'None answered' : `${printers.length} answered`} detail={printers === null ? 'Scanning is an explicit IPP/mDNS probe; nothing runs on its own.' : printers.length > 0 ? printers.join(' · ') : 'No network printer answered. That is not proof none exist on this network.'} good={printers === null ? null : printers.length > 0} />
       </div>
       {queues?.queues.length ? <div>{queues.queues.map((queue) => <article className="rowyn-launcher" key={queue.name}>
@@ -161,7 +165,7 @@ export function Work() {
       <h2>Office and mail</h2>
       <p className="card-copy">Documents, mail and calendars. LibreOffice and Betterbird install from Flathub with the same jobs as the App Store; the Microsoft 365 entries are web apps in their own browser tab, never a local Office install.</p>
       <div className="work-card-grid">
-        <WorkCard icon="Aa" label="Office fonts" value={fonts ? fonts.ready ? 'Installed' : 'Needs setup' : 'Checking…'} detail={fonts?.detail || 'Metric-compatible fonts (Liberation) keep Office documents laid out correctly.'} good={fonts ? fonts.ready : null} />
+        <WorkCard icon="Aa" label="Office fonts" value={fonts ? fonts.ready ? 'Installed' : 'Needs setup' : loaded ? 'Unknown' : 'Checking…'} detail={fonts?.detail || (loaded ? 'The font check could not be read on this host, so office-font support is unknown.' : 'Metric-compatible fonts (Liberation) keep Office documents laid out correctly.')} good={fonts ? fonts.ready : null} />
         <WorkCard icon="◫" label="Office suite" value={installed.includes(OFFICE_APPS[0][0]) ? 'LibreOffice installed' : 'Not installed'} detail="Writer, Calc and Impress from Flathub; the image ships no deb LibreOffice." good={installed.includes(OFFICE_APPS[0][0])} />
         <WorkCard icon="✉" label="Mail client" value={installed.includes(OFFICE_APPS[1][0]) ? 'Betterbird installed' : 'Not installed'} detail="Thunderbird-compatible mail and calendar from Flathub." good={installed.includes(OFFICE_APPS[1][0])} />
       </div>
@@ -200,7 +204,7 @@ export function Work() {
       <p className="card-copy">A focus session keeps the PC awake for a timed block and restores normal power behavior when it ends. The remaining time below is a reading taken when this page loaded — the Hub does not tick a clock in the background.</p>
       <div className="work-card-grid">
         <WorkCard icon="◷" label="Focus session" value={focus ? `Active · about ${focusMinutesLeft} min left` : 'Not running'} detail={focus ? 'Ending it restores normal suspend and screen-blank behavior.' : 'No session is holding the PC awake for this page.'} good={focus ? true : null} />
-        <WorkCard icon="☁" label="Connected services" value={summary ? `${summary.cloudProviders.length} cloud provider${summary.cloudProviders.length === 1 ? '' : 's'}` : 'Checking…'} detail={summary?.detail || 'VPN and cloud connectivity are being checked.'} good={summary ? summary.cloudProviders.length > 0 || summary.vpnConnected : null} />
+        <WorkCard icon="☁" label="Connected services" value={summary ? `${summary.cloudProviders.length} cloud provider${summary.cloudProviders.length === 1 ? '' : 's'}` : loaded ? 'Unknown' : 'Checking…'} detail={summary?.detail || (loaded ? 'The network summary could not be read on this host, so VPN and cloud state is unknown.' : 'VPN and cloud connectivity are being checked.')} good={summary ? summary.cloudProviders.length > 0 || summary.vpnConnected : null} />
       </div>
       <div className="home-actions">
         {!focus ? <>

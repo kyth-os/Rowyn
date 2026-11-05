@@ -12,6 +12,8 @@
 .rowyn-mvp label { display: block; margin: 14px 0; }
 .rowyn-mvp label > input:not([type=checkbox]), .rowyn-mvp select { display: block; margin-top: 8px; max-width: 100%; padding: 9px 12px; border: 1px solid var(--hairline-light, rgba(255,255,255,.2)); border-radius: 10px; background: var(--surface-solid, #1c1f26); color: var(--text, #f1f3f7); }
 .rowyn-mvp .home-actions { flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+/* Work's action rows hang left under their copy, the way Play's do. */
+.rowyn-work .home-actions { justify-content: flex-start; }
 .rowyn-mvp button:disabled { opacity: .5; cursor: not-allowed; }
 .rowyn-mvp a { text-decoration: underline; text-underline-offset: 3px; }
 .rowyn-mvp :is(button, a, input, select):focus-visible { outline: 3px solid var(--accent-end, #78b7ff); outline-offset: 3px; }
