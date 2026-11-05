@@ -1,7 +1,8 @@
 //! Curated entry points for KDE system settings modules.
-use rowyn_shared::system::process::spawn_detached;
+use rowyn_shared::system::process::{run_bounded_command, spawn_detached};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 // Plasma 6 ships kcmshell6, Plasma 5 still ships kcmshell5, and
 // `systemsettings` opens a named module on both. Resolving at runtime keeps
@@ -33,6 +34,11 @@ const KCM_DIRS: &[&str] = &[
 
 // Plasma 5's kde-config-flatpak ships the permissions panel under this name.
 const FLATPAK_ALTERNATES: &[&str] = &["kcm_flatpak"];
+
+// `kcmshell --list` answers in milliseconds; the bound is there so a wedged
+// launcher cannot hold the command open.
+const LIST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_LIST_OUTPUT: usize = 64 * 1024;
 
 fn settings_module(target: &str) -> Result<&'static str, String> {
     match target {
@@ -108,8 +114,68 @@ fn resolve_module_in(modules: &[&'static str], dirs: &[&str]) -> Result<&'static
     Err(format!("KDE settings module {} is not installed.", modules[0]))
 }
 
-fn resolve_module(modules: &[&'static str]) -> Result<&'static str, String> {
-    resolve_module_in(modules, KCM_DIRS)
+/// Only kcmshell understands `--list`; asking `systemsettings` would open a
+/// window instead of answering.
+fn supports_listing(launcher: &Path) -> bool {
+    launcher
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("kcmshell"))
+}
+
+/// Module ids the launcher advertises, when it can be asked. This is the
+/// authoritative list: it covers plugin directories this module does not
+/// enumerate, including user-local ones.
+fn launcher_listing(launcher: &Path) -> Option<Vec<String>> {
+    let mut command = Command::new(launcher);
+    command
+        .arg("--list")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = run_bounded_command(command, LIST_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_module_listing(&output.stdout)
+}
+
+fn parse_module_listing(stdout: &[u8]) -> Option<Vec<String>> {
+    if stdout.len() > MAX_LIST_OUTPUT {
+        return None;
+    }
+    let text = std::str::from_utf8(stdout).ok()?;
+    Some(
+        text.lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// The module to open, or `None` when every source agrees this host does not
+/// ship it — the caller then opens System Settings itself instead of failing.
+fn choose_module(
+    modules: &[&'static str],
+    listing: Option<&[String]>,
+    dirs: &[&str],
+) -> Option<&'static str> {
+    if let Some(listed) = listing {
+        if let Some(module) = modules
+            .iter()
+            .copied()
+            .find(|module| listed.iter().any(|entry| entry == module))
+        {
+            return Some(module);
+        }
+    }
+    match resolve_module_in(modules, dirs) {
+        Ok(module) => Some(module),
+        // Plugin directories answered and did not have it. Without a listing
+        // that answer is only a guess about this host's layout, so still try.
+        Err(_) if listing.is_none() => Some(modules[0]),
+        Err(_) => None,
+    }
 }
 
 fn launch_command(launcher: &Path, module: &str) -> Command {
@@ -118,15 +184,37 @@ fn launch_command(launcher: &Path, module: &str) -> Command {
     command
 }
 
+fn settings_home_command(launcher: &Path) -> Command {
+    let mut command = Command::new(launcher);
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+}
+
 #[tauri::command]
 pub(crate) async fn rowyn_open_settings(target: String) -> Result<String, String> {
     let modules = modules_for(&target)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let module = resolve_module(&modules)?;
         let launcher = launcher_binary()?;
-        let mut command = launch_command(&launcher, module);
+        let listing = if supports_listing(&launcher) {
+            launcher_listing(&launcher)
+        } else {
+            None
+        };
+        let module = choose_module(&modules, listing.as_deref(), KCM_DIRS);
+        let mut command = match module {
+            Some(module) => launch_command(&launcher, module),
+            // A missing panel is not a dead end: the settings app itself is
+            // still the place the user can reach the same setting.
+            None => settings_home_command(&launcher),
+        };
         spawn_detached(&mut command).map_err(|_| "Could not open KDE settings module.".to_string())?;
-        Ok("Settings launch requested.".into())
+        Ok(match module {
+            Some(_) => "Settings launch requested.".to_string(),
+            None => format!(
+                "KDE settings module {} is not installed, so System Settings was opened instead.",
+                modules[0]
+            ),
+        })
     })
     .await
     .map_err(|_| "Settings worker failed.".to_string())?
