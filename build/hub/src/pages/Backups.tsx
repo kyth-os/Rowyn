@@ -47,6 +47,18 @@ export function Backups() {
         <button className="action-button" onClick={() => void run('settings')} disabled={busy}>Open Kup settings</button>
       </div>
       <p role="status" className="card-copy">{status}</p>
+      <section aria-labelledby="restore-guide-title">
+        <h2 id="restore-guide-title">Restore files manually</h2>
+        <p className="card-copy">Kup records a completed backup, but that does not prove the destination is connected or that a restore will work. Rowyn never restores files, creates folders, or runs restore commands.</p>
+        <h3>Versioned backups</h3>
+        <ol><li>Connect the configured backup destination and open Kup’s tray/applet.</li><li>Choose the option to browse/open backup files and select the snapshot containing the file.</li><li>Copy the desired file to a <strong>new, separate destination folder</strong> that is not the original source folder. Do not overwrite the original.</li></ol>
+        <h3>Mirror backups</h3>
+        <p className="card-copy">Browse the connected mirror in Dolphin and manually copy the needed file to a new, separate destination folder—not the original source folder. A mirror follows deletions and changes, so it may not contain older versions.</p>
+        <h3>Test restore one file</h3>
+        <ol><li>Choose one non-sensitive file you recognize from a backup.</li><li>Use the appropriate method above and copy it into a separate test folder you choose; never select the source folder or overwrite an existing file.</li><li>Open the copied file and confirm it is usable, then remove your test copy yourself if desired.</li></ol>
+        <p className="card-copy">This is a manual test, not proof supplied by Rowyn. If no plan or destination is configured, first use Open Kup settings to configure one and connect its destination. The settings button remains available even when configuration cannot be read.</p>
+        <button className="action-button" onClick={() => void run('settings')} disabled={busy}>Open Kup settings</button>
+      </section>
     </section>
     {snapshot?.plans.map((plan, index) => <section className="glass dashboard-card" key={`${plan.name}-${index}`}>
       <h2>{plan.name}</h2><p className="card-copy">Status: {backupStatus(plan)} · Type: {plan.kind === 'versioned' ? 'Versioned' : 'Mirror'}</p>

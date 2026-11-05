@@ -492,7 +492,7 @@ def apply_rowyn_qol(root):
         '  Backups: { hint: "Personal files and backup plans", Icon: IconShield },\n  Apps: { hint:'))
     sections = web / "src/data/hubSections.ts"
     text = replace_once(sections.read_text(), '  Diagnostics: IconDatabase,',
-        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  Diagnostics: IconDatabase,')
+        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  Storage: IconDatabase,\n  Power: IconChip,\n  Diagnostics: IconDatabase,')
     sections.write_text(text + '\nexport const BACKUPS_SECTIONS = sectionsFor("Backups");\n')
     destinations = web / "src/data/destinations.ts"
     text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  BACKUPS_SECTIONS,\n  APPS_SECTIONS,')
@@ -501,13 +501,30 @@ def apply_rowyn_qol(root):
     text = 'import { AppsDefaultsAccess } from "./AppsDefaultsAccess";\n' + apps.read_text()
     apps.write_text(replace_once(text, '      <HubPage', '      <AppsDefaultsAccess />\n      <HubPage'))
     updates = web / "src/pages/Updates.tsx"
-    text = 'import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\n' + updates.read_text()
-    updates.write_text(replace_once(text, '<UpdatesOverview />', '<UpdateStatusBanner /><UpdatesOverview />'))
+    text = 'import { UpdateStatusBanner } from "../components/UpdateStatusBanner";\nimport { RecoveryClarity } from "../components/RecoveryClarity";\n' + updates.read_text()
+    updates.write_text(replace_once(text, '<UpdatesOverview />', '<UpdateStatusBanner /><RecoveryClarity /><UpdatesOverview />'))
+    app_store = web / "src/components/AppStoreSection.tsx"
+    text = 'import { AppRemovalConfirmation } from "./AppRemovalConfirmation";\n' + app_store.read_text()
+    text = replace_once(text,
+        '  const onUninstall = (app: CardApp) => { void run(`uninstall-${app.id}`, `Removing ${app.name}…`, async () => { const result = await uninstallFlatpak(app.id); await refreshInstalled(); return result; }); };',
+        '  const [removal, setRemoval] = useState<CardApp | null>(null);\n'
+        '  const onUninstall = (app: CardApp) => { setRemoval(app); };\n'
+        '  const confirmRemoval = () => {\n'
+        '    if (!removal || busy !== null) return;\n'
+        '    const app = removal; setRemoval(null);\n'
+        '    void run(`uninstall-${app.id}`, `Removing ${app.name}…`, async () => { const result = await uninstallFlatpak(app.id); await refreshInstalled(); return result; });\n'
+        '  };')
+    text = replace_once(text, '  return <LiveSectionCard section={section} live={live}>',
+        '  return <LiveSectionCard section={section} live={live}>\n'
+        '    {removal && <AppRemovalConfirmation key={removal.id} app={removal} busy={busy !== null} onCancel={() => setRemoval(null)} onConfirm={confirmRemoval} />}')
+    app_store.write_text(text)
     commands = web / "src-tauri/src/commands/mod.rs"
-    commands.write_text(commands.read_text() + '\npub(crate) mod rowyn_backups;\npub(crate) mod rowyn_settings;\npub(crate) mod rowyn_support;\n')
+    commands.write_text(commands.read_text() + '\npub(crate) mod rowyn_backups;\npub(crate) mod rowyn_settings;\npub(crate) mod rowyn_support;\npub(crate) mod rowyn_care;\n')
     main = web / "src-tauri/src/main.rs"
     text = replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
+        '            commands::rowyn_care::rowyn_storage_snapshot,\n'
+        '            commands::rowyn_care::rowyn_power_snapshot,\n'
         '            commands::rowyn_backups::rowyn_backups_snapshot,\n'
         '            commands::rowyn_settings::rowyn_open_settings,\n'
         '            commands::rowyn_development::rowyn_development_preset_preview,')
@@ -538,7 +555,9 @@ def apply_rowyn_mvp(root):
         {"key": "Development", "route": "/development", "sections": [
             {"key": "Development", "title": "Development", "description": "Create and manage a dedicated Ubuntu development environment."}]},
         {"key": "Diagnostics", "route": "/diagnostics", "sections": [
-            {"key": "Diagnostics", "title": "Diagnostics", "description": "Read-only OS, kernel, image, graphics, controller, memory and disk checks; preview a local report."}]},
+            {"key": "Diagnostics", "title": "Diagnostics", "description": "Read-only OS, kernel, image, graphics, controller, memory and disk checks; preview a local report."},
+            {"key": "Storage", "title": "Storage care", "description": "Review backing-disk pressure, app sizes, and explicitly confirmed cleanup workflows."},
+            {"key": "Power", "title": "Power and sleep", "description": "Read battery health, charging capabilities, power profile and sleep policy; open KDE settings."}]},
         {"key": "Play", "route": "/play", "sections": [
             {"key": "Gaming", "title": "Launchers", "description": "Install or open Steam, Heroic, Lutris and Bottles as Flatpaks."},
             {"key": "Compatibility", "title": "Compatibility", "description": "Dated support guidance, anti-cheat caveats and per-game launch options."},

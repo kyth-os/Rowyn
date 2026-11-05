@@ -1,10 +1,24 @@
-import { useRef, useState } from 'react';
+import { StorageCare, PowerCare } from '../components/SystemCare';
+import { useEffect, useRef, useState } from 'react';
 import { rowynDiagnosticsSnapshot, exportRowynReport } from '../services/rowynMvp';
 import { formatReport, type DiagnosticsSnapshot } from '../services/rowynMvpModel';
 import '../styles/rowynMvp.css';
 import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
 
 export function Diagnostics() {
+  useEffect(() => {
+    const followSection = () => {
+      const fragment = window.location.hash;
+      const query = fragment.includes('?') ? fragment.slice(fragment.indexOf('?')) : window.location.search;
+      const section = new URLSearchParams(query).get('section');
+      const id = section === 'Storage' ? 'hub-section-storage' : section === 'Power' ? 'hub-section-power' : section === 'Diagnostics' ? 'hub-section-diagnostics' : null;
+      if (id) document.getElementById(id)?.scrollIntoView({block: 'start'});
+    };
+    followSection();
+    window.addEventListener('hashchange', followSection);
+    window.addEventListener('popstate', followSection);
+    return () => { window.removeEventListener('hashchange', followSection); window.removeEventListener('popstate', followSection); };
+  }, []);
   const [snapshot, setSnapshot] = useState<DiagnosticsSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Not checked yet. Choose Refresh checks to read this system.');
@@ -18,7 +32,7 @@ export function Diagnostics() {
     finally { lock.current = false; setBusy(false); }
   }
   return <div className="page-content rowyn-mvp">
-    <section className="glass dashboard-card">
+    <section id="hub-section-diagnostics" className="glass dashboard-card">
       <span className="home-eyebrow">Rowyn system tools</span><h1>Diagnostics</h1>
       <p className="card-copy">Read-only, local checks. Nothing is changed or uploaded. Checks run only when requested; missing tools and denied reads are shown, not treated as healthy.</p>
       <div className="home-actions">
@@ -35,6 +49,8 @@ export function Diagnostics() {
       <p role="status" className="card-copy">{status}</p>
       {snapshot && <p className="card-copy">Collected {new Date(snapshot.collected_at * 1000).toLocaleString()}. This snapshot is not live.</p>}
     </section>
+    <StorageCare />
+    <PowerCare />
     {snapshot && <section className="glass dashboard-card" aria-label="Hardware checks"><h2>Focused hardware checks</h2>
       <p className="card-copy">Read-only status signals, not a test of device function. Unavailable checks are not healthy. Opening settings only opens the desktop panel; it does not change hardware state.</p>
       {([['Bluetooth','Bluetooth','bluetooth'],['Wi-Fi','Wi-Fi','wifi'],['Audio','Audio','audio'],['Displays','Displays','displays']] as [string,string,SettingTarget][]).map(([name,label,target]) => {

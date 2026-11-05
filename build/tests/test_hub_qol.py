@@ -46,6 +46,20 @@ class QolIntegrationTests(unittest.TestCase):
             self.assertIn("SetupChecklist", (web / "src/pages/Dashboard.tsx").read_text())
             self.assertIn("AppsDefaultsAccess", (web / "src/pages/Apps.tsx").read_text())
             self.assertIn("UpdateStatusBanner", (web / "src/pages/Updates.tsx").read_text())
+            self.assertIn("RecoveryClarity", (web / "src/pages/Updates.tsx").read_text())
+            diagnostics_page = (web / "src/pages/RowynDiagnostics.tsx").read_text()
+            self.assertIn("<StorageCare />", diagnostics_page)
+            self.assertIn("<PowerCare />", diagnostics_page)
+            section_source = (web / "src/data/hubSections.ts").read_text()
+            self.assertIn("Storage: IconDatabase", section_source)
+            self.assertIn("Power: IconChip", section_source)
+            for name in ("rowyn_storage_snapshot", "rowyn_power_snapshot"):
+                self.assertIn(f"commands::rowyn_care::{name}", handlers)
+            self.assertIn("pub(crate) mod rowyn_care;", (web / "src-tauri/src/commands/mod.rs").read_text())
+            app_store = (web / "src/components/AppStoreSection.tsx").read_text()
+            self.assertIn("<AppRemovalConfirmation", app_store)
+            self.assertIn("setRemoval(app)", app_store)
+            self.assertIn("tests/rowyn-removal.test.mjs", json.loads((web / "package.json").read_text())["scripts"]["test:rowyn-mvp"])
 
 
 if __name__ == "__main__":

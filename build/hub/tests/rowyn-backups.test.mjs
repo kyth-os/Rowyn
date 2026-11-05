@@ -15,5 +15,5 @@ test('backup model distinguishes status and summary', () => {
 });
 test('page renders all Kup facts, settings action and safety boundaries', async () => {
  const page = await readFile(resolve(root,'src/pages/Backups.tsx'),'utf8');
- for (const text of ['hub-section-backups','Rowyn Backups','included','excluded','lastCompleted','defaultIncluded','openRowynSettings','OS rollback does not restore personal files','same disk','Included:']) assert.ok(page.includes(text), text);
+ for (const text of ['hub-section-backups','Rowyn Backups','included','excluded','lastCompleted','defaultIncluded','openRowynSettings','OS rollback does not restore personal files','same disk','Included:','Restore files manually','Versioned backups','Mirror backups','Test restore one file','new, separate destination folder','never select the source folder','does not prove the destination is connected','never restores files']) assert.ok(page.includes(text), text);
 });

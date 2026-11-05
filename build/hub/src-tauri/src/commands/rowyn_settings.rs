@@ -12,6 +12,7 @@ fn settings_module(target: &str) -> Result<&'static str, String> {
         "bluetooth" => Ok("kcm_bluetooth"),
         "wifi" => Ok("kcm_networkmanagement"),
         "audio" => Ok("kcm_pulseaudio"),
+        "power" => Ok("kcm_powerdevilprofilesconfig"),
         "displays" => Ok("kcm_kscreen"),
         "defaults" => Ok("kcm_componentchooser"),
         "file-associations" => Ok("kcm_filetypes"),

@@ -7,6 +7,7 @@ fn target_allowlist_maps_exact_modules() {
         ("bluetooth", "kcm_bluetooth"),
         ("wifi", "kcm_networkmanagement"),
         ("audio", "kcm_pulseaudio"),
+        ("power", "kcm_powerdevilprofilesconfig"),
         ("displays", "kcm_kscreen"),
         ("defaults", "kcm_componentchooser"),
         ("file-associations", "kcm_filetypes"),

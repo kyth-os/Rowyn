@@ -1,12 +1,13 @@
 import { inTauriShell } from './tauriEnv';
 import type { BackupSnapshot } from './rowynBackupModel';
 
-export type SettingTarget = 'defaults' | 'file-associations' | 'flatpak-permissions' | 'bluetooth' | 'wifi' | 'audio' | 'displays' | 'backups';
+export type SettingTarget = 'defaults' | 'file-associations' | 'flatpak-permissions' | 'bluetooth' | 'wifi' | 'audio' | 'displays' | 'backups' | 'power';
 
 export const SETTINGS_MODULES: Record<SettingTarget, string> = {
   defaults: 'kcm_componentchooser',
   'file-associations': 'kcm_filetypes',
   'flatpak-permissions': 'kcm_app-permissions',
+  power: 'kcm_powerdevilprofilesconfig',
   backups: 'kcm_kup',
   bluetooth: 'kcm_bluetooth',
   wifi: 'kcm_networkmanagement',

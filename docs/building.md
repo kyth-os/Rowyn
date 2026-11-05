@@ -43,6 +43,16 @@ The image explicitly includes `kup-backup`, `bup`, `rsync`, and `kde-config-flat
 
 Automated validation uses fixtures for package execution, configuration, commands, and redaction. Real preset installation/cancellation, Dolphin/Wayland launching, backup/restore, desktop notification delivery, and physical-device behavior remain installed-system qualification tasks; automated tests do not certify them.
 
+### Storage, power, and recovery care
+
+Diagnostics includes separate, explicit read-only storage and power refreshes. Storage uses writable backing-filesystem capacity rather than the composefs `/` size. Shared filesystems and Flatpak/Podman objects must not be added into a promised reclaimable total. Per-app installed sizes are estimates; missing tools, denied reads, and unknown sizes remain visible. Downloads are not measured or cleaned automatically. Review app removal in Apps or the owned environment in Development: neither storage refresh nor navigation performs cleanup. Apps requires an additional acknowledgement before its existing removal flow; that flow selects the system copy first when both scopes contain the same app, and system removal affects other users. Saved app data and personal files are not part of that removal.
+
+Power care reports available battery measurements, charge-threshold capability, the active power profile, and kernel sleep capabilities. These are observations, not successful suspend/resume tests. An absent attribute is distinct from a failed read. The Hub does not write charge limits, change profiles, suspend the machine, or enable hibernation. Rowyn's existing disabled hibernate, hybrid-sleep, and suspend-then-hibernate policy is unchanged; KDE Power settings remain the place for explicit user configuration.
+
+Backups provides manual versioned-backup and mirror recovery guidance. Use Kup's browser for versioned backups and Dolphin for mirror files; first restore one recognizable file into a **new separate folder**, never over the original. The Hub creates no restore directories, executes no restore commands, and does not certify recoverability from a recorded completion timestamp.
+
+Updates explains the running, staged-next-boot, and previous rollback deployments using cached status. Published history is requested only on an explicit click and displayed only for an exact full-digest match to the selected deployment. Unpublished or unavailable notes are not guessed from a channel or version. Rollback replaces OS content after restart; it is not a restore of home files, app data, or development containers, and mutable configuration can persist under bootc policy. No new updater, automatic rollback, or reboot action is introduced by this view.
+
 ## Validate source changes
 
 Requirements include Git, Python 3 with PyYAML, Bash, and ShellCheck. Run from the repository root:

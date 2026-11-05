@@ -116,8 +116,17 @@ class MvpDiagnostics(unittest.TestCase):
         for needle in ('Refresh checks', 'Copy report', 'Save report to Downloads',
                        'Report preview', 'rowynDiagnosticsSnapshot', 'exportRowynReport'):
             self.assertIn(needle, page)
-        for forbidden in ('setInterval', 'useEffect', 'repair', 'installFlatpak'):
+        for forbidden in ('setInterval', 'repair', 'installFlatpak'):
             self.assertNotIn(forbidden, page)
+        # A DOM-only effect supports storage/power search deep links. It must
+        # not turn Diagnostics into an automatic probe or settings launcher.
+        self.assertEqual(page.count('useEffect(() => {'), 1)
+        effect = page.split('useEffect(() => {', 1)[1].split('  const [snapshot,', 1)[0]
+        self.assertIn('followSection', effect)
+        self.assertIn("addEventListener('hashchange'", effect)
+        for forbidden in ('rowynDiagnosticsSnapshot(', 'exportRowynReport(', 'openRowynSettings(',
+                          'rowynStorageSnapshot(', 'rowynPowerSnapshot(', 'invoke(', 'fetch('):
+            self.assertNotIn(forbidden, effect)
 
 
 class MvpSteamGames(unittest.TestCase):

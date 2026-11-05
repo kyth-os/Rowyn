@@ -22,6 +22,10 @@ test('browser-only calls fail visibly before invoking any native command', async
   assert.deepEqual(globalThis.__settingsCalls,[]);
 });
 
+test('power settings map to the packaged KDE PowerDevil module', () => {
+  assert.equal(model.SETTINGS_MODULES.power, 'kcm_powerdevilprofilesconfig');
+});
+
 test('native settings and backup reads use only registered fixed commands', async () => {
   globalThis.window={__TAURI_INTERNALS__:{}}; globalThis.__settingsCalls=[];
   assert.match(await model.openRowynSettings('flatpak-permissions'),/requested/);
