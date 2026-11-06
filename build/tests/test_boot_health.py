@@ -378,7 +378,7 @@ class WatcherPolicyTests(unittest.TestCase):
             etc.write_text(policy_text, encoding="utf-8")
             stub = directory / "safe-upgrade"
             stub.write_text(
-                '#!/bin/sh\necho "DGR=${ROWYN_ALLOW_DOWNGRADE:-}" >> "$STUB_LOG"\n',
+                '#!/bin/sh\necho "DGR=${ROWYN_ALLOW_DOWNGRADE:-}" >> "$STUB_LOG"\necho ROWYN_UPDATE_RESULT outcome=current reason=no_update\n',
                 encoding="utf-8")
             stub.chmod(0o755)
             log = directory / "log"

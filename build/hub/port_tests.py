@@ -126,9 +126,17 @@ def adapt(web, replace_once):
         text = replace_once(text, line, '')
     text = replace_once(text, '      "Apps.tsx": sectionsModule.APPS_SECTIONS,',
         '      "Apps.tsx": sectionsModule.APPS_SECTIONS,\n      "Vpn.tsx": sectionsModule.VPN_SECTIONS,')
+    # Readiness handoffs use router context on Diagnostics as well as Home.
+    # React Router 7 exports StaticRouter directly; use its actual SSR context.
+    text = replace_once(text,
+        '    const { MemoryRouter } = await server.ssrLoadModule("react-router-dom");',
+        '    const { StaticRouter } = await server.ssrLoadModule("react-router-dom");')
+    text = replace_once(text,
+        'renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(dashboardMod.Dashboard)))',
+        'renderToStaticMarkup(React.createElement(StaticRouter, { location: "/" }, React.createElement(dashboardMod.Dashboard)))')
     text = replace_once(text, '    assert.equal(failures.length, 0,', '''    for (const [page, name] of [["RowynDiagnostics.tsx", "Diagnostics"], ["RowynPlay.tsx", "Play"], ["RowynDevelopment.tsx", "Development"], ["Backups.tsx", "Backups"], ["RowynWork.tsx", "Work"]]) {
       const mod = await server.ssrLoadModule(`/src/pages/${page}`);
-      const markup = renderToStaticMarkup(React.createElement(mod[name]));
+      const markup = renderToStaticMarkup(React.createElement(StaticRouter, { location: "/" }, React.createElement(mod[name])));
       assert.match(markup, /Rowyn/);
       rendered += 1;
     }

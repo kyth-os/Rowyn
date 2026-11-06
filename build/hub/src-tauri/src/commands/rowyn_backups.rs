@@ -388,7 +388,7 @@ fn config_path() -> Result<PathBuf, String> {
     };
     Ok(base.join("kuprc"))
 }
-fn collect() -> Result<BackupSnapshot, String> {
+pub(crate) fn collect() -> Result<BackupSnapshot, String> {
     let path = config_path()?;
     let file = match OpenOptions::new()
         .read(true)

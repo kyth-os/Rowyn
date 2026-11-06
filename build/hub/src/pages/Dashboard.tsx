@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { SetupChecklist } from './SetupChecklist';
 import { useStatusRow } from '../services/useStatusRow';
 import { BootHealthPanel } from '../components/BootHealthPanel';
+import { RowynReadiness } from '../components/RowynReadiness';
 import { UpdateStatusBanner } from '../components/UpdateStatusBanner';
 import { degradedDashboardAcceptance, recordHubAcceptance } from '../services/acceptance';
 import {
@@ -40,6 +41,7 @@ function StatusCard({ icon, label, value, detail, tone = 'neutral', title }: {
 }
 
 const destinations = [
+  { label: 'Work', description: 'Set up printing, open office tools, and make time to focus.', route: '/work', icon: '▤', accent: 'blue' },
   { label: 'Backups', description: 'Configure file backups and review recorded completion.', route: '/backups', icon: '↥', accent: 'mint' },
   { label: 'Development', description: 'Create and manage a dedicated Ubuntu development environment.', route: '/development', icon: '⌘', accent: 'violet' },
   { label: 'Play', description: 'Launchers, local game discovery, and controller checks.', route: '/play', icon: '✦', accent: 'berry' },
@@ -185,6 +187,7 @@ export function Dashboard() {
         </div>
       </section>
 
+      <RowynReadiness />
       <SetupChecklist navigate={navigate} />
     </div>
   );

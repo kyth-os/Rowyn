@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { StorageCare, PowerCare } from '../components/SystemCare';
+import { RowynReadiness } from '../components/RowynReadiness';
 import { rowynDiagnosticsSnapshot, exportRowynReport } from '../services/rowynMvp';
 import { formatReport, type DiagnosticsSnapshot, type Reading } from '../services/rowynMvpModel';
 import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
@@ -9,6 +10,7 @@ import '../styles/rowynMvp.css';
 
 const SECTIONS: SectionMap = {
   Diagnostics: 'hub-section-diagnostics',
+  Readiness: 'hub-section-readiness',
   Storage: 'hub-section-storage',
   Power: 'hub-section-power',
 };
@@ -102,6 +104,7 @@ export function Diagnostics() {
         ? <div className="rowyn-diag-grid">{readings.map(checkCard)}</div>
         : <p className="rowyn-note">No checks reported a reading.</p>}
     </section>}
+    <RowynReadiness />
     <StorageCare />
     <PowerCare />
     <section className="rowyn-diag-group" aria-label="Report preview">

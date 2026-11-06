@@ -1,3 +1,25 @@
+/* Explicit readiness is shared by Home and Diagnostics, never an automatic scan. */
+.rowyn-readiness { min-width: 0; padding: 24px; border-radius: 18px; }
+.rowyn-readiness-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.rowyn-readiness h2 { margin: 5px 0 0; letter-spacing: -.02em; }
+.rowyn-readiness > p { color: var(--text-muted, #a7adb9); line-height: 1.6; }
+.rowyn-readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin-top: 18px; }
+.rowyn-readiness-card { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--hairline, rgba(255,255,255,.12)); border-radius: 14px; }
+.rowyn-readiness-card header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: 100%; }
+.rowyn-readiness-card h3 { flex: 1 1 auto; margin: 0; font-size: .95rem; }
+.rowyn-readiness-card p { margin: 0; color: var(--text-muted, #a7adb9); font-size: .82rem; line-height: 1.6; overflow-wrap: anywhere; }
+.rowyn-update-history { display: grid; grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); gap: 5px 12px; width: 100%; margin: 0; font-size: .76rem; line-height: 1.5; }
+.rowyn-update-history dt { color: var(--text-muted, #a7adb9); }
+.rowyn-update-history dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.rowyn-update-history .rowyn-update-history-note { grid-column: 1 / -1; color: var(--text-muted, #a7adb9); font-weight: 400; }
+.rowyn-readiness-card .action-button { margin-top: auto; }
+.rowyn-readiness .rowyn-state { display: inline-flex; padding: 3px 9px; border: 1px solid var(--hairline, rgba(255,255,255,.12)); border-radius: 999px; font-size: .74rem; }
+.rowyn-readiness .readiness-ready { color: var(--status-ok, #5bd69e); }
+.rowyn-readiness :is(.readiness-needs-setup, .readiness-attention) { color: var(--status-warn, #efb65a); }
+.rowyn-readiness .readiness-unavailable { color: var(--text-muted, #a7adb9); }
+.rowyn-readiness button:disabled { opacity: .5; cursor: not-allowed; }
+.rowyn-readiness button:focus-visible { outline: 3px solid var(--accent-end, #78b7ff); outline-offset: 3px; }
+
 .rowyn-mvp { display: flex; flex-direction: column; gap: 18px; max-width: 1320px; margin: 0 auto 40px; }
 .rowyn-mvp .dashboard-card { padding: 24px; border-radius: var(--radius-card, 18px); box-shadow: var(--shadow-card); }
 .rowyn-mvp h1 { margin: 8px 0 12px; letter-spacing: -.035em; }

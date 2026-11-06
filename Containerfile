@@ -281,7 +281,10 @@ RUN --mount=type=tmpfs,dst=/tmp --mount=type=tmpfs,dst=/root \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/shared/initramfs.sh
 
+# Keep service identities declarative across locally merged /etc upgrades.
+# Journald is the default logging engine; do not start a redundant rsyslog.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/shared/service-accounts-and-logging.sh --root / && \
     echo "HOME=/var/home" | tee -a "/etc/default/useradd" && \
     /ctx/shared/bootc-rootfs.sh
 
@@ -396,6 +399,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # Automatic background staging (policy-gated; applies on next reboot).
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     install -Dm755 /ctx/shared/rowyn-update-watcher /usr/libexec/rowyn-update-watcher && \
+    install -Dm755 /ctx/shared/rowyn-update-watcher-run /usr/libexec/rowyn-update-watcher-run && \
+    install -Dm755 /ctx/shared/rowyn-update-watcher-status /usr/libexec/rowyn-update-watcher-status && \
+    python3 -c "import py_compile; py_compile.compile('/usr/libexec/rowyn-update-watcher-status', cfile='/tmp/rowyn-update-watcher-status.pyc', doraise=True)" && rm -f /tmp/rowyn-update-watcher-status.pyc && \
     install -Dm644 /ctx/shared/update-policy.conf /usr/share/rowyn/update-policy.conf && \
     install -Dm644 /ctx/shared/rowyn-update-watcher.service /usr/lib/systemd/system/rowyn-update-watcher.service && \
     install -Dm644 /ctx/shared/rowyn-update-watcher.timer /usr/lib/systemd/system/rowyn-update-watcher.timer && \

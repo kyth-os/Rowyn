@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import json
+import signal
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -18,11 +21,117 @@ POLICY = ROOT / "shared/update-policy.conf"
 
 FAKE_BOOTC = """#!/bin/sh
 case "$1" in
-switch) echo "$@" >> "$BOOTC_CALLS"; echo "Staged update" ;;
+switch) echo "$@" >> "$BOOTC_CALLS"; if [ -n "${BOOTC_FAIL_MESSAGE:-}" ]; then echo "$BOOTC_FAIL_MESSAGE" >&2; exit 1; fi; echo "Staged update" ;;
 upgrade) echo "$@" >> "$BOOTC_CALLS"; echo "Staged update" ;;
-status) printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}},"staged":{"image":{}}}}\n' "$BOOTED_IMAGE_REF" ;;
+status) if [ "${BOOTC_NO_UPDATE:-0}" = 1 ]; then printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}},"staged":null}}\\n' "$BOOTED_IMAGE_REF"; else printf '{"status":{"booted":{"image":{"image":{"image":"%s"}}},"staged":{"image":{}}}}\\n' "$BOOTED_IMAGE_REF"; fi ;;
 esac
 """
+
+
+class WatcherStatusTests(unittest.TestCase):
+    def test_status_helper_rejects_boolean_timestamp_and_extra_args(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t) / "status"
+            env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(d))
+            helper = ROOT / "shared/rowyn-update-watcher-status"
+            subprocess.run([str(helper), "start", "100"], env=env, check=True)
+            doc = {"schema_version": 1, "started_at": True, "finished_at": None, "outcome": "running",
+                   "reason_code": "attempt_started", "last_success_at": None, "last_staged_at": None}
+            (d / "status.json").write_text(json.dumps(doc))
+            self.assertNotEqual(subprocess.run([str(helper), "start", "110"], env=env).returncode, 0)
+            self.assertNotEqual(subprocess.run([str(helper), "start", "110", "extra"], env=env).returncode, 0)
+
+    def test_watcher_fixture_records_authoritative_outcomes(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            helper = ROOT / "shared/rowyn-update-watcher-status"
+            policy = root / "policy"
+            policy.write_text("AutoStage=yes\n")
+            fake = root / "safe"
+            fake.write_text("#!/bin/bash\necho 'ROWYN_UPDATE_RESULT outcome=deferred reason=battery'\nexit 0\n")
+            fake.chmod(0o755)
+            env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(root / "status"), ROWYN_UPDATE_STATUS_HELPER=str(helper),
+                       ROWYN_POLICY_ETC=str(policy), ROWYN_POLICY_DEFAULT=str(root / "missing"), ROWYN_SAFE_UPGRADE=str(fake))
+            result = subprocess.run([str(WATCHER)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            doc = json.loads((root / "status/status.json").read_text())
+            self.assertEqual((doc["outcome"], doc["reason_code"]), ("deferred", "battery"))
+
+    def test_watcher_fixture_persists_success_failure_and_malformed_marker_outcomes(self):
+        cases = [
+            ("echo 'ROWYN_UPDATE_RESULT outcome=current reason=no_update'; exit 0", ("current", "no_update"), 0),
+            ("echo 'ROWYN_UPDATE_RESULT outcome=staged reason=update_staged'; exit 0", ("staged", "update_staged"), 0),
+            ("echo 'ROWYN_UPDATE_RESULT outcome=failed reason=runtime_auth_io'; exit 1", ("failed", "runtime_auth_io"), 1),
+            ("echo 'ROWYN_UPDATE_RESULT outcome=staged reason=update_staged'; exit 1", ("failed", "upgrade_failed"), 1),
+            ("echo 'ROWYN_UPDATE_RESULT outcome=current reason=no_update'; echo 'ROWYN_UPDATE_RESULT malformed'; exit 0", ("failed", "unknown_failure"), 1),
+        ]
+        for script, expected, expected_rc in cases:
+            with self.subTest(expected=expected, script=script):
+                with tempfile.TemporaryDirectory() as t:
+                    root = Path(t)
+                    helper = ROOT / "shared/rowyn-update-watcher-status"
+                    policy = root / "policy"
+                    policy.write_text("AutoStage=yes\n")
+                    fake = root / "safe"
+                    fake.write_text("#!/bin/bash\n" + script + "\n")
+                    fake.chmod(0o755)
+                    env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(root / "status"), ROWYN_UPDATE_STATUS_HELPER=str(helper),
+                               ROWYN_POLICY_ETC=str(policy), ROWYN_POLICY_DEFAULT=str(root / "missing"), ROWYN_SAFE_UPGRADE=str(fake))
+                    result = subprocess.run([str(WATCHER)], env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected_rc, result.stdout + result.stderr)
+                    doc = json.loads((root / "status/status.json").read_text())
+                    self.assertEqual((doc["outcome"], doc["reason_code"]), expected)
+
+    def test_signal_keeps_interrupted_status_across_normal_result_handling(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            policy = root / "policy"
+            policy.write_text("AutoStage=yes\n")
+            fake = root / "safe"
+            fake.write_text("#!/bin/bash\nsleep 30\n")
+            fake.chmod(0o755)
+            env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(root / "status"),
+                       ROWYN_UPDATE_STATUS_HELPER=str(ROOT / "shared/rowyn-update-watcher-status"),
+                       ROWYN_POLICY_ETC=str(policy), ROWYN_POLICY_DEFAULT=str(root / "missing"),
+                       ROWYN_SAFE_UPGRADE=str(fake))
+            proc = subprocess.Popen([str(WATCHER)], env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            try:
+                time.sleep(0.5)
+                os.killpg(proc.pid, signal.SIGTERM)
+                output, _ = proc.communicate(timeout=12)
+            finally:
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait(timeout=3)
+            doc = json.loads((root / "status/status.json").read_text())
+            self.assertEqual((doc["outcome"], doc["reason_code"]), ("interrupted", "cancelled"), output)
+
+    def test_status_helper_writes_bounded_attempt_and_preserves_last_success(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t) / "status"
+            env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(d))
+            helper = ROOT / "shared/rowyn-update-watcher-status"
+            first = subprocess.run([str(helper), "start", "100"], env=env, capture_output=True)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            finish = subprocess.run([str(helper), "finish", "current", "no_update", "110"], env=env, capture_output=True)
+            self.assertEqual(finish.returncode, 0, finish.stderr)
+            import json
+            doc = json.loads((d / "status.json").read_text())
+            self.assertEqual(doc, {"schema_version": 1, "started_at": 100, "finished_at": 110,
+                                   "outcome": "current", "reason_code": "no_update",
+                                   "last_success_at": 110, "last_staged_at": None})
+            subprocess.run([str(helper), "start", "120"], env=env, check=True)
+            subprocess.run([str(helper), "finish", "failed", "runtime_auth_io", "130"], env=env, check=True)
+            doc = json.loads((d / "status.json").read_text())
+            self.assertEqual(doc["last_success_at"], 110)
+            self.assertEqual(doc["outcome"], "failed")
+            self.assertEqual((d / "status.json").stat().st_mode & 0o777, 0o644)
+
+    def test_watcher_calls_status_helper_with_classified_result(self):
+        text = WATCHER.read_text()
+        self.assertIn('"$STATUS_HELPER" start', text)
+        self.assertIn('"$STATUS_HELPER" finish', text)
 
 
 class Sandbox:
@@ -93,6 +202,7 @@ class AutoGateTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Deferred: running on battery power; will retry later.", r.stdout)
         self.assertFalse(self.sb.upgraded())
+        self.assertIn("ROWYN_UPDATE_RESULT outcome=deferred reason=battery", r.stdout)
 
     def test_ac_proceeds(self):
         self.battery(True)
@@ -101,6 +211,19 @@ class AutoGateTests(unittest.TestCase):
         self.assertNotIn("Deferred", r.stdout)
         self.assertTrue(self.sb.upgraded())
         self.assertIn("ghcr.io/mrtrickdotorg/rowyn:stable", self.sb.calls.read_text())
+        self.assertIn("ROWYN_UPDATE_RESULT outcome=staged reason=update_staged", r.stdout)
+
+    def test_no_update_is_marked_current(self):
+        r = self.sb.run(BOOTC_NO_UPDATE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ROWYN_UPDATE_RESULT outcome=current reason=no_update", r.stdout)
+        self.assertNotIn("outcome=staged", r.stdout)
+
+    def test_runtime_auth_failure_uses_fixed_reason_without_exposing_details(self):
+        r = self.sb.run(BOOTC_FAIL_MESSAGE="runtime auth file access failed")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ROWYN_UPDATE_RESULT outcome=failed reason=runtime_auth_io", r.stdout)
+        self.assertNotIn("credential", r.stdout.lower())
 
     def test_destination_booted_image_uses_upgrade_without_switching(self):
         r = self.sb.run(BOOTED_IMAGE_REF="ghcr.io/mrtrickdotorg/rowyn:stable")
@@ -197,7 +320,7 @@ class WatcherPolicyTests(unittest.TestCase):
             stub = t / "safe-upgrade"
             stub.write_text('#!/bin/sh\necho "ran AUTO=$ROWYN_UPDATE_AUTO '
                             'BAT=$ROWYN_ALLOW_BATTERY MET=$ROWYN_ALLOW_METERED"'
-                            ' >> "$STUB_LOG"\necho Update staged.\n')
+                            ' >> "$STUB_LOG"\necho ROWYN_UPDATE_RESULT outcome=current reason=no_update\n')
             stub.chmod(0o755)
             log = t / "log"
             env = dict(os.environ, ROWYN_POLICY_ETC=str(etc),
@@ -260,9 +383,12 @@ class StaticTests(unittest.TestCase):
         for needed in ("Type=oneshot", "ExecStart=/usr/libexec/rowyn-update-watcher",
                        "Nice=10", "IOSchedulingClass=idle", "CPUQuota=50%",
                        "MemoryHigh=512M", "MemoryMax=1G", "TimeoutStartSec=2400",
-                       "LockPersonality=yes", "RestrictRealtime=yes",
-                       "RestrictSUIDSGID=yes"):
+                       "LockPersonality=yes", "RestrictRealtime=yes"):
             self.assertIn(needed, text.splitlines())
+        # systemd's SUID/SGID filter unconditionally denies openat2; bootc's
+        # capability-safe runtime auth reader cannot fall back to openat.
+        self.assertNotIn("RestrictSUIDSGID=yes", text.splitlines())
+        self.assertIn("openat2", text)
         directives = [l.split("=")[0] for l in text.splitlines()
                       if l and not l.startswith("#") and "=" in l]
         for banned in ("ProtectSystem", "ProtectHome", "PrivateTmp",

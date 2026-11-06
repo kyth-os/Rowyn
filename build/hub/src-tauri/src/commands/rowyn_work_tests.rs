@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn actual_cups_empty_exit_is_setup_needed_not_a_scheduler_failure() {
+    let result = queues_from_output(
+        Some(1),
+        b"no system default destination\n",
+        b"lpstat: No destinations added.\n",
+    ).expect("CUPS's exact empty response is readable, not unavailable");
+    assert!(result.queues.is_empty());
+    assert_eq!(result.default_queue, None);
+    assert!(result.detail.contains("No print queues are configured"));
+}
+
+#[test]
+fn other_nonzero_cups_responses_remain_unavailable_not_empty() {
+    for (stdout, stderr) in [
+        (b"no system default destination\n".as_slice(), b"lpstat: Scheduler is not running.\n".as_slice()),
+        (b"no system default destination\n", b"lpstat: No destinations added.\nlpstat: Forbidden\n"),
+        (b"printer Office is idle.\n", b"lpstat: No destinations added.\n"),
+        (b"", b""),
+    ] {
+        assert!(queues_from_output(Some(1), stdout, stderr).is_err());
+    }
+    assert!(queues_from_output(None, b"no system default destination\n", b"lpstat: No destinations added.\n").is_err());
+}
+
+#[test]
 fn idle_printing_and_disabled_queues_keep_their_reported_state() {
     let text = "printer Office_Printer is idle.  enabled since Thu 05 Nov 2026\n\
                 printer Label_Writer now printing Label_Writer-12.  enabled since Thu 05 Nov 2026\n\

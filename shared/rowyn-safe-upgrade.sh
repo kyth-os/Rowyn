@@ -41,7 +41,7 @@ readonly UPDATE_REF=ghcr.io/mrtrickdotorg/rowyn:stable
 readonly BOOTC_TIMEOUT_SECS=3600
 readonly TERM_GRACE_SECS=10
 readonly SYSROOT_FREE_MIN_BYTES=$((2 * 1024 * 1024 * 1024))
-readonly BOOT_HEALTH=/usr/libexec/rowyn-boot-health
+readonly BOOT_HEALTH=${ROWYN_BOOT_HEALTH:-/usr/libexec/rowyn-boot-health}
 
 # Update policy, read with the watcher's rules; the /etc file wins.
 POLICY_ETC=${ROWYN_POLICY_ETC:-/etc/rowyn/update-policy.conf}
@@ -73,8 +73,14 @@ cleanup() {
 trap cleanup EXIT
 trap 'cancelled=1' TERM INT HUP
 
+emit_result() { printf 'ROWYN_UPDATE_RESULT outcome=%s reason=%s\n' "$1" "$2"; }
+
 fail() {
     echo "$1" >&2
+    case "$1" in
+        *"runtime auth"*|*"runtime directory"*|*"auth file"*|*"Function not implemented"*) emit_result failed runtime_auth_io ;;
+        *) emit_result failed upgrade_failed ;;
+    esac
     exit 1
 }
 
@@ -224,10 +230,12 @@ parse_policy() {
 auto_gates() {
     if [[ "${ROWYN_ALLOW_BATTERY:-0}" != 1 ]] && on_battery; then
         echo "Deferred: running on battery power; will retry later."
+        emit_result deferred battery
         exit 0
     fi
     if [[ "${ROWYN_ALLOW_METERED:-0}" != 1 ]] && on_metered_connection; then
         echo "Deferred: metered connection; will retry later."
+        emit_result deferred metered
         exit 0
     fi
 }
@@ -525,6 +533,7 @@ main() {
     if ! flock -n 9; then
         if [[ "${ROWYN_UPDATE_AUTO:-0}" == 1 ]]; then
             echo "Deferred: another bootc upgrade is in progress; will retry later."
+            emit_result deferred upgrade_locked
             exit 0
         fi
         fail "Another bootc upgrade is in progress; retry later"
@@ -581,6 +590,7 @@ main() {
         else
             echo "Rowyn is already running the latest image."
         fi
+        emit_result current no_update
         exit 0
     fi
 
@@ -617,6 +627,7 @@ main() {
     else
         echo "Update staged and ready to apply on the next boot."
     fi
+    emit_result staged update_staged
     exit 0
 }
 

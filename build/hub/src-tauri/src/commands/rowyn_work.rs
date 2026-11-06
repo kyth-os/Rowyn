@@ -176,6 +176,32 @@ fn add_failure(queue: &str, stderr: &[u8]) -> String {
     }
 }
 
+/// CUPS exits one for an empty configuration as well as for a failed query.
+/// Accept only the exact C-locale empty response observed from lpstat; an
+/// extra authorization/scheduler error must remain unavailable, not empty.
+fn queues_from_output(code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> Result<PrintQueues, String> {
+    if stdout.len().saturating_add(stderr.len()) > MAX_OUTPUT {
+        return Err("The print queue list was too large to read safely.".into());
+    }
+    let text = String::from_utf8_lossy(stdout);
+    let error = String::from_utf8_lossy(stderr);
+    let empty_configuration = code == Some(1)
+        && text.trim() == "no system default destination"
+        && error.trim() == "lpstat: No destinations added.";
+    if code != Some(0) && !empty_configuration {
+        return Err("CUPS did not answer, so print queues could not be read. Open Print settings to check the printing service, then try again.".into());
+    }
+    let (queues, default_queue) = parse_lpstat(&text);
+    let detail = if queues.is_empty() {
+        "No print queues are configured yet. Add a printer in Print settings; USB printers appear through ipp-usb.".to_string()
+    } else if default_queue.is_none() {
+        "Queues are configured but none is the default, so each job has to name its queue.".to_string()
+    } else {
+        "Read from CUPS on this machine; nothing was changed.".to_string()
+    };
+    Ok(PrintQueues { queues, default_queue, detail })
+}
+
 #[tauri::command]
 pub(crate) async fn rowyn_print_queues() -> Result<PrintQueues, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -184,21 +210,7 @@ pub(crate) async fn rowyn_print_queues() -> Result<PrintQueues, String> {
         let output = run_bounded_command(command, QUEUE_TIMEOUT).map_err(|_| {
             "Printing is not available: the CUPS client (lpstat) did not answer.".to_string()
         })?;
-        if !output.status.success() {
-            return Err("CUPS did not answer, so print queues could not be read. Check that cups.service is running.".into());
-        }
-        if output.stdout.len() > MAX_OUTPUT {
-            return Err("The print queue list was too large to read safely.".into());
-        }
-        let (queues, default_queue) = parse_lpstat(&String::from_utf8_lossy(&output.stdout));
-        let detail = if queues.is_empty() {
-            "No print queues are configured yet. Add a printer in Print settings; USB printers appear through ipp-usb.".to_string()
-        } else if default_queue.is_none() {
-            "Queues are configured but none is the default, so each job has to name its queue.".to_string()
-        } else {
-            "Read from CUPS on this machine; nothing was changed.".to_string()
-        };
-        Ok(PrintQueues { queues, default_queue, detail })
+        queues_from_output(output.status.code(), &output.stdout, &output.stderr)
     })
     .await
     .map_err(|_| "Print queue worker failed.".to_string())?

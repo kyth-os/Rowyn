@@ -10,6 +10,34 @@ set -uo pipefail
 POLICY_ETC=${ROWYN_POLICY_ETC:-/etc/rowyn/update-policy.conf}
 POLICY_DEFAULT=${ROWYN_POLICY_DEFAULT:-/usr/share/rowyn/update-policy.conf}
 SAFE_UPGRADE=${ROWYN_SAFE_UPGRADE:-/usr/bin/rowyn-safe-upgrade}
+RUNNER=${ROWYN_UPDATE_RUNNER:-/usr/libexec/rowyn-update-watcher-run}
+# Permit source-tree fixture execution when the installed helper is absent.
+if [[ ! -x "$RUNNER" && -x "${BASH_SOURCE[0]%/*}/rowyn-update-watcher-run" ]]; then
+    RUNNER=${BASH_SOURCE[0]%/*}/rowyn-update-watcher-run
+fi
+STATUS_HELPER=${ROWYN_UPDATE_STATUS_HELPER:-/usr/libexec/rowyn-update-watcher-status}
+STATUS_STARTED=$(date +%s)
+STATUS_DONE=0
+STATUS_INTERRUPTED=0
+STATUS_EXIT_CODE=143
+status_finish() {
+    (( STATUS_DONE == 0 )) || return 0
+    local outcome=$1 reason=$2
+    "$STATUS_HELPER" finish "$outcome" "$reason" "$(date +%s)" >/dev/null 2>&1 || true
+    STATUS_DONE=1
+}
+status_interrupted() {
+    case "${1:-TERM}" in
+        INT) STATUS_EXIT_CODE=130 ;;
+        HUP) STATUS_EXIT_CODE=129 ;;
+        *) STATUS_EXIT_CODE=143 ;;
+    esac
+    STATUS_INTERRUPTED=1
+    status_finish interrupted cancelled
+}
+trap 'status_interrupted TERM' TERM
+trap 'status_interrupted INT' INT
+trap 'status_interrupted HUP' HUP
 
 log() { echo "rowyn-update-watcher: $*"; }
 
@@ -63,16 +91,20 @@ parse_policy() {
 }
 
 main() {
+    "$STATUS_HELPER" start "$STATUS_STARTED" >/dev/null 2>&1 || log "public status unavailable"
     local file=$POLICY_DEFAULT
     [[ -e "$POLICY_ETC" ]] && file=$POLICY_ETC
     if [[ -e "$file" ]]; then
         if [[ ! -r "$file" ]] || ! parse_policy "$file"; then
             log "refusing to auto-stage: invalid update policy (${policy_error:-unreadable: $file})"
+            status_finish invalid_policy invalid_policy
             exit 0
         fi
     fi
+    if (( STATUS_INTERRUPTED )); then exit "$STATUS_EXIT_CODE"; fi
     if [[ "$AutoStage" == no ]]; then
         log "AutoStage=no; automatic staging is disabled by policy"
+        status_finish disabled policy_disabled
         exit 0
     fi
 
@@ -82,11 +114,28 @@ main() {
     [[ "$AllowDowngrade" == yes ]] && export ROWYN_ALLOW_DOWNGRADE=1
 
     log "checking for an update"
-    local out rc
-    out=$("$SAFE_UPGRADE" 2>&1)
+    local out rc marker_outcome marker_reason line
+    out=$("$RUNNER" "$SAFE_UPGRADE" 2>&1)
     rc=$?
-    # Drop the Hub progress markers; keep the human-readable tail.
-    out=$(printf '%s\n' "$out" | grep -v '^ROWYN_STAGE_PROGRESS' | tail -n 5)
+    if (( STATUS_INTERRUPTED )); then
+        log "interrupted by signal; outcome remains recorded as interrupted"
+        exit "$STATUS_EXIT_CODE"
+    fi
+    marker_outcome='' marker_reason=''
+    local marker_count=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^ROWYN_UPDATE_RESULT\ outcome=([a-z_]+)\ reason=([a-z_]+)$ ]]; then marker_count=$((marker_count + 1)); marker_outcome=${BASH_REMATCH[1]}; marker_reason=${BASH_REMATCH[2]}; fi
+    done <<<"$out"
+    if (( marker_count == 1 )) && [[ -n "$marker_outcome" ]]; then
+        case "$marker_outcome:$marker_reason" in
+            current:no_update|staged:update_staged|deferred:battery|deferred:metered|deferred:upgrade_locked|failed:runtime_auth_io|failed:upgrade_failed|failed:unknown_failure|interrupted:cancelled) status_finish "$marker_outcome" "$marker_reason" ;;
+            *) status_finish failed unknown_failure ;;
+        esac
+    elif (( rc == 0 )); then status_finish failed unknown_failure
+    else status_finish failed upgrade_failed
+    fi
+    # Runner emits only the fixed bounded machine summary.
+    out="${out//$'\n'/ | }"
     if (( rc == 0 )); then
         log "done: ${out//$'\n'/ | }"
     else

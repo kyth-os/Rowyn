@@ -1,0 +1,117 @@
+#!/usr/bin/python3
+"""Bounded process supervisor for the automatic update watcher."""
+import os
+import selectors
+import signal
+import subprocess
+import sys
+import time
+
+MAX_RUNTIME = 2200
+TERM_GRACE = 5
+ALLOWED = {
+    ("current", "no_update"), ("staged", "update_staged"),
+    ("deferred", "battery"), ("deferred", "metered"),
+    ("deferred", "upgrade_locked"), ("failed", "runtime_auth_io"),
+    ("failed", "upgrade_failed"), ("failed", "unknown_failure"),
+}
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+def main():
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _interrupt)
+    if len(sys.argv) != 2 or not os.path.isabs(sys.argv[1]):
+        print("ROWYN_UPDATE_RESULT outcome=failed reason=unknown_failure")
+        return 1
+    outcome, reason, rc = "failed", "unknown_failure", 1
+    child = None
+    try:
+        child = subprocess.Popen([sys.argv[1]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, start_new_session=True, bufsize=0)
+        sel = selectors.DefaultSelector()
+        sel.register(child.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + MAX_RUNTIME
+        partial = bytearray()
+        seen = []
+        marker_lines = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            events = sel.select(min(remaining, .25))
+            for key, _ in events:
+                data = os.read(key.fd, 4096)
+                if not data:
+                    sel.unregister(key.fileobj)
+                    continue
+                for b in data:
+                    if b == 10:
+                        line = partial.decode("ascii", "ignore")
+                        if line.startswith("ROWYN_UPDATE_RESULT"):
+                            marker_lines += 1
+                        prefix = "ROWYN_UPDATE_RESULT outcome="
+                        if line.startswith(prefix) and len(line) <= 128:
+                            bits = line[len(prefix):].split(" reason=")
+                            if len(bits) == 2 and (bits[0], bits[1]) in ALLOWED:
+                                seen.append((bits[0], bits[1]))
+                        partial.clear()
+                    elif len(partial) < 4096:
+                        partial.append(b)
+                    else:
+                        partial.clear()
+            rc = child.poll()
+            if rc is not None and not sel.get_map():
+                break
+        if partial:
+            line = partial.decode("ascii", "ignore")
+            if line.startswith("ROWYN_UPDATE_RESULT"):
+                marker_lines += 1
+            prefix = "ROWYN_UPDATE_RESULT outcome="
+            bits = line[len(prefix):].split(" reason=") if line.startswith(prefix) else []
+            if len(bits) == 2 and (bits[0], bits[1]) in ALLOWED:
+                seen.append((bits[0], bits[1]))
+        rc = child.wait(timeout=0)
+        if rc == 0 and marker_lines == 1 and len(seen) == 1 and seen[0][0] in ("current", "staged", "deferred"):
+            outcome, reason = seen[0]
+        elif rc != 0 and marker_lines == 1 and len(seen) == 1 and seen[0][0] == "failed":
+            outcome, reason = seen[0]
+        elif rc == 0:
+            outcome, reason = "failed", "unknown_failure"
+        else:
+            outcome, reason = "failed", "upgrade_failed"
+    except (TimeoutError, OSError, subprocess.SubprocessError):
+        reason = "upgrade_failed"
+        if child and child.poll() is None:
+            _terminate(child)
+    except KeyboardInterrupt:
+        reason = "cancelled"
+        if child:
+            _terminate(child)
+        outcome = "interrupted"
+    finally:
+        if child and child.poll() is None:
+            _terminate(child)
+    print(f"ROWYN_UPDATE_RESULT outcome={outcome} reason={reason}", flush=True)
+    return 0 if outcome in ("current", "staged", "deferred") else 1
+
+def _terminate(child):
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        child.wait(timeout=TERM_GRACE)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
+if __name__ == "__main__":
+    sys.exit(main())

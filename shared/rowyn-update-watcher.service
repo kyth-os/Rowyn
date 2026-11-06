@@ -18,7 +18,9 @@ MemoryMax=1G
 TimeoutStartSec=2400
 LockPersonality=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
+# Do not enable RestrictSUIDSGID: systemd implements it by denying openat2
+# with ENOSYS, breaking bootc's capability-safe RootDir runtime auth lookup.
+# LockPersonality, RestrictRealtime and resource limits remain enabled.
 # Deliberately NO ProtectSystem/ProtectHome/PrivateTmp or other mount-
 # namespace hardening: Kyth found these break bootc ("Reading
 # /proc/1/ns/mnt: Permission denied").

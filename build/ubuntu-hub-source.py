@@ -492,7 +492,7 @@ def apply_rowyn_qol(root):
         '  Backups: { hint: "Personal files and backup plans", Icon: IconShield },\n  Apps: { hint:'))
     sections = web / "src/data/hubSections.ts"
     text = replace_once(sections.read_text(), '  Diagnostics: IconDatabase,',
-        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  SteamLibrary: IconGamepad,\n  Storage: IconDatabase,\n  Power: IconChip,\n  Diagnostics: IconDatabase,')
+        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  SteamLibrary: IconGamepad,\n  Readiness: IconShield,\n  Storage: IconDatabase,\n  Power: IconChip,\n  Diagnostics: IconDatabase,')
     sections.write_text(text + '\nexport const BACKUPS_SECTIONS = sectionsFor("Backups");\n')
     destinations = web / "src/data/destinations.ts"
     text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  BACKUPS_SECTIONS,\n  APPS_SECTIONS,')
@@ -533,10 +533,11 @@ def apply_rowyn_qol(root):
         '    {removal && <AppRemovalConfirmation key={removal.id} app={removal} busy={busy !== null} onCancel={() => setRemoval(null)} onConfirm={confirmRemoval} />}')
     app_store.write_text(text)
     commands = web / "src-tauri/src/commands/mod.rs"
-    commands.write_text(commands.read_text() + '\npub(crate) mod rowyn_backups;\npub(crate) mod rowyn_settings;\npub(crate) mod rowyn_support;\npub(crate) mod rowyn_care;\n')
+    commands.write_text(commands.read_text() + '\npub(crate) mod rowyn_backups;\npub(crate) mod rowyn_settings;\npub(crate) mod rowyn_support;\npub(crate) mod rowyn_care;\npub(crate) mod rowyn_readiness;\n')
     main = web / "src-tauri/src/main.rs"
     text = replace_once(main.read_text(), 'tauri::generate_handler![',
         'tauri::generate_handler![\n'
+        '            commands::rowyn_readiness::rowyn_readiness_snapshot,\n'
         '            commands::rowyn_care::rowyn_storage_snapshot,\n'
         '            commands::rowyn_care::rowyn_power_snapshot,\n'
         '            commands::rowyn_backups::rowyn_backups_snapshot,\n'
@@ -570,6 +571,7 @@ def apply_rowyn_mvp(root):
             {"key": "Development", "title": "Development", "description": "Create and manage a dedicated Ubuntu development environment."}]},
         {"key": "Diagnostics", "route": "/diagnostics", "sections": [
             {"key": "Diagnostics", "title": "Diagnostics", "description": "Read-only OS, kernel, image, graphics, controller, memory and disk checks; preview a local report."},
+            {"key": "Readiness", "title": "System readiness", "description": "Explicit read-only setup and service readiness with safe next steps."},
             {"key": "Storage", "title": "Storage care", "description": "Review backing-disk pressure, app sizes, and explicitly confirmed cleanup workflows."},
             {"key": "Power", "title": "Power and sleep", "description": "Read battery health, charging capabilities, power profile and sleep policy; open KDE settings."}]},
         {"key": "Play", "route": "/play", "sections": [

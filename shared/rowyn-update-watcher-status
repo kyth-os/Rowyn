@@ -1,0 +1,136 @@
+#!/usr/bin/python3
+"""Atomic, validated public status for the automatic update watcher."""
+import fcntl
+import json
+import os
+import secrets
+import stat
+import sys
+from pathlib import Path
+
+PAIRS = {"running": {"attempt_started"}, "current": {"no_update"}, "staged": {"update_staged"}, "deferred": {"battery", "metered", "upgrade_locked"}, "failed": {"runtime_auth_io", "upgrade_failed", "unknown_failure"}, "disabled": {"policy_disabled"}, "invalid_policy": {"invalid_policy"}, "interrupted": {"cancelled"}}
+DIR = Path(os.environ.get("ROWYN_UPDATE_STATUS_DIR", "/var/lib/rowyn/update-watcher"))
+MAX_TIME = 253402300799
+FIELDS = {"schema_version", "started_at", "finished_at", "outcome", "reason_code", "last_success_at", "last_staged_at"}
+
+
+def valid(d, now):
+    if not isinstance(d, dict) or set(d) != FIELDS or type(d["schema_version"]) is not int or d["schema_version"] != 1:
+        return False
+    outcome, reason = d["outcome"], d["reason_code"]
+    if not isinstance(outcome, str) or outcome not in PAIRS or not isinstance(reason, str) or reason not in PAIRS[outcome]:
+        return False
+    for key in ("started_at", "finished_at", "last_success_at", "last_staged_at"):
+        value = d[key]
+        if value is not None and (type(value) is not int or not 0 <= value <= now or value > MAX_TIME):
+            return False
+    start, finish, success, staged = (d[k] for k in ("started_at", "finished_at", "last_success_at", "last_staged_at"))
+    if type(start) is not int or start > now or ((outcome == "running") != (finish is None)):
+        return False
+    if finish is not None and finish < start:
+        return False
+    if success is not None and outcome not in {"current", "staged"} and success > start:
+        return False
+    if staged is not None and (success is None or staged > success):
+        return False
+    if outcome in {"current", "staged"} and success != finish:
+        return False
+    if outcome == "staged" and staged != finish:
+        return False
+    return True
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in ("start", "finish") or (sys.argv[1] == "start" and len(sys.argv) != 3) or (sys.argv[1] == "finish" and len(sys.argv) != 5):
+        return 2
+    op = sys.argv[1]
+    try:
+        token = sys.argv[2] if op == "start" else sys.argv[4]
+        if not token.isascii() or not token.isdecimal():
+            return 2
+        now = int(token)
+        if not 0 <= now <= MAX_TIME:
+            return 2
+        outcome, reason = ("running", "attempt_started") if op == "start" else (sys.argv[2], sys.argv[3])
+        check = {"schema_version": 1, "started_at": now, "finished_at": None if op == "start" else now, "outcome": outcome, "reason_code": reason, "last_success_at": now if outcome in {"current", "staged"} else None, "last_staged_at": now if outcome == "staged" else None}
+        if not valid(check, now):
+            return 2
+        path = os.path.abspath(str(DIR))
+        dfd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for part in path.split("/")[1:]:
+                try:
+                    nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dfd)
+                except FileNotFoundError:
+                    os.mkdir(part, 0o755, dir_fd=dfd)
+                    nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dfd)
+                st = os.fstat(nxt)
+                sticky_tmp = st.st_uid == 0 and bool(st.st_mode & stat.S_ISVTX)
+                if st.st_uid not in (0, os.geteuid()) or (st.st_mode & 0o022 and not sticky_tmp):
+                    os.close(nxt)
+                    return 1
+                os.close(dfd)
+                dfd = nxt
+            ds = os.fstat(dfd)
+            if ds.st_uid != os.geteuid() or ds.st_mode & 0o022:
+                return 1
+            lockfd = os.open(".status.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+            try:
+                ls = os.fstat(lockfd)
+                if not stat.S_ISREG(ls.st_mode) or ls.st_uid != os.geteuid() or stat.S_IMODE(ls.st_mode) != 0o600:
+                    return 1
+                fcntl.flock(lockfd, fcntl.LOCK_EX)
+                old = None
+                try:
+                    fd = os.open("status.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+                    st = os.fstat(fd)
+                    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o644 or st.st_size > 8192:
+                        os.close(fd)
+                        return 1
+                    with os.fdopen(fd, "rb") as stream:
+                        raw = stream.read(8193)
+                    if len(raw) > 8192:
+                        return 1
+                    old = json.loads(raw)
+                    if not valid(old, now):
+                        return 1
+                except FileNotFoundError:
+                    pass
+                success = old.get("last_success_at") if old else None
+                staged = old.get("last_staged_at") if old else None
+                start = now if op == "start" else (old["started_at"] if old and old["outcome"] == "running" else now)
+                if outcome in {"current", "staged"}:
+                    success = now
+                if outcome == "staged":
+                    staged = now
+                doc = {"schema_version": 1, "started_at": start, "finished_at": None if op == "start" else now, "outcome": outcome, "reason_code": reason, "last_success_at": success, "last_staged_at": staged}
+                if not valid(doc, now):
+                    return 1
+                name = ".status." + secrets.token_hex(8)
+                fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+                try:
+                    with os.fdopen(fd, "w") as stream:
+                        json.dump(doc, stream, separators=(",", ":"))
+                        stream.write("\n")
+                        stream.flush()
+                        os.fchmod(stream.fileno(), 0o644)
+                        os.fsync(stream.fileno())
+                    os.rename(name, "status.json", src_dir_fd=dfd, dst_dir_fd=dfd)
+                    os.fsync(dfd)
+                except BaseException:
+                    try:
+                        os.unlink(name, dir_fd=dfd)
+                    except OSError:
+                        pass
+                    raise
+                return 0
+            finally:
+                os.close(lockfd)
+        finally:
+            os.close(dfd)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
