@@ -87,6 +87,11 @@ fn printer_addresses_must_be_ipp_and_free_of_whitespace() {
 }
 
 #[test]
+fn lpadmin_uses_the_installed_ubuntu_executable_path() {
+    assert_eq!(LPADMIN, "/usr/sbin/lpadmin");
+}
+
+#[test]
 fn add_queue_arguments_are_fixed_and_driverless() {
     assert_eq!(
         add_queue_args("Office_Printer", "ipp://p.local/ipp/print"),

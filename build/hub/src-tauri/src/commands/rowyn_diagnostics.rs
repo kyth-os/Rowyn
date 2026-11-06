@@ -91,6 +91,7 @@ fn probe_failure(stderr: &str) -> String {
         "must be root",
         "requires root",
         "operation not permitted",
+        "this command must be executed as the root user",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -132,7 +133,7 @@ enum Probe {
 fn rfkill_state<'a>(device: &'a serde_json::Value, key: &str) -> Option<&'a str> { device[key].as_str() }
 fn parse_rfkill(raw: &str) -> Result<String, String> {
     let data: serde_json::Value = serde_json::from_str(raw).map_err(|_| "error: invalid rfkill JSON")?;
-    let devices = data["rfkill"].as_array().ok_or("error: invalid rfkill device list")?;
+    let devices = data["rfkilldevices"].as_array().ok_or("error: invalid rfkill device list")?;
     let bt: Vec<_> = devices.iter().filter(|d| d["type"].as_str() == Some("bluetooth")).collect();
     if bt.is_empty() { return Ok("Bluetooth radio not present.".into()); }
     if bt.iter().any(|d| rfkill_state(d, "hard") == Some("blocked")) { return Ok("Bluetooth radio hard-blocked.".into()); }
@@ -154,18 +155,40 @@ fn parse_audio(raw: &str) -> Result<String, String> {
     Ok(format!("PipeWire: {}; WirePlumber: {}. Service readiness only; audio output is not tested.", states[0], states[1]))
 }
 fn parse_displays(raw: &str) -> Result<String, String> {
-    let outputs: Vec<_> = raw.lines().filter(|l| l.trim_start().starts_with("Output:")).collect();
-    if outputs.is_empty() { return Err("unavailable: no display outputs reported".into()); }
-    let mut connected = 0;
-    let mut enabled = 0;
-    for output in &outputs {
-        let tokens: Vec<_> = output.split_whitespace().collect();
-        let connection: Vec<_> = tokens.iter().filter(|t| ["connected", "disconnected"].contains(&t.trim_matches(['(', ')', ',']))).collect();
-        let power: Vec<_> = tokens.iter().filter(|t| ["enabled", "disabled"].contains(&t.trim_matches(['(', ')', ',']))).collect();
-        if connection.len() != 1 || power.len() != 1 { return Err("unavailable: display state output malformed".into()); }
-        connected += usize::from(connection[0].trim_matches(['(', ')', ',']) == "connected");
-        enabled += usize::from(power[0].trim_matches(['(', ')', ',']) == "enabled");
+    // kscreen-doctor emits ANSI colors even with stdout piped.
+    let raw = strip_ansi(raw);
+    let mut outputs: Vec<(Option<bool>, Option<bool>)> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Output:") {
+            outputs.push((None, None));
+            // Older kscreen-doctor versions put states inline in the header.
+            let tokens: Vec<_> = trimmed.split_whitespace().skip(1).collect();
+            let current = outputs.last_mut().unwrap();
+            for token in tokens {
+                let token = token.trim_matches(['(', ')', ',']);
+                match token {
+                    "connected" | "disconnected" => {
+                        if current.0.replace(token == "connected").is_some() { return Err("unavailable: display state output malformed".into()); }
+                    }
+                    "enabled" | "disabled" => {
+                        if current.1.replace(token == "enabled").is_some() { return Err("unavailable: display state output malformed".into()); }
+                    }
+                    _ => {}
+                }
+            }
+        } else if let Some(current) = outputs.last_mut() {
+            match trimmed {
+                "connected" | "disconnected" => if current.0.replace(trimmed == "connected").is_some() { return Err("unavailable: display state output malformed".into()); },
+                "enabled" | "disabled" => if current.1.replace(trimmed == "enabled").is_some() { return Err("unavailable: display state output malformed".into()); },
+                _ => {}
+            }
+        }
     }
+    if outputs.is_empty() { return Err("unavailable: no display outputs reported".into()); }
+    if outputs.iter().any(|(connection, power)| connection.is_none() || power.is_none()) { return Err("unavailable: display state output malformed".into()); }
+    let connected = outputs.iter().filter(|(connection, _)| *connection == Some(true)).count();
+    let enabled = outputs.iter().filter(|(_, power)| *power == Some(true)).count();
     Ok(format!("{} connected display output(s) reported; {} enabled. Identifiers and configuration omitted.", connected, enabled))
 }
 fn focused_reading(name: &str, result: Result<String, String>) -> Reading {
@@ -173,7 +196,7 @@ fn focused_reading(name: &str, result: Result<String, String>) -> Reading {
     if reading.state != "ok" { return reading; }
     let lower = reading.detail.to_lowercase();
     let attention = match name {
-        "Bluetooth" => lower.contains("blocked") || lower.contains("not present"),
+        "Bluetooth" => lower.contains("hard-blocked") || lower.contains("soft-blocked") || lower.contains("not present"),
         "Wi-Fi" => lower.contains("disabled") || lower.contains("no connected device") || lower.contains("not present"),
         "Audio" => lower.contains("inactive") || lower.contains("failed"),
         "Displays" => lower.contains("0 enabled") || lower.contains("0 connected"),

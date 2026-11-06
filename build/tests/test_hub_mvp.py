@@ -252,7 +252,7 @@ class MvpWork(unittest.TestCase):
         self.assertTrue(bridge.is_file(), "printing bridge is missing")
         text = bridge.read_text()
         for needle in ("/usr/bin/lpstat", "/usr/share/rowyn/print-test-page.txt",
-                       "/usr/bin/lpadmin", "queue_argument", "parse_lpstat", "run_bounded_command",
+                       "/usr/sbin/lpadmin", "queue_argument", "parse_lpstat", "run_bounded_command",
                        "add_queue_args", "printer_uri", "queue_names",
                        "rowyn_print_queues", "rowyn_print_test_page", "rowyn_print_add_queue",
                        "mod tests"):

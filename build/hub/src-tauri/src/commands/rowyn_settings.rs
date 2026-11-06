@@ -34,6 +34,9 @@ const KCM_DIRS: &[&str] = &[
 
 // Plasma 5's kde-config-flatpak ships the permissions panel under this name.
 const FLATPAK_ALTERNATES: &[&str] = &["kcm_flatpak"];
+// Ubuntu 26.10 packages Power management as the profiles configuration KCM;
+// retain the traditional PowerDevil id as a fixed-allowlist compatibility fallback.
+const POWER_ALTERNATES: &[&str] = &["kcm_powerdevil"];
 
 // `kcmshell --list` answers in milliseconds; the bound is there so a wedged
 // launcher cannot hold the command open.
@@ -46,9 +49,9 @@ fn settings_module(target: &str) -> Result<&'static str, String> {
         "bluetooth" => Ok("kcm_bluetooth"),
         "wifi" => Ok("kcm_networkmanagement"),
         "audio" => Ok("kcm_pulseaudio"),
-        // Power management itself, not the advanced profile editor: this is
-        // the panel the Power care readouts describe.
-        "power" => Ok("kcm_powerdevil"),
+        // The packaged Power management panel on Ubuntu 26.10 is the profiles
+        // configuration KCM; older KDE installs may expose the traditional id.
+        "power" => Ok("kcm_powerdevilprofilesconfig"),
         "displays" => Ok("kcm_kscreen"),
         "defaults" => Ok("kcm_componentchooser"),
         "file-associations" => Ok("kcm_filetypes"),
@@ -67,6 +70,8 @@ fn modules_for(target: &str) -> Result<Vec<&'static str>, String> {
     let mut modules = vec![primary];
     if primary == "kcm_app-permissions" {
         modules.extend_from_slice(FLATPAK_ALTERNATES);
+    } else if primary == "kcm_powerdevilprofilesconfig" {
+        modules.extend_from_slice(POWER_ALTERNATES);
     }
     Ok(modules)
 }

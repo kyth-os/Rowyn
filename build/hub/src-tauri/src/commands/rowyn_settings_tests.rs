@@ -15,7 +15,7 @@ fn target_allowlist_maps_exact_modules() {
         ("bluetooth", "kcm_bluetooth"),
         ("wifi", "kcm_networkmanagement"),
         ("audio", "kcm_pulseaudio"),
-        ("power", "kcm_powerdevil"),
+        ("power", "kcm_powerdevilprofilesconfig"),
         ("displays", "kcm_kscreen"),
         ("defaults", "kcm_componentchooser"),
         ("file-associations", "kcm_filetypes"),
@@ -119,11 +119,34 @@ fn flatpak_permissions_falls_back_to_the_plasma5_module() {
 #[test]
 fn targets_without_alternates_resolve_to_their_only_module() {
     let modules = modules_for("power").unwrap();
-    assert_eq!(modules, ["kcm_powerdevil"]);
+    assert_eq!(modules, ["kcm_powerdevilprofilesconfig", "kcm_powerdevil"]);
     for (target, expected) in [("backups", "kcm_kup"), ("displays", "kcm_kscreen"),
                                ("printers", "kcm_printer_manager")] {
         assert_eq!(modules_for(target).unwrap(), [expected]);
     }
+}
+
+#[test]
+fn power_uses_packaged_profiles_module_and_falls_back_to_powerdevil_alias() {
+    let root = temp_dir("power-modules");
+    let dir = root.join("kcms");
+    fs::create_dir_all(&dir).unwrap();
+    let dirs = [dir.to_str().unwrap()];
+    let modules = modules_for("power").unwrap();
+
+    // If both exist, prefer the packaged primary.
+    fs::write(dir.join("kcm_powerdevilprofilesconfig.so"), b"").unwrap();
+    fs::write(dir.join("kcm_powerdevil.so"), b"").unwrap();
+    assert_eq!(resolve_module_in(&modules, &dirs).unwrap(), "kcm_powerdevilprofilesconfig");
+
+    // An older install with only the allowlisted alias still resolves.
+    fs::remove_file(dir.join("kcm_powerdevilprofilesconfig.so")).unwrap();
+    assert_eq!(resolve_module_in(&modules, &dirs).unwrap(), "kcm_powerdevil");
+
+    // The actual installed module listing can resolve the packaged primary.
+    let listing = vec!["kcm_powerdevilprofilesconfig".to_string()];
+    assert_eq!(choose_module(&modules, Some(&listing), &dirs), Some("kcm_powerdevilprofilesconfig"));
+    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

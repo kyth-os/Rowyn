@@ -123,8 +123,8 @@ class SettingsCoverage(unittest.TestCase):
         for target in SETTINGS_TARGETS:
             self.assertIn(f'"{target}"', rust, f"bridge must map {target}")
             self.assertIn(target, ts, f"UI must know {target}")
-        self.assertIn('"power" => Ok("kcm_powerdevil")', rust)
-        self.assertNotIn("kcm_powerdevilprofilesconfig", rust)
+        self.assertIn('"power" => Ok("kcm_powerdevilprofilesconfig")', rust)
+        self.assertIn('const POWER_ALTERNATES: &[&str] = &["kcm_powerdevil"]', rust)
 
     def test_every_module_provider_is_installed_explicitly(self):
         packages = CONTAINER.read_text(encoding="utf-8").split()

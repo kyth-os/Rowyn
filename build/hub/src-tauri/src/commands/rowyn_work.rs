@@ -22,7 +22,7 @@ const MAX_QUEUE_NAME: usize = 64;
 const MAX_URI: usize = 512;
 /// Adding a queue writes CUPS configuration and can wait on authorization.
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(20);
-const LPADMIN: &str = "/usr/bin/lpadmin";
+const LPADMIN: &str = "/usr/sbin/lpadmin";
 
 #[derive(Serialize, PartialEq, Debug, Clone)]
 pub(crate) struct PrintQueue {

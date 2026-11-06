@@ -5,7 +5,30 @@ use super::*;
 #[ignore = "explicit installed-system read-only smoke"]
 fn live_read_only_snapshot_has_all_sections_and_controller_helper_result() {
     let snapshot = collect().unwrap();
-    assert_eq!(snapshot.readings.len(), 13);
+    const REQUIRED_SECTIONS: &[&str] = &[
+        "OS",
+        "Kernel",
+        "CPU model",
+        "NVIDIA module version",
+        "Update health record",
+        "Memory",
+        "GPU drivers",
+        "Bootc image",
+        "GPU and bound drivers",
+        "Failed services",
+        "Disk space",
+        "Controller readiness",
+        "Bluetooth",
+        "Wi-Fi",
+        "Audio",
+        "Displays",
+    ];
+    assert!((REQUIRED_SECTIONS.len()..=REQUIRED_SECTIONS.len() + 64).contains(&snapshot.readings.len()));
+    let names: std::collections::HashSet<_> = snapshot.readings.iter().map(|reading| reading.name.as_str()).collect();
+    assert_eq!(names.len(), snapshot.readings.len(), "section names must be unique");
+    for required in REQUIRED_SECTIONS {
+        assert!(names.contains(required), "missing required section: {required}");
+    }
     assert!(snapshot.collected_at > 0);
     for reading in &snapshot.readings {
         assert!(!reading.detail.is_empty());
@@ -75,12 +98,17 @@ fn failed_services_and_permission_denials_are_classified_truthfully() {
         "Permission denied",
         "This command requires root privileges",
         "Operation not permitted",
+        "error: Status: Preparing for write: Querying root privilege: This command must be executed as the root user",
     ] {
         assert_eq!(
             section("Image", Err(probe_failure(denied))).state,
             "unavailable"
         );
     }
+    assert_eq!(
+        section("Image", Err(probe_failure("the root directory is missing from output"))).state,
+        "error"
+    );
     assert_eq!(
         section("Image", Err(probe_failure("bad output"))).state,
         "error"
@@ -153,11 +181,13 @@ fn bounded_view_scrubs_before_truncating_a_secret() {
 
 #[test]
 fn focused_hardware_fixture_parsers_are_bounded_and_truthful() {
-    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"blocked","soft":"unblocked"}]}"#).unwrap().contains("hard-blocked"));
-    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"unblocked","soft":"blocked"}]}"#).unwrap().contains("soft-blocked"));
-    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("unblocked"));
-    assert!(parse_rfkill(r#"{"rfkill":[{"type":"wlan","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("not present"));
-    for malformed in ["", "{}", r#"{"rfkill":[{"type":"bluetooth","hard":false,"soft":false}]}"#, r#"{"rfkill":[{"type":"bluetooth","hard":"unknown","soft":"unblocked"}]}"#] { assert!(parse_rfkill(malformed).is_err(), "{malformed}"); }
+    assert!(parse_rfkill(r#"{"rfkilldevices":[{"type":"bluetooth","hard":"blocked","soft":"unblocked"}]}"#).unwrap().contains("hard-blocked"));
+    assert!(parse_rfkill(r#"{"rfkilldevices":[{"type":"bluetooth","hard":"unblocked","soft":"blocked"}]}"#).unwrap().contains("soft-blocked"));
+    assert!(parse_rfkill(r#"{"rfkilldevices":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("unblocked"));
+    assert!(parse_rfkill(r#"{"rfkilldevices":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"},{"type":"wlan","hard":"unblocked","soft":"unblocked"}]}"#).unwrap().contains("unblocked"));
+    for malformed in ["", "{}", r#"{"rfkilldevices":[{"type":"bluetooth","hard":false,"soft":false}]}"#, r#"{"rfkilldevices":[{"type":"bluetooth","hard":"unknown","soft":"unblocked"}]}"#] { assert!(parse_rfkill(malformed).is_err(), "{malformed}"); }
+    assert!(parse_rfkill(r#"{"rfkill":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"}]}"#).is_err());
+    assert!(parse_rfkill(r#"{"rfkilldevices":{}}"#).is_err());
     assert_eq!(parse_wifi("wlan0:wifi:connected", "enabled").unwrap(), "Wi-Fi radio enabled; device connected. Network names omitted.");
     assert!(parse_wifi("wlan0:wifi:disconnected", "disabled").unwrap().contains("disabled"));
     assert!(parse_audio("active\ninactive\n").unwrap().contains("inactive"));
@@ -173,6 +203,40 @@ fn focused_hardware_fixture_parsers_are_bounded_and_truthful() {
     assert_eq!(focused_reading("Displays", parse_displays("Output: HDMI-A-1 (disconnected) disabled\n")).state, "attention");
 }
 
+
+#[test]
+fn unblocked_bluetooth_is_not_reported_as_blocked() {
+    let actual_shape = r#"{"rfkilldevices":[{"type":"bluetooth","hard":"unblocked","soft":"unblocked"}]}"#;
+    assert_eq!(focused_reading("Bluetooth", parse_rfkill(actual_shape)).state, "ok");
+    for (hard, soft) in [("blocked", "unblocked"), ("unblocked", "blocked")] {
+        let raw = serde_json::json!({"rfkilldevices": [{"type": "bluetooth", "hard": hard, "soft": soft}]}).to_string();
+        assert_eq!(focused_reading("Bluetooth", parse_rfkill(&raw)).state, "attention");
+    }
+}
+
+#[test]
+fn colored_kscreen_output_is_parsed_before_health_classification() {
+    let raw = "\u{1b}[01;34mOutput:\u{1b}[00m 1 Display-1 anonymous-id\n  \u{1b}[01;32menabled\u{1b}[00m\n  \u{1b}[01;32mconnected\u{1b}[00m\n  HDR: disabled\n";
+    let reading = focused_reading("Displays", parse_displays(raw));
+    assert_eq!(reading.state, "ok");
+    assert!(reading.detail.contains("1 connected display output(s)"));
+    assert!(!reading.detail.contains("Display-1"));
+}
+
+#[test]
+fn display_blocks_keep_outputs_separate_and_reject_incomplete_states() {
+    let two_outputs = "Output: 1 Panel anonymous-id\n  enabled\n  connected\n  HDR: disabled\nOutput: 2 External anonymous-id\n  disabled\n  disconnected\n  VRR: enabled\n";
+    let summary = parse_displays(two_outputs).unwrap();
+    assert!(summary.contains("1 connected display output(s) reported; 1 enabled"));
+    for malformed in [
+        "Output: 1 Panel\n  enabled\n",
+        "Output: 1 Panel\n  connected\n",
+        "Output: 1 Panel\n  enabled\n  disabled\n  connected\n",
+        "Output: 1 Panel\n  enabled\n  connected\nOutput: 2 External\n  disabled\n",
+    ] {
+        assert!(parse_displays(malformed).is_err(), "{malformed}");
+    }
+}
 
 #[test]
 fn focused_probe_arguments_are_fixed_and_read_only() {
