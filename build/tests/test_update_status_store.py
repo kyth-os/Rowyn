@@ -11,7 +11,7 @@ HELPER = Path(__file__).resolve().parents[2] / "shared/rowyn-update-watcher-stat
 
 class StatusStoreTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir="/var/home/phendrick/.hermes/cache/scratch")
+        self.tmp = tempfile.TemporaryDirectory(prefix="rowyn-update-status-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / "status"
         self.env = dict(os.environ, ROWYN_UPDATE_STATUS_DIR=str(self.root))
