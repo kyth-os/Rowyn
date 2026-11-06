@@ -125,6 +125,7 @@ class QolIntegrationTests(unittest.TestCase):
             section_source = (web / "src/data/hubSections.ts").read_text()
             self.assertIn("Storage: IconDatabase", section_source)
             self.assertIn("Power: IconChip", section_source)
+            self.assertIn("SteamLibrary: IconGamepad", section_source)
             for name in ("rowyn_storage_snapshot", "rowyn_power_snapshot"):
                 self.assertIn(f"commands::rowyn_care::{name}", handlers)
             self.assertIn("pub(crate) mod rowyn_care;", (web / "src-tauri/src/commands/mod.rs").read_text())

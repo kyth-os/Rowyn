@@ -110,6 +110,12 @@ def adapt(web, replace_once):
         raise ValueError("Steam metadata scanner overlay was not exported")
     if "commands::rowyn_steam::rowyn_steam_games_scan" not in main:
         raise ValueError("Steam metadata scan command is not registered")
+    # Removal confirmation now belongs to the rendered App Store flow, not
+    # a native window.confirm prompt in the low-level shared IPC wrapper.
+    text = replace_once(text, r'  assert.match(service, /Uninstall \$\{id\}\?/);',
+        r'''  assert.match(apps, /AppRemovalConfirmation/);
+  assert.match(apps, /setRemoval\(app\)/);
+  assert.match(apps, /if \(!removal \|\| busy !== null\) return/);''')
     path.write_text(text)
 
     path = web / "tests/hub-shell-smoke.test.mjs"
@@ -120,7 +126,7 @@ def adapt(web, replace_once):
         text = replace_once(text, line, '')
     text = replace_once(text, '      "Apps.tsx": sectionsModule.APPS_SECTIONS,',
         '      "Apps.tsx": sectionsModule.APPS_SECTIONS,\n      "Vpn.tsx": sectionsModule.VPN_SECTIONS,')
-    text = replace_once(text, '    assert.equal(failures.length, 0,', '''    for (const [page, name] of [["RowynDiagnostics.tsx", "Diagnostics"], ["RowynPlay.tsx", "Play"], ["RowynDevelopment.tsx", "Development"], ["Backups.tsx", "Backups"]]) {
+    text = replace_once(text, '    assert.equal(failures.length, 0,', '''    for (const [page, name] of [["RowynDiagnostics.tsx", "Diagnostics"], ["RowynPlay.tsx", "Play"], ["RowynDevelopment.tsx", "Development"], ["Backups.tsx", "Backups"], ["RowynWork.tsx", "Work"]]) {
       const mod = await server.ssrLoadModule(`/src/pages/${page}`);
       const markup = renderToStaticMarkup(React.createElement(mod[name]));
       assert.match(markup, /Rowyn/);

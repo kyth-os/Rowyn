@@ -492,7 +492,7 @@ def apply_rowyn_qol(root):
         '  Backups: { hint: "Personal files and backup plans", Icon: IconShield },\n  Apps: { hint:'))
     sections = web / "src/data/hubSections.ts"
     text = replace_once(sections.read_text(), '  Diagnostics: IconDatabase,',
-        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  Storage: IconDatabase,\n  Power: IconChip,\n  Diagnostics: IconDatabase,')
+        '  Backups: IconDatabase,\n  Development: IconDatabase,\n  SteamLibrary: IconGamepad,\n  Storage: IconDatabase,\n  Power: IconChip,\n  Diagnostics: IconDatabase,')
     sections.write_text(text + '\nexport const BACKUPS_SECTIONS = sectionsFor("Backups");\n')
     destinations = web / "src/data/destinations.ts"
     text = replace_once(destinations.read_text(), '  APPS_SECTIONS,', '  BACKUPS_SECTIONS,\n  APPS_SECTIONS,')
