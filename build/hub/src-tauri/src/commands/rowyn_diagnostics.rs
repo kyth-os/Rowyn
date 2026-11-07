@@ -17,6 +17,13 @@ const REPORT_LIMIT: usize = 128_000;
 static SNAPSHOT_RUNNING: AtomicBool = AtomicBool::new(false);
 static CONTROLLER_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Every `Reading.state` this module emits. `rowynMvpModel.ts` mirrors the
+/// list and `test_hub_overlay_contract` fails when the two drift: the page
+/// once tested for "available", a state this bridge never sends, so every
+/// healthy check fell into the warning branch and was counted as needing
+/// attention.
+pub(crate) const READING_STATES: [&str; 4] = ["ok", "attention", "error", "unavailable"];
+
 struct ReadGuard<'a>(&'a AtomicBool);
 impl<'a> ReadGuard<'a> {
     fn take(flag: &'a AtomicBool) -> Result<Self, String> {

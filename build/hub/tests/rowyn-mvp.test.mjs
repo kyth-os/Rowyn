@@ -21,6 +21,42 @@ test('report preview contains explicit unavailable/error states and no hidden fi
   assert.match(report, /Review before sharing/);
 });
 
+test('report keeps every reading and states any truncation instead of stopping at sixteen', () => {
+  const readings = Array.from({ length: 24 }, (_, index) => ({ name: `Check ${index + 1}`, state: 'ok', detail: 'value' }));
+  const report = m.formatReport({ collected_at: 0, readings });
+  assert.match(report, /Check 1 \[ok\]/);
+  assert.match(report, /Check 24 \[ok\]/, 'the last reading must not be dropped silently');
+  assert.doesNotMatch(report, /report truncated/);
+
+  // One oversized probe is shortened in place, not allowed to displace others.
+  const long = m.formatReport({ collected_at: 0, readings: [{ name: 'Displays', state: 'ok', detail: 'y'.repeat(200_000) }] });
+  assert.match(long, /Displays \[ok\]/);
+  assert.match(long, /detail truncated/);
+
+  // Enough large readings to cross the native export limit: every omission is named.
+  const many = Array.from({ length: 40 }, (_, index) => ({ name: `Big ${index + 1}`, state: 'ok', detail: 'd'.repeat(6_000) }));
+  const bounded = m.formatReport({ collected_at: 0, readings: many });
+  assert.ok(new TextEncoder().encode(bounded).length <= m.REPORT_BYTE_LIMIT, 'export must fit the native byte limit');
+  assert.match(bounded, /report truncated: \d+ reading\(s\) omitted/);
+});
+
+test('the diagnostics page classifies readings with the bridge vocabulary, not "available"', async () => {
+  const page = await readFile(resolve(root, 'src/pages/RowynDiagnostics.tsx'), 'utf8');
+  assert.doesNotMatch(page, /'available'/);
+  assert.match(page, /readingNeedsAttention\(/);
+  assert.match(page, /readingTone\(/);
+  assert.match(page, /readingStateLabel\(/);
+  assert.deepEqual([...m.READING_STATES], ['ok', 'attention', 'error', 'unavailable']);
+  assert.equal(m.readingNeedsAttention('ok'), false);
+  assert.equal(m.readingNeedsAttention('attention'), true);
+  assert.equal(m.readingNeedsAttention('error'), true);
+  assert.equal(m.readingNeedsAttention('unavailable'), false, 'unavailable is its own label, not a finding');
+  assert.equal(m.readingTone('ok'), 'is-ok');
+  assert.equal(m.readingTone('attention'), 'is-partial');
+  assert.equal(m.readingTone('unavailable'), 'is-missing');
+  assert.equal(m.readingStateLabel('attention'), 'needs attention');
+});
+
 test('launcher selection only accepts the four curated ids', () => {
   assert.equal(m.LAUNCHERS.length, 4);
   for (const launcher of m.LAUNCHERS) assert.equal(m.requireLauncher(launcher.id).id, launcher.id);

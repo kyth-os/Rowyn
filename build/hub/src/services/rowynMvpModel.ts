@@ -1,5 +1,42 @@
 import type { InstalledFlatpaksResult } from './liveData';
 export interface Reading { name: string; state: string; detail: string }
+
+/**
+ * The states `rowyn_diagnostics.rs` actually emits (its `READING_STATES`).
+ *
+ * `ok` means the check ran and found nothing to review; `attention` means it
+ * ran and found something worth reading; `error` means it ran and broke;
+ * `unavailable` means it could not run at all. Nothing here is called
+ * "available" — the page used to test for that string, so a healthy reading
+ * fell through to the partial/warning branch and the "Needs attention" count
+ * included every check.
+ */
+export type ReadingState = 'ok' | 'attention' | 'error' | 'unavailable';
+export const READING_STATES: readonly ReadingState[] = ['ok', 'attention', 'error', 'unavailable'];
+
+export type ReadingTone = 'is-ok' | 'is-partial' | 'is-missing';
+
+/** Card tone for one reading. Unknown strings fail toward review, not success. */
+export function readingTone(state: string): ReadingTone {
+  if (state === 'ok') return 'is-ok';
+  return state === 'attention' ? 'is-partial' : 'is-missing';
+}
+
+/** True only for a check that ran and reported something to look at.
+ * `unavailable` is its own visible label; it is not a finding. */
+export function readingNeedsAttention(state: string): boolean {
+  return state !== 'ok' && state !== 'unavailable';
+}
+
+export function readingStateLabel(state: string): string {
+  switch (state) {
+    case 'ok': return 'ok';
+    case 'attention': return 'needs attention';
+    case 'error': return 'check failed';
+    case 'unavailable': return 'unavailable';
+    default: return `unknown state (${state || 'not reported'})`;
+  }
+}
 export interface SteamGame { app_id: string; name: string }
 export interface SteamScan { available: boolean; warnings: number; games: SteamGame[] }
 export interface DiagnosticsSnapshot { collected_at: number; readings: Reading[] }
@@ -53,8 +90,50 @@ export function steamCompatibilityLinks(appId: string) {
     steamStore: `https://store.steampowered.com/app/${appId}`,
   };
 }
+/** The native export refuses a report over 128 KB (bytes); stay under it. */
+export const REPORT_BYTE_LIMIT = 120_000;
+/** One probe may report 12 KB of command output; keep every section shareable. */
+export const REPORT_DETAIL_LIMIT = 4_000;
+
+function reportBytes(text: string): number {
+  return typeof TextEncoder === 'function' ? new TextEncoder().encode(text).length : text.length;
+}
+
+function boundedDetail(detail: string): string {
+  if (detail.length <= REPORT_DETAIL_LIMIT) return detail;
+  return `${detail.slice(0, REPORT_DETAIL_LIMIT)}\n[detail truncated: ${detail.length - REPORT_DETAIL_LIMIT} character(s) omitted; the Diagnostics page shows the full reading]`;
+}
+
+/**
+ * The text the user copies, previews and saves.
+ *
+ * Every reading is included. The old version stopped at sixteen, which
+ * silently dropped Wi-Fi, audio, display and controller results — the checks
+ * a report is usually filed about. When the byte budget cannot hold them all,
+ * the omission is stated in the report itself.
+ */
 export function formatReport(snapshot: DiagnosticsSnapshot): string {
-  return ['Rowyn Diagnostics — read-only', `Collected: ${new Date(snapshot.collected_at * 1000).toISOString()}`,
-    'Scrubbed locally; redaction is best effort. Review before sharing. Nothing uploaded.', '',
-    ...snapshot.readings.slice(0, 16).map((item) => `${item.name} [${item.state}]: ${item.detail}`)].join('\n\n');
+  const header = [
+    'Rowyn Diagnostics — read-only',
+    `Collected: ${new Date(snapshot.collected_at * 1000).toISOString()}`,
+    'Scrubbed locally; redaction is best effort. Review before sharing. Nothing uploaded.',
+    '',
+  ].join('\n');
+  const blocks: string[] = [];
+  const omitted: string[] = [];
+  let used = reportBytes(header);
+  for (const item of snapshot.readings) {
+    const block = `${item.name} [${item.state}]: ${boundedDetail(item.detail)}`;
+    const size = reportBytes(block) + 2;
+    if (used + size > REPORT_BYTE_LIMIT) {
+      omitted.push(item.name);
+      continue;
+    }
+    blocks.push(block);
+    used += size;
+  }
+  const trailer = omitted.length
+    ? `\n[report truncated: ${omitted.length} reading(s) omitted to stay under the export limit: ${omitted.join(', ')}]`
+    : '';
+  return [header, ...blocks].join('\n\n') + trailer;
 }

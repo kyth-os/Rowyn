@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { StorageCare, PowerCare } from '../components/SystemCare';
 import { RowynReadiness } from '../components/RowynReadiness';
 import { rowynDiagnosticsSnapshot, exportRowynReport } from '../services/rowynMvp';
-import { formatReport, type DiagnosticsSnapshot, type Reading } from '../services/rowynMvpModel';
+import { formatReport, readingNeedsAttention, readingStateLabel, readingTone, type DiagnosticsSnapshot, type Reading } from '../services/rowynMvpModel';
 import { openRowynSettings, type SettingTarget } from '../services/rowynSettings';
 import { copyText } from '../services/rowynClipboard';
 import { useSectionFollow, type SectionMap } from '../hooks/useSectionFollow';
@@ -22,10 +22,6 @@ const HARDWARE: [string, string, SettingTarget][] = [
   ['Displays', 'Displays', 'displays'],
 ];
 
-function tone(state: string) {
-  return state === 'available' ? 'is-ok' : state === 'unavailable' ? 'is-missing' : 'is-partial';
-}
-
 // A card carries the headline; the probe's raw text stays available but folded,
 // so a wall of command output never has to be read to see what is wrong.
 function firstLine(detail: string) {
@@ -41,7 +37,7 @@ export function Diagnostics() {
   const lock = useRef(false);
   const report = snapshot ? formatReport(snapshot) : '';
   const readings = snapshot?.readings ?? [];
-  const attention = readings.filter((reading) => reading.state !== 'available').length;
+  const attention = readings.filter((reading) => readingNeedsAttention(reading.state)).length;
 
   async function run(action: () => Promise<string>) {
     if (lock.current) return;
@@ -56,7 +52,7 @@ export function Diagnostics() {
     return <article key={reading.name} className="rowyn-diag-card">
       <header>
         <h3>{hardware?.[1] ?? reading.name}</h3>
-        <span className={`rowyn-state ${tone(reading.state)}`}>{reading.state}</span>
+        <span className={`rowyn-state ${readingTone(reading.state)}`}>{readingStateLabel(reading.state)}</span>
       </header>
       <p>{firstLine(reading.detail)}</p>
       <details className="rowyn-diag-raw">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   cancelInstall,
+  cancelJob,
   convertPst,
   createM365Shortcuts,
   fetchFocusStatus,
@@ -213,7 +214,7 @@ export function Work() {
             if (detail === 'Installed successfully.') setInstalled((current) => [...new Set([...current, id])]);
             return detail;
           })}>Install {name}</button>)}
-        {busy?.startsWith('install-') && <button className="action-button" disabled={busy === 'cancel'} onClick={() => void run('cancel', 'Cancelling the install…', canonicalCancel)}>Cancel install</button>}
+        {busy?.startsWith('install-') && <button className="action-button" disabled={busy === 'cancel'} onClick={() => void run('cancel', 'Cancelling the install…', cancelOfficeInstall)}>Cancel install</button>}
       </div>
       <p className="card-copy">Microsoft 365 opens a fixed set of web apps in a dedicated browser tab; Add to application menu creates launchers for the same six. No credential is stored by the Hub.</p>
       <div className="home-actions">
@@ -227,7 +228,7 @@ export function Work() {
           setPstFiles(files);
           return files ? `${files.length} archive(s) found.` : 'Archive scanning is unavailable outside the Hub shell.';
         })}>Find Outlook archives</button>
-        {busy?.startsWith('pst-') && <button className="action-button" disabled={busy === 'cancel'} onClick={() => void run('cancel', 'Cancelling the conversion…', canonicalCancel)}>Cancel conversion</button>}
+        {busy?.startsWith('pst-') && busy !== 'pst-scan' && <button className="action-button" disabled={busy === 'cancel'} onClick={() => void run('cancel', 'Cancelling the conversion…', cancelArchiveConversion)}>Cancel conversion</button>}
       </div>
       {pstFiles && (pstFiles.length ? <div>{pstFiles.map((path) => <div key={path} className="home-actions" style={{ justifyContent: 'space-between' }}>
         <span className="card-copy" style={{ flex: 1, fontSize: 12 }}>{path}</span>
@@ -268,7 +269,14 @@ export function Work() {
   </div>;
 }
 
-/** Cancel the shared install/convert job; shared by both cards. */
-async function canonicalCancel(): Promise<string> {
+/** Flatpak installs and Outlook conversions are separate native job stores:
+ * `convertPst` waits on the generic "job" domain, while the office cards use
+ * the install domain. One shared cancel either reported "Nothing to cancel."
+ * during a conversion or cancelled an unrelated install. */
+async function cancelOfficeInstall(): Promise<string> {
   return cancelInstall();
+}
+
+async function cancelArchiveConversion(): Promise<string> {
+  return cancelJob();
 }

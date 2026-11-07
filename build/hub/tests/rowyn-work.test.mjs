@@ -96,3 +96,18 @@ test('the work page reads its state on open and never claims a page printed', as
   // never appear is a claim that the page came out.
   assert.doesNotMatch(page, /printed successfully|printing succeeded|page came out/i);
 });
+
+test('the work page cancels the conversion it started, not an unrelated install', async () => {
+  const page = await readFile(resolve(root, 'src/pages/RowynWork.tsx'), 'utf8');
+  // readpst jobs register under the generic "job" domain (waitHubJob); the
+  // office cards use the "install" domain. One shared cancel was wrong for
+  // both: it reported "Nothing to cancel." during a conversion, or cancelled
+  // whichever install happened to be running.
+  assert.match(page, /async function cancelArchiveConversion\(\): Promise<string> \{\s*return cancelJob\(\);/);
+  assert.match(page, /async function cancelOfficeInstall\(\): Promise<string> \{\s*return cancelInstall\(\);/);
+  assert.doesNotMatch(page, /canonicalCancel/);
+  assert.match(page, /'Cancelling the conversion…', cancelArchiveConversion\)/);
+  assert.match(page, /'Cancelling the install…', cancelOfficeInstall\)/);
+  // The scan key also starts with "pst-"; it must not offer a cancel button.
+  assert.match(page, /busy !== 'pst-scan'/);
+});

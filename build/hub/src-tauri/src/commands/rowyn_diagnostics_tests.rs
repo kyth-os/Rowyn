@@ -1,5 +1,29 @@
 use super::*;
 
+/// The constructors are the only producers of `Reading.state`; every value
+/// they can return must be one the frontend declares, or the page silently
+/// mis-classifies a whole branch (which is how "available" survived here).
+#[test]
+fn every_reading_state_is_declared_for_the_frontend_contract() {
+    let produced = [
+        section("Image", Ok("value".into())).state,
+        section("Image", Err("error: broke".into())).state,
+        section("Image", Err("unavailable: denied".into())).state,
+        focused_reading("Audio", parse_audio("inactive\nactive\n")).state,
+        failed_services_section(Ok("broken.service loaded failed failed".into())).state,
+    ];
+    for state in &produced {
+        assert!(
+            READING_STATES.contains(&state.as_str()),
+            "undeclared reading state: {state}"
+        );
+    }
+    assert!(produced.contains(&"attention".to_string()));
+    assert!(produced.contains(&"error".to_string()));
+    assert!(produced.contains(&"unavailable".to_string()));
+    assert_eq!(READING_STATES.len(), 4);
+}
+
 /// Opt-in smoke on an installed system/container; never installs or changes it.
 #[test]
 #[ignore = "explicit installed-system read-only smoke"]
@@ -32,7 +56,7 @@ fn live_read_only_snapshot_has_all_sections_and_controller_helper_result() {
     assert!(snapshot.collected_at > 0);
     for reading in &snapshot.readings {
         assert!(!reading.detail.is_empty());
-        assert!(["ok", "attention", "unavailable", "error"].contains(&reading.state.as_str()));
+        assert!(READING_STATES.contains(&reading.state.as_str()));
         println!(
             "{}: {} ({} characters)",
             reading.name,

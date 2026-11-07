@@ -1,5 +1,6 @@
 """Overlay contracts: section anchors, bridge wiring, and CI coverage."""
 from pathlib import Path
+import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,6 +143,36 @@ class SettingsCoverage(unittest.TestCase):
         self.assertIn(
             "for package in bluedevil kscreen powerdevil plasma-nm plasma-pa "
             "kde-config-flatpak kup-backup; do", CONTAINER.read_text(encoding="utf-8"))
+
+
+class DiagnosticsStateVocabulary(unittest.TestCase):
+    """The page must speak the bridge's state vocabulary, not one of its own.
+
+    The page once tested for "available" — a state rowyn_diagnostics.rs never
+    emits — so every healthy check rendered in the warning tone and the
+    "Needs attention" count included all of them.
+    """
+
+    @staticmethod
+    def _declared(pattern: str, text: str) -> list:
+        match = re.search(pattern, text)
+        assert match is not None, "READING_STATES declaration is missing"
+        return re.findall(r"['\"]([a-z]+)['\"]", match.group(1))
+
+    def test_bridge_and_model_declare_the_same_reading_states(self):
+        rust = (HUB / "src-tauri/src/commands/rowyn_diagnostics.rs").read_text(encoding="utf-8")
+        model = (HUB / "src/services/rowynMvpModel.ts").read_text(encoding="utf-8")
+        bridge = self._declared(r"READING_STATES[^=]*=\s*\[([^\]]*)\]", rust)
+        frontend = self._declared(r"READING_STATES[^=]*=\s*\[([^\]]*)\]", model)
+        self.assertEqual(bridge, frontend, "the page and the bridge must share one state list")
+        self.assertEqual(sorted(bridge), sorted({"ok", "attention", "error", "unavailable"}))
+
+    def test_page_classifies_through_the_model_instead_of_inventing_a_state(self):
+        page = (HUB / "src/pages/RowynDiagnostics.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("'available'", page)
+        self.assertIn("readingNeedsAttention(reading.state)", page)
+        self.assertIn("readingTone(reading.state)", page)
+        self.assertIn("readingStateLabel(reading.state)", page)
 
 
 class HubTestJob(unittest.TestCase):
